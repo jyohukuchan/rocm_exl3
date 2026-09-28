@@ -278,6 +278,32 @@ class BCAttn:
         block_n = max(16, 8192 // hd_pad)
         block_m = triton.next_power_of_2(q_len)
         block_h = max(16 // block_m, 1)
+        # gfx1030 FP16 decode tuning (proven same-input A/B at 8k: 17.6 -> 47.2
+        # and 29.5 -> 56.3 tok/s on the two Qwen3 shapes; top-1 vs baseline
+        # 1021/1024 and 1024/1024; the eligibility table and alignment contract
+        # are in rocm_py/gqa_decode_tune.py). The narrowing feeds
+        # block_rows/h_blocks/programs right here, so the scratch sizes, both
+        # kernels' constexprs and the combine kernel derive from the same tile;
+        # h_blocks stays 1 for these shapes, matching the untouched C++ grid
+        # derivation (which re-computes it from the original block_h = 16).
+        # The cache pointers are qualified NOW because an unaligned cache view
+        # must retain the original geometry/signature wholesale, not just drop
+        # the hints; the owned statics cannot be sized before the geometry is
+        # fixed, so they are asserted after allocation, before configure_slot
+        # registers the slot.
+        tune = False
+        if getattr(torch.version, "hip", None) is not None:
+            # HIP branch only: rocm_py stays out of the CUDA path's import graph
+            from ...rocm_py import gqa_decode_tune
+            tune = (
+                gqa_decode_tune.decode_tune_enabled(
+                    dev, q_len = q_len, head_dim = hd, num_q_heads = qh,
+                    num_kv_heads = kvh, k_bits = self.k_bits, v_bits = self.v_bits,
+                    gate_mode = self.gate_mode, qsa = self.qsa) and
+                gqa_decode_tune.pointers_aligned(
+                    [self.cache_k.data_ptr(), self.cache_v.data_ptr()]))
+        if tune:
+            block_h = gqa_decode_tune.narrowed_block_h(block_h, group_size)
         block_rows = block_m * block_h
         h_blocks = triton.cdiv(group_size, block_h)
         programs = bsz * kvh * h_blocks
@@ -300,6 +326,8 @@ class BCAttn:
             "QCK", "QCV", "q_len", "kv_append_len", "n_q_heads", "n_kv_heads",
             "page_size", "head_dim", "HD_PAD", "scale", "CAUSAL", "WINDOW_LEFT", "WINDOW_RIGHT",
             "SOFTCAP", "FINAL", "HAS_SINKS", "BLOCK_M", "BLOCK_H", "BLOCK_ROWS", "BLOCK_N")}
+        if tune:
+            sig = gqa_decode_tune.with_alignment_hints(sig, gqa_decode_tune.SPLIT_ALIGNED_ARGS)
         consts = dict(
             QCK = self.k_bits, QCV = self.v_bits,
             q_len = q_len, kv_append_len = q_len, n_q_heads = qh, n_kv_heads = kvh,
@@ -316,6 +344,8 @@ class BCAttn:
         } | {n: "constexpr" for n in (
             "QCV", "HAS_SINKS", "q_len", "n_q_heads", "n_kv_heads", "head_dim", "HD_PAD",
             "BLOCK_M", "BLOCK_H", "BLOCK_ROWS")}
+        if tune:
+            sig_c = gqa_decode_tune.with_alignment_hints(sig_c, gqa_decode_tune.COMBINE_ALIGNED_ARGS)
         consts_c = dict(
             QCV = self.v_bits, HAS_SINKS = self.sinks is not None, q_len = q_len,
             n_q_heads = qh, n_kv_heads = kvh, head_dim = hd, HD_PAD = hd_pad,
@@ -373,6 +403,24 @@ class BCAttn:
             xp.zero_()
         if self.hidden_padded != self.hidden_size:
             yp = g_tensor_cache.get(dev, (R, self.hidden_padded), self.o_dtype or torch.half, "bca_yp")
+
+        # The tuned signatures also hint q/o/partial_o/partial_ml: they are this
+        # configure's g_tensor_cache torch allocations (the bucketed partial slices
+        # start at element 0 of the bucket), and attention.cpp launches exactly
+        # these data_ptr()s (configure_slot stores the same tensors). Verified on
+        # the actual buffers before the slot is registered; a violation raises --
+        # the kernels are already compiled with the hints and launching them on
+        # an unaligned pointer is not a safe fallback.
+        if tune:
+            bad = [n for n, t in (("q", q), ("o", o), ("partial_o", partial_o),
+                                  ("partial_ml", partial_ml))
+                   if not gqa_decode_tune.pointers_aligned([t.data_ptr()])]
+            if bad:
+                raise RuntimeError(
+                    f"BC_Attention: gfx1030 decode tune on layer "
+                    f"{getattr(self.module, 'layer_idx', '?')} declined: static(s) "
+                    f"{', '.join(bad)} not 16B aligned; refusing to register the "
+                    f"hinted kernels")
 
         self.bc.configure_slot(
             bsz, q_len, regime,
