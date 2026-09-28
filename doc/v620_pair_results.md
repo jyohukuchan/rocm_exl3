@@ -47,7 +47,7 @@ budgetの単位はGiB。cache8704、FP16 KV、batch1、投機生成なし。
 | D | [3, 4] | 21 / 15 | 3.224 / 2.890 |
 | M | [6.5, 8] | 26 / 22 | 7.010 / 6.098 |
 
-どちらも連続した層group、embeddingはcuda:0、最終norm/headはcuda:1。
+どちらも連続した層group、embeddingは既存のprefer_cpu設定に従いCPU、最初のTransformer層はcuda:0、最終norm/headはcuda:1。
 KV cacheは対応するAttentionと同じdeviceに配置。短い32-token生成が両方で正常終了。
 loadを含むcopy counterはdirect33、bounced0、probe1。
 
