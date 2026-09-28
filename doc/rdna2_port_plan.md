@@ -1,6 +1,6 @@
 # V620 / RDNA2 移植・性能改善・TP2 実施計画
 
-作成: 2026-09-28。状態: 計画のみ。実装・モデルダウンロード・GPUベンチマークは未着手。
+作成: 2026-09-28。状態: Phase 0–2 実行中。ユーザー指示により、実装は OpenCode Go の qwen3.8-flash に委任し、Codex がレビューと実機検証を行う。
 
 対象fork: `dd7a670065f37943f09a5eeb53818f38e9751472`。
 本家TP参照: `d3739fd393337b1ff4d6c2a342b12f0c87a9592f`。
@@ -16,7 +16,7 @@
 5. Qwen3.8-Flash-Next EXL3約3bpw + PLE RAM常駐を動かし、速度を改善する。
 6. 本家のモデル対応を取り込み、ROCmでTensor Parallel 2を実現する。
 
-各段階で数値の正しさ、再現可能な起動、性能を確認する。初期はtext、batch=1、FP16 KV、HIP graph/MTP/投機生成なし。目標の変更は測定根拠とともに記録する。性能未達を黙って合格にしない。
+各段階で teacher-forced top-1 一致率（または KLD）、再現可能な起動、性能を確認する。厳密な浮動小数点一致や生成 token 列の完全一致は合格条件にしない。初期はtext、batch=1、FP16 KV、HIP graph/MTP/投機生成なし。目標の変更は測定根拠とともに記録する。性能未達を黙って合格にしない。
 
 ## 使用モデル
 
@@ -72,10 +72,10 @@ TP前まで16–37人日、TP込み26–57人日。性能修正が不要なら�
 
 合格:
 
-- FP32またはPyTorch参照とのkernel比較、layer出力比較が通る。許容誤差は既存テストと演算精度から事前に定義し、失敗を消す目的で緩めない。
+- 精度の主判定は固定入力に対する teacher-forced top-1 一致率。入力token/position/vocabを一致させ、未量子化source参照との差と、同一EXL3重みの最適化前後の差を区別する。BF16 sourceをgfx1030都合でFP16演算した場合は明示する。kernelのNaN/Infやshape/境界の検査は別途維持する。
 - 3bit mul1、モデルが実際に使うcodebook/bit幅、Q向け高bit projectionが検証される。
 - D/Mが8K入力+256-token生成を完了し、NaN/Inf、OOM、hangがない。終了・再ロードも正常。
-- 同じseed/入力の数値誤差を記録。GPU間・reduction順序が変わる場合、全文字列の完全一致のみを判定基準にしない。
+- 固定した英語/日本語/コードの複数caseで合計1,024以上のpositionを測る。source参照に対する暫定top-1目安はD(4bpw)90%以上、M(3bpw)80%以上。同一重みの最適化前後は99%以上を目安とし、相違positionも保存する。低marginでtop-1が揺れる場合はKLDによる評価へ切り替え、変更根拠を記録する。閾値はユーザー指定ではなく着手時の技術的判断であり、測定後に都合よく引き下げない。
 
 成果物: 単一GPU起動config、correctness結果、最初のprefill/decode baseline。
 
@@ -188,6 +188,15 @@ TPはモデル分割と通信backendの二層に分けて実装する。
 - 変更はbuild/数値検証が通る小さな単位でcommitする。各stage終了時、速度差、残課題、次の対象を報告する。
 - profilingは既存benchとPyTorch/HIPツールを主体にする。Magpieが利用可能ならkernel analyze/compare等に使う。ExLlama向けの安定Magpie benchmark backendが存在するとは仮定しない。
 - この計画は順次実行を前提とする。新たな外部サービス・モデル公開等は含まない。
+
+## Phase 0–2 実行記録
+
+- 作業領域: `/home/homelab1/datapool/rocm-exl3-rdna2`。container: `rocm-exl3-rdna2`。
+- GPU: PCI `43:00.0`, renderD128, `GPU-08b2ddcbd6e6b36c` の V620 1枚のみ可視。別V620の既存workloadは触らない。
+- 既存image `rocm-exl3-investigation:tested` を再利用。Torch `2.12.0+rocm7.2`、Triton `3.7.0`、host HIP compiler `7.14`、host ROCr preload。FP16 128×128 matmul、device gfx1030を実行確認済み。
+- image由来のR9700用ROCR_VISIBLE_DEVICESをV620 UUIDへ上書き済み。最初の委任はこの前提訂正のため停止し、差分なしを確認して再dispatch。
+- OpenCode task 01: gfx1030 primitive/build、task 02: top-1/benchmark harness。所有ファイルを分離。
+- この追記時点では拡張build、モデル生成、精度・速度の合格は未達。
 
 ## 参照
 
