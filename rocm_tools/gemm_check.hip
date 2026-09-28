@@ -276,6 +276,8 @@ int main()
     run_case<8, 0, 128, 4>(16, 512, 256, 2);
     run_case<4, 1, 128, 4>(16, 512, 256, 1);
     run_case<4, 2, 128, 4>(16, 512, 256, 1);
+    run_case<3, 2, 128, 4>(16, 512, 256, 2);  // RDNA2: 3bpw mul1
+    run_case<8, 2, 128, 4>(16, 512, 256, 2);  // high-bit mul1 projection
     run_case<4, 0, 384, 3>(16, 1024, 768, 4);
 
     printf("\n%s\n", g_fail ? "FAILED" : "all cases passed");

@@ -390,6 +390,8 @@ int main()
     run_case<4, 2, 8, true>(512, 256);
     run_case<2, 1, 8, true>(512, 256);
     run_case<2, 2, 8, true>(512, 256);
+    run_case<3, 2, 8, true>(512, 256);  // RDNA2: future 3bpw mul1 checkpoint
+    run_case<8, 2, 8, true>(512, 256);  // high-bit mul1 projection
 
     printf("\n wave counts -- 16 and 4 are the two the host selector can pick\n"
            " besides 8, and the LDS layout is per-warp, so each needs its own case:\n");
