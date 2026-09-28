@@ -251,8 +251,9 @@ def print_report(summary: dict) -> None:
     print(f"    identity   : {summary['reference_identity']}")
     print(f" -- candidate : {summary['candidate']}")
     print(f"    identity   : {summary['candidate_identity']}")
-    print(f"    (identities differ => any rate below 1.0 includes weight differences; "
-          f"only same-dir + same-fingerprint rows isolate kernel-path error)")
+    print("    (Different checkpoints include quantization/weight differences. "
+          "For a fixed checkpoint, compare the recorded execution settings; "
+          "directory/config fingerprints are not full weight-content hashes.)")
     print(f"\n  {'case':22} {'N':>6} {'agree':>6} {'rate':>8}")
     for c in summary["per_case"]:
         print(f"  {c['case_id']:22} {c['n_positions']:6} {c['agreement']:6} {c['rate']:8.4f}"
