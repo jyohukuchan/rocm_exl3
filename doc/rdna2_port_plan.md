@@ -1,6 +1,9 @@
 # V620 / RDNA2 移植・性能改善・TP2 実施計画
 
-作成: 2026-09-28。状態: Phase 0–2 実行中。ユーザー指示により、実装は OpenCode Go の qwen3.8-flash に委任し、Codex がレビューと実機検証を行う。
+作成: 2026-09-28。状態: Phase 0–2 の実装・実機検証完了。ユーザー指示により、実装は OpenCode Go の qwen3.8-flash に委任し、Codex がレビューと実機検証を行う。
+
+実測、精度、制約、再現手順は [Phase 2結果](rdna2_phase2_results.md) を参照。
+2GPU以降はこの計画の次工程として未着手。
 
 対象fork: `dd7a670065f37943f09a5eeb53818f38e9751472`。
 本家TP参照: `d3739fd393337b1ff4d6c2a342b12f0c87a9592f`。
@@ -57,7 +60,8 @@ TP前まで16–37人日、TP込み26–57人日。性能修正が不要なら�
 - `rocm_tools/bench_model.py` を基にRDNA2用harnessを整備する。現行harnessにはmodel split/PLE指定がなく、decodeは128-token promptのみ、`os._exit(0)`でteardownを隠すため、そのまま全工程の合否判定には使わない。
 - 明示device/split、ngram RAM、複数contextでのdecode、JSON出力、全device同期、エラー伝播を追加。通常終了のsmoke testも独立して置く。
 
-成果物: 環境manifest、再現用setup/run手順、計測harness、GPU ID対応表。合格: 両V620を個別に指定でき、基本演算とTritonが正しい。
+成果物: 環境manifest、再現用setup/run手順、計測harness、GPU ID対応表。合格: 対象V620をUUIDで個別に指定でき、基本演算とTritonが正しい。
+他方のV620は既存workloadを保持し、両カードを使う試験はPhase 3で行う。
 
 ## Phase 1: 単一V620で動作
 
@@ -84,6 +88,8 @@ TP前まで16–37人日、TP込み26–57人日。性能修正が不要なら�
 Mを主対象とし、Dも回帰確認に使う。
 
 - prefillとdecodeを別profileに分け、累積時間上位3項目を抽出する。
+  実機ではGPU profilerがruntime API登録に失敗したため、CPU trace、独立kernel、
+  同一入力E2EのA/B測定へ変更した。GPU時間割合は未取得と明示する。
 - prefill候補: expertごとの小GEMM/launch乱発、dequantの重複、buffer確保、Triton tile/occupancy。
 - decode候補: EXL3復号・Hadamard、split-K、MoE expert並列化、CPU側同期、kernel間launch待ち。
 - grouped/batched expert実行、RDNA2用SIMD/fdot2 tiled GEMM、dequant融合はprofileで必要と判明したものから実装する。
@@ -213,6 +219,30 @@ TPはモデル分割と通信backendの二層に分けて実装する。
 - Mは既定bulk経路で936/1024=91.41%対BF16。2反復の予備測定はprefill512=473.6、prefill2048=969.3、decode512=52.0、decode2048=49.7 tok/s。正式5反復・8K・256-token試験はまだ未完了。
 - Mのbulk対chunk=1は1,005/1,024=98.14%一致で、従来の同一checkpoint99%目安を下回った。生成token完全一致へ戻すのではなく、全語彙分布のKLDを追加評価する。**測定前の受入条件**を `KL(P_bulk || P_chunk1)` の平均0.01 nats以下、p99が0.05以下、全1,024位置有限と定める。これを満たさなければ実装を調査し、閾値を結果に合わせて緩めない。BF16参照に対する各経路のtop-1も併記する。
 - Torch profilerはCPUイベントのみを出力し、GPUイベントは欠落。rocprofv3はこの混在runtimeでAPI登録error16となった。GPU時間0と解釈しない。CPU traceと既存kernel実測を診断に使い、性能の合否はGPU完了を伴うunprofiled benchmarkで判断する。GPU profiler対応自体の追加移植はPhase 0–2の前提にしない。
+
+
+### Phase 0–2 最終判定（2026-09-28）
+
+- 単一V620/gfx1030のfull build・基本演算・D/M生成が成功。
+  WMMA相当のSIMT/fdot2 primitiveを実装できたため、prefill経路の全面置換は不要。
+- FP16 MLP overflowを相殺スケーリングで修正し、再ロード/旧inner解放を検証。
+- GQA tile縮小とAOT alignment hintsを限定dispatchで追加。
+  正式5反復の8K decodeはD 17.6→47.8、M 29.8→56.9 tok/s。
+  prefillは全条件で変更前中央値の約99.3–100.7%を維持。
+- BF16 sourceとの最終top-1: D970/1024、M935/1024。
+  同一EXL3の最適化前後: D1021/1024、M1024/1024。
+  M bulk/decodeのKLDはmean0.00165564、p990.01485584で事前基準に合格。
+- D/Mの8192入力＋256-token生成は全forward有限、通常終了。
+  正式各36 jobsと短文再測定各24 jobsが完走。全入力hash/長さ/cache hit/ITLを監査。
+- 短文decode再測定はspread0.1–0.4%で改善を再確認。
+  追加D2K prefillに単発TTFT3.24秒（通常1.80秒）があり、原因未特定として記録。
+  最大遅延を保証する結果ではない。反復の除外や主表の差替えはしていない。
+- GPU profilerは混在runtimeで利用できず、GPU kernel上位3項目の時間割合は未取得。
+  CPU trace/独立kernel/同一入力E2E A/Bへ手法を変更して改善を検証した。
+- CPU90件、長文attention60条件、primitive（3bit/8bit mul1含む）が成功。
+  Mの暫定目標2K prefill>=200/decode>=20を達成（967.9/69.2 tok/s）。
+- 完了範囲はPhase 0–2。Phase 3開始時は使用中の別V620の稼働状況を再確認し、
+  今回固定したD/M・入力・cache条件を1GPU比較基準にする。
 
 ## 参照
 
