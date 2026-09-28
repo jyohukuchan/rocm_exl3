@@ -80,6 +80,8 @@ class TestNormalizeAndClassify(unittest.TestCase):
                          (sr.CAT_OTHER, "histogram"))
         self.assertEqual(sr.classify_kernel("void rocprim::ROCPRIM_400200_NS::detail::trampoline_kernel<sort>(...)"),
                          (sr.CAT_OTHER, "parallel_primitives"))
+        self.assertEqual(sr.classify_kernel("__amd_rocclr_gwsInit"),
+                         (sr.CAT_OTHER, "runtime_support"))
 
     def test_mangled_exl3_gemv_family_length_prefix(self):
         # The digits sit right before "exl3"; a word-boundary pattern anchored

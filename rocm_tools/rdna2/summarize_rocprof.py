@@ -184,6 +184,7 @@ CLASSIFICATION: tuple[tuple[str, str, str, str], ...] = (
     ("re", r"(?:^|::)gemm|gemv", CAT_OTHER, "dense_gemm"),  # exl3/routing already matched
     ("in", "kernelHistogram1D", CAT_OTHER, "histogram"),
     ("startswith", "rocprim::", CAT_OTHER, "parallel_primitives"),
+    ("startswith", "__amd_rocclr_", CAT_OTHER, "runtime_support"),
     ("in", "ngram", CAT_OTHER, "ngram_support"),
     ("in", "quantize", CAT_OTHER, "quant_support"),
     ("in", "at::native::", CAT_OTHER, "aten_torch_op"),
