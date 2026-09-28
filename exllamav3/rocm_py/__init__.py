@@ -28,6 +28,13 @@ Environment switches (all default to the safe value for this backend):
   EXL3_ROCM_MOE_DISABLE=1  route block-sparse MoE through the dense per-expert
                            path instead of the fused kernel (NOT advised -- see
                            the note at the patch itself)
+  EXL3_ROCM_MLP_RANGE_BALANCE=0  on gfx1030, do not rescale gated-MLP up/down
+                           svh metadata (up /= 8, down *= 8) at forward entry
+                           to keep silu(g)*u inside fp16 range (d-reference:
+                           3/8 cases -> Inf; the Model.load-wrapping prototype
+                           restored full finiteness at 94.63% top-1 vs native
+                           BF16 -- GPU verification of this guard is pending
+                           via rocm_tools/rdna2/mlp_range_balance_probe.py)
   EXL3_ROCM_RDNA4_FUSED_MOE=1  on gfx120x, do not steer MoE off the fused
                            kernel (whose WMMA traps on gfx12); for a future
                            gfx12 WMMA port
@@ -608,6 +615,32 @@ def apply() -> list[str]:
                 applied.append("RDNA4: fused MoE -> per-expert path (gfx11 WMMA has no gfx12 encoding)")
         except Exception as e:
             applied.append(f"!! FAILED RDNA4 MoE fallback: {type(e).__name__}: {e}")
+
+    # ------------------------------------------------------------------
+    # gfx1030 gated-MLP fp16 range balancing (silu(g)*u overflow)
+    # ------------------------------------------------------------------
+    # Qwen3-8B 4bpw on the V620 keeps gate/up finite (~314) but overflows
+    # the fp16 product silu(g)*u (~9.9e4 > 65504) before down_proj: 3 of 8
+    # reference cases go Inf/NaN (d-nonfinite-trace). The remedy rescales
+    # the quant metadata of each eligible pair -- up svh /= 8, down svh *= 8
+    # -- the same function algebraically (GEMM is linear in its input), with
+    # 8x overflow headroom in the product; no clipping, no masking. It must
+    # run after the deferred fills land (model_ls brackets each module's
+    # load and writes checkpoint bytes into the svh buffers the freshly
+    # built LinearEXL3 and the BC/MultiLinear pointer tables reference --
+    # a load_local rescale is silently overwritten, verified). Hence the
+    # lazy guard at forward entry, once per new inner (marker on the inner);
+    # see mlp_range_balance.py for the full contract. The Model.load-
+    # wrapping prototype measured full finiteness + 94.63% top-1 vs the
+    # native BF16 oracle (d-quality-balanced8-loaded, 2026-09-28); GPU
+    # verification of this guard is rocm_tools/rdna2/mlp_range_balance_probe.py.
+    if _env_on("EXL3_ROCM_MLP_RANGE_BALANCE", True):
+        try:
+            from . import mlp_range_balance as _mrp
+            note = _mrp.install()
+            applied.append(f"gated-MLP svh range balance: {note}")
+        except Exception as e:
+            applied.append(f"!! FAILED gated-MLP range balance: {type(e).__name__}: {e}")
 
     # ------------------------------------------------------------------
     # v1.5.0: sliced Q/K/V bundle -- opt-in until validated
