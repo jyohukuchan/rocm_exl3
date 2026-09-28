@@ -19,6 +19,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -454,6 +455,13 @@ class DtypeChoiceTests(unittest.TestCase):
         self.assertEqual(common.resolve_dtype_choice("auto", "Half")[0], "fp16")
 
 
+class RuntimeEnvironmentTests(unittest.TestCase):
+    def test_transfer_flags_are_recorded_without_unrelated_environment(self):
+        flags = {"HSA_ENABLE_SDMA": "0", "HSA_ENABLE_PEER_SDMA": "0",
+                 "EXLLAMA_NO_P2P_COPY": "1", "EXL3_ROCM_GQA_TUNE": "1"}
+        with patch.dict(os.environ, {**flags, "UNRELATED_SECRET": "not-recorded"}, clear=True):
+            self.assertEqual(common.rocm_patch_env(), flags)
+
+
 if __name__ == "__main__":
     unittest.main()
-

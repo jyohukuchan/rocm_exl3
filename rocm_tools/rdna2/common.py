@@ -326,9 +326,10 @@ def visible_gpu_env() -> dict:
 
 
 def rocm_patch_env() -> dict:
-    """EXL3_ROCM_* bisect switches: the conservative-vs-optimized execution label."""
+    """Engine and ROCr transfer switches affecting measured behavior."""
+    transfer_keys = {"HSA_ENABLE_SDMA", "HSA_ENABLE_PEER_SDMA", "EXLLAMA_NO_P2P_COPY"}
     return {k: v for k, v in os.environ.items() if k.startswith("EXL3_ROCM") or
-            k.startswith("EXL3_")}
+            k.startswith("EXL3_") or k in transfer_keys}
 
 
 def model_fingerprint(model_dir: str) -> dict:
@@ -379,4 +380,3 @@ def resolve_dtype_choice(requested: str, declared: str | None) -> tuple[str, str
         if key:
             return key, f"resolved from checkpoint torch_dtype={declared}"
     return "fp16", f"checkpoint declares {declared!r}; fell back to fp16"
-
