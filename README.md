@@ -44,7 +44,7 @@ The table lists the upstream integration points; local validation documentation 
 | | |
 |---|---|
 | ROCm | **7.2.4 or newer** — the build hard-fails below this |
-| GPU | RDNA2 `gfx1030` (V620): experimental single-GPU support, validated on Qwen3-8B EXL3 4bpw and Qwen3-30B-A3B EXL3 3bpw. See [V620 results](doc/rdna2_phase2_results.md) for the tested mixed runtime and limits. RDNA3 / RDNA3.5: `gfx1100`, `gfx1101`, `gfx1102`, `gfx1150`, `gfx1151` — developed and validated on gfx1151. RDNA4 (`gfx1200`, `gfx1201`): builds and should run, but MoE models take a slower per-expert path (the fused MoE kernel's WMMA has no gfx12 encoding) and no RDNA4 hardware has validated the port — reports welcome. |
+| GPU | RDNA2 `gfx1030` (V620): experimental single-GPU support, validated on Qwen3-8B EXL3 4bpw and Qwen3-30B-A3B EXL3 3bpw. See [V620 results](doc/rdna2_phase2_results.md) for the tested mixed runtime and limits. RDNA3 / RDNA3.5: `gfx1100`, `gfx1101`, `gfx1102`, `gfx1150`, `gfx1151` — developed and validated on gfx1151. RDNA4 (`gfx1200`, `gfx1201`): experimental. R9700/gfx1201 needs a 64 KiB LDS build budget; its small cooperative GEMM still reaches an unimplemented WMMA trap. Qwen3-8B and Qwen3-30B-A3B were measured with explicit comparison adapters, including MLP range balancing and MoE prefill reconstruction. See [R9700 vs V620 results and workarounds](doc/r9700_vs_v620.md); this is not general unmodified RDNA4 model support. |
 | Python | 3.10+ (whatever the ROCm torch index publishes a wheel for) |
 | Torch | ROCm build, from `download.pytorch.org/whl/rocmX.Y` — see below |
 
