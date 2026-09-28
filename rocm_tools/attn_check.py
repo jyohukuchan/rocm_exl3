@@ -130,21 +130,11 @@ def main():
     print(f"torch       : {torch.__version__}  hip={torch.version.hip}")
     print(f"capability  : {cap}")
 
-    # triton_paged.py:1779 keys the Blackwell tile config off capability[0] >= 10.
-    # On ROCm this reports the gfx major, so gfx11xx trips it and silently selects
-    # narrow-kv Blackwell tiles.
-    if cap[0] >= 10:
-        print(f"  !! WARNING: capability major {cap[0]} >= 10 -> upstream selects Blackwell "
-              f"tile configs (triton_paged.py:1779). This is the misdetection in PLAN.md §0.")
-    print()
-
     from exllamav3.modules.attention_fn.common import AttnArgs
     from exllamav3.modules.attention_fn import triton_paged as tp
-
-    print(f"has_triton  : {tp.has_triton}")
-    if not tp.has_triton:
-        print("FAIL: triton unavailable -- upstream would fall back to SDPA, not a valid Phase 2 result")
-        return 1
+    # Triton is now an unconditional import in triton_paged; import failure is
+    # the availability check. The former has_triton flag no longer exists.
+    print(f"triton      : {tp.triton.__version__}")
     print()
 
     cases = [
