@@ -241,7 +241,7 @@ TPはモデル分割と通信backendの二層に分けて実装する。
   CPU trace/独立kernel/同一入力E2E A/Bへ手法を変更して改善を検証した。
 - CPU90件、長文attention60条件、primitive（3bit/8bit mul1含む）が成功。
   Mの暫定目標2K prefill>=200/decode>=20を達成（967.9/69.2 tok/s）。
-- 完了範囲はPhase 0–2。Phase 3開始時は使用中の別V620の稼働状況を再確認し、
+- この時点の完了範囲はPhase 0–2。Phase 3開始時は別V620の稼働状況を再確認し、
   今回固定したD/M・入力・cache条件を1GPU比較基準にする。
 
 ## Phase 3/4 完了記録（2026-09-29）

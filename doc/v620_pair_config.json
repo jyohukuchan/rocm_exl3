@@ -94,5 +94,12 @@
     ],
     "validated": false,
     "note": "Phase5 starting budget only; measure actual scratch/cache/driver VRAM and retain headroom for the new architecture"
+  },
+  "deployment": {
+    "verified_container_id": "d9729ae7d200bc26b23ead8ba8d9a05b3e47127e98f4b9e89dbbddc363bf8746",
+    "default_HSA_ENABLE_SDMA": "0",
+    "baseline_container_stopped": "rocm-exl3-v620-pair-sdma-default",
+    "validated_at": "2026-09-29",
+    "policy_restored_to": "auto on both GPUs"
   }
 }
