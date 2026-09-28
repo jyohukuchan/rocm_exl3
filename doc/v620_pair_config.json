@@ -1,0 +1,98 @@
+{
+  "format": "v620-pair-reference/1",
+  "scope": "Qwen3 D/M, batch1 layer split (not tensor parallel)",
+  "container": "rocm-exl3-v620-pair",
+  "image": "rocm-exl3-phase2-env:tested",
+  "image_id": "sha256:cb979a9dbf69fa98fc19a303826a3c118b6f27cc144d0a1181185a05363628dc",
+  "process_environment": {
+    "ROCR_VISIBLE_DEVICES": "GPU-08b2ddcbd6e6b36c,GPU-76a08c022586fed6",
+    "HSA_ENABLE_SDMA": "0",
+    "PYTORCH_ROCM_ARCH": "gfx1030",
+    "PYTHONPATH": "/work/lib:/src"
+  },
+  "devices": [
+    {
+      "logical": 0,
+      "pci": "0000:43:00.0",
+      "uuid": "GPU-08b2ddcbd6e6b36c",
+      "arch": "gfx1030"
+    },
+    {
+      "logical": 1,
+      "pci": "0000:03:00.0",
+      "uuid": "GPU-76a08c022586fed6",
+      "arch": "gfx1030"
+    }
+  ],
+  "power_policy": {
+    "during_inference": "profile_peak",
+    "after_inference": "restore saved original values",
+    "setting_file_template": "/sys/bus/pci/devices/{pci}/power_dpm_force_performance_level",
+    "note": "host setting; elevated idle power, apply for inference only"
+  },
+  "cache_kwargs": {
+    "max_num_tokens": 8704
+  },
+  "generator_kwargs": {
+    "max_batch_size": 1,
+    "max_chunk_size": 2048,
+    "ngram_match_min": 0
+  },
+  "models": {
+    "D": {
+      "model_dir": "/work/models/qwen3-8b-exl3-4bpw",
+      "source_repo": "turboderp/Qwen3-8B-exl3",
+      "source_revision": "1fd66d10f8fbdf071a0ff35842a2d1bf0df94b45",
+      "load_kwargs": {
+        "use_per_device": [
+          2.7,
+          4
+        ],
+        "max_chunk_size": 2048,
+        "max_batch_size": 1,
+        "tensor_p": false
+      },
+      "verified_transformer_layers": [
+        19,
+        17
+      ]
+    },
+    "M": {
+      "model_dir": "/work/models/qwen3-30b-a3b-exl3-3bpw",
+      "source_repo": "turboderp/Qwen3-30B-A3B-exl3",
+      "source_revision": "45c353c522dedaf4fb68be60423d611b5ff71e26",
+      "load_kwargs": {
+        "use_per_device": [
+          6.1,
+          8
+        ],
+        "max_chunk_size": 2048,
+        "max_batch_size": 1,
+        "tensor_p": false
+      },
+      "verified_transformer_layers": [
+        24,
+        24
+      ]
+    }
+  },
+  "benchmark": {
+    "contexts": [
+      512,
+      2048,
+      8192
+    ],
+    "new_tokens": 256,
+    "seed": 1234,
+    "warmup": 1,
+    "repeats": 5
+  },
+  "next_large_model": {
+    "initial_use_per_device_gib": [
+      28,
+      28
+    ],
+    "validated": false,
+    "note": "Phase5 starting budget only; measure actual scratch/cache/driver VRAM and retain headroom for the new architecture"
+  }
+}
