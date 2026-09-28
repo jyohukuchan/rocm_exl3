@@ -571,6 +571,11 @@ def release_gpu_resources(torch, names: dict, cleanup_failures: list) -> None:
     kernel cache) to release, empty the torch allocator and synchronize.
     Every failure is recorded into cleanup_failures and forces nonzero exit.
     """
+    if torch is None:
+        # Validation may have failed before the engine was imported. Do not
+        # import exllamav3 here and accidentally trigger an extension build.
+        names.clear()
+        return
     try:
         gc.collect()
     except Exception as e:                          # pragma: no cover

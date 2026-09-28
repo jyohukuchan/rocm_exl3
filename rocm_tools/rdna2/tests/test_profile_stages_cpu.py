@@ -4,7 +4,7 @@ import types
 import unittest
 from unittest.mock import patch
 import torch
-from rocm_tools.rdna2.profile_stages import NoopControls, run_timed_decode_job
+from rocm_tools.rdna2.profile_stages import NoopControls, run_timed_decode_job, release_gpu_resources
 
 
 class FakeJob:
@@ -42,6 +42,12 @@ class FakeGenerator:
 
 
 class StageControlTests(unittest.TestCase):
+    def test_pre_import_failure_cleanup_does_not_import_engine(self):
+        errors = []
+        with patch.dict(sys.modules, {'exllamav3': None}):
+            release_gpu_resources(None, {}, errors)
+        self.assertEqual(errors, [])
+
     def exercise(self, fail_sync=False):
         sampler = types.ModuleType('exllamav3.generator.sampler')
         sampler.ArgmaxSampler = object
