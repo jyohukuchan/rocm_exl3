@@ -8,10 +8,11 @@ trick, same fp32 oracle), extended with longer contexts and sliding-window cases
 import os
 import sys
 import types
+import argparse
 
 import torch
 
-REPO = "/home/carousel/Desktop/exlproject/rocm_exl3"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TOL = 2e-2
 
 
@@ -82,6 +83,11 @@ def make_case(bsz, q_len, ctx_len, n_q_heads, n_kv_heads, dim, device, page_size
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--kv-heads", type=int, default=8)
+    args = parser.parse_args()
+    if args.kv_heads <= 0 or 32 % args.kv_heads:
+        parser.error("--kv-heads must be a positive divisor of 32")
     sys.path.insert(0, REPO)
     for name, sub in [
         ("exllamav3", ""),
@@ -100,7 +106,7 @@ def main():
 
     from exllamav3.modules.attention_fn.common import AttnArgs
     from exllamav3.modules.attention_fn import triton_paged as tp
-    assert tp.has_triton
+    print(f"triton {tp.triton.__version__}, query heads 32, KV heads {args.kv_heads}")
 
     # name, bsz, q_len, ctx, qh, kvh, dim, window
     cases = [
@@ -135,6 +141,7 @@ def main():
 
     failures, ran = [], 0
     for name, bsz, q_len, ctx, qh, kvh, dim, window in cases:
+        kvh = args.kv_heads
         c = make_case(bsz, q_len, ctx, qh, kvh, dim, dev)
         wl = window if window is not None else -1
         ref = build_reference(
@@ -178,7 +185,7 @@ def main():
     print(f"\n{ran} combos executed, {len(failures)} failed")
     for n, b, d in failures:
         print(f"  {n} / {b}: {d}")
-    return 1 if failures else 0
+    return 1 if failures or ran == 0 else 0
 
 
 if __name__ == "__main__":
