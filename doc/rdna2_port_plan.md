@@ -198,6 +198,14 @@ TPはモデル分割と通信backendの二層に分けて実装する。
 - OpenCode task 01: gfx1030 primitive/build、task 02: top-1/benchmark harness。所有ファイルを分離。
 - この追記時点では拡張build、モデル生成、精度・速度の合格は未達。
 
+2026-09-28 続報:
+
+- `2056e14` で gfx1030 用SIMT matrix primitiveとbuild targetを追加。118 sourceのfull buildと独立importを確認。既存WMMA API probe、追加f16 chained accumulation、GEMV probeをレビュー側でも再実行し成功。
+- Qwen3-8B / Qwen3-30B-A3B のEXL3とBF16 sourceを取得し、全safetensorsのサイズをHF metadataと照合済み。8B BF16はTransformersで有限logits・日本語生成・通常終了を確認。
+- 8B EXL3は既定BC attentionで停止。stackは `hipModuleLoadData → hsa_executable_freeze → InvalidateCodeCaches → ExecutePM4`。`EXL3_BC_ATTN=0`なら有限logits・英文生成・通常終了に成功。初回decode約5 tok/sはJIT等を含みうるsmoke値で、正式なwarm benchmarkではない。
+- 計測harnessはレビュー中（CPU test 21件成功、追加修正をOpenCodeへ依頼）。top-1実測とMoE生成、正式benchmark、速度改善は未完了。
+- OpenCode2.0.12はrelay/CLI終了後もdaemon sessionが継続する。実停止は `opencode api session.interrupt --param sessionID=...`、生存確認は `session.active`。観測timeoutだけで再dispatchしない。APIには `session.prompt` の `delivery=queue` があり、同一担当へレビュー修正を順番に渡せることを確認。
+
 ## 参照
 
 - [D: Qwen3-8B 4.0bpw](https://huggingface.co/turboderp/Qwen3-8B-exl3/tree/4.0bpw)
