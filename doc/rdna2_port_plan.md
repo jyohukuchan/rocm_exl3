@@ -107,7 +107,7 @@ Mを主対象とし、Dも回帰確認に使う。
 - P2P copyの両方向を複数sizeで数値検証・計測し、必要なら既存host bounceを使う。PCIe転送帯域は測定する。
 - layer境界でhidden states、cache、norm/embedding/head、stream/eventの整合を確認する。
 
-合格: 同一モデルの1GPU/2GPUでlogits/PPLの差が許容範囲内。両GPUの使用を確認。30連続jobを完走し、warmup後のVRAMが継続増加しない。
+合格: 同一モデルの1GPU/2GPUで固定入力のtop1一致率、必要時KLDを確認する（ユーザー指定の品質基準）。両GPUの使用を確認。30連続jobを完走し、warmup後のVRAMが継続増加しない。
 
 成果物: 明示2GPU配置config、P2P/host-bounce結果、1GPU対2GPUの比較表。
 
@@ -243,6 +243,16 @@ TPはモデル分割と通信backendの二層に分けて実装する。
   Mの暫定目標2K prefill>=200/decode>=20を達成（967.9/69.2 tok/s）。
 - 完了範囲はPhase 0–2。Phase 3開始時は使用中の別V620の稼働状況を再確認し、
   今回固定したD/M・入力・cache条件を1GPU比較基準にする。
+
+## Phase 3/4 完了記録（2026-09-29）
+
+- 両V620の稼働状況を確認し、専用containerでD/Mの層分割を検証。D19/17層、M24/24層、cacheの実配置と両GPUのkernel実行数を監査した。
+- 同じEXL3重みの1GPUに対し、各モデルのbulk/decode各1024位置がtop1 100%一致。両モデルで8K+256有限・36連続jobを通常終了。形状拡張後のallocated/reserved VRAMは一定。
+- クロック低下をprofile_peak、SDMA経路で再現した長い同期待ちをHSA_ENABLE_SDMA=0で回避。専用containerをSDMA無効のデフォルトへ切替済み。性能設定は実行中だけ適用し、現在はautoへ復元。
+- 8K prefillはD約1269/M約745t/s、decodeはD約47.8/M約56.7t/s。D prefillは固定1GPU基準の約1.40倍、decodeは両モデルともほぼ同等。24区間・768decode tokensのtraceと無観測controlを監査。
+- SDK終了不具合は診断上の制約として保持。採用traceはworkloadとcleanup完了後に保存を要求し、保存完了後に停止(exit137)。通常推論は全てexit0。
+- [結果・再現手順](v620_pair_results.md)、[固定設定](v620_pair_config.json)。各stageのmanifest/metrics/correctness/summaryは `/home/homelab1/datapool/rocm-exl3-rdna2/runs/two-gpu/phase3` と `phase4` に保存。
+- 次はPhase5。大型モデルの開始予算は1枚28GiB程度とし、新しいcache/scratch/native割当は別途検証する。Phase5/6の完了を意味しない。
 
 ## 参照
 

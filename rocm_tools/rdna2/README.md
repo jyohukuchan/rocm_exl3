@@ -258,19 +258,21 @@ onto its explicit `--device`). `--backend transformers` (including `--device cpu
 never accepts the flag, and `profile_stages.py` reuses the same
 `rocm_tools/rdna2/multi_gpu.py` helpers.
 
+Validated pair settings and reproduction commands: [Phase 3/4 results](../../doc/v620_pair_results.md), [reference configuration](../../doc/v620_pair_config.json). Set `HSA_ENABLE_SDMA=0` before HIP initialization and use `profile_peak` only during inference, restoring the previous host policy afterwards. The dedicated `rocm-exl3-v620-pair` container now defaults to SDMA disabled. The adopted splits are D `[2.7, 4]` GiB (19/17 layers) and M `[6.1, 8]` GiB (24/24 layers).
+
 **Flags (EXL3 only):**
 
 ```bash
 /opt/venv/bin/python /src/rocm_tools/rdna2/bench.py \
     -m /work/models/qwen3-8b-exl3-4bpw --mode bench \
-    --use-per-device 3 4 --cache-tokens 8704 \
+    --use-per-device 2.7 4 --cache-tokens 8704 \
     --contexts 512 2048 8192 --new-tokens 256 \
     --json-out /work/phase3/bench_ls_d.json
 
 /opt/venv/bin/python /src/rocm_tools/rdna2/collect_top1.py \
     --manifest /work/phase3/manifest_qwen3_8b.json \
     --backend exl3 -m /work/models/qwen3-8b-exl3-4bpw \
-    --use-per-device 3 4 --cache-tokens 8704 \
+    --use-per-device 2.7 4 --cache-tokens 8704 \
     --execution chunked --chunk-size 1 \
     -o /work/phase3/top1_ls_d_chunked1.json
 ```
