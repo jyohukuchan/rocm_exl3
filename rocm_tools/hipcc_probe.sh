@@ -45,14 +45,14 @@ fi
 # Compiling per-file without rdc forces codegen now, so "ok" means the ISA was
 # actually emitted.
 # Mirror setup.py's GPU_ARCH_SMEM table. The APUs have 64 KB of LDS per
-# workgroup (measured on gfx1151); the discrete RDNA parts take 90 KB. This
+# workgroup (measured on gfx1151); R9700/gfx1201 also reports 64 KB. This
 # probe claims to compile exactly as HIPBuildExtension does, so it has to make
 # the same choice -- otherwise it would validate shapes the real build rejects,
 # or vice versa, on any non-Strix card.
 case "$GPU_ARCH" in
-  gfx1030) SMEM_MAX_BYTES=65536 ;;        # RDNA 2, 64 KB LDS per workgroup
+  gfx1030|gfx1201) SMEM_MAX_BYTES=65536 ;; # V620 / R9700: measured 64 KB
   gfx1150|gfx1151) SMEM_MAX_BYTES=65536 ;;
-  gfx1100|gfx1101|gfx1102|gfx1200|gfx1201) SMEM_MAX_BYTES=92160 ;;
+  gfx1100|gfx1101|gfx1102|gfx1200) SMEM_MAX_BYTES=92160 ;;
   *)               SMEM_MAX_BYTES=65536 ;;   # unknown: conservative
 esac
 

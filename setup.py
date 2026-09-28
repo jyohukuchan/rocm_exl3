@@ -303,7 +303,8 @@ GPU_ARCH_SMEM = {
     "gfx1030": 65536,         # RDNA 2, 64 KB LDS per workgroup
     "gfx1100": 92160, "gfx1101": 92160, "gfx1102": 92160,
     "gfx1150": 65536, "gfx1151": 65536,   # Strix / Strix Halo APUs
-    "gfx1200": 92160, "gfx1201": 92160,
+    "gfx1200": 92160,
+    "gfx1201": 65536,         # R9700: measured 64 KB per workgroup
 }
 DEFAULT_ARCH_SMEM = 65536   # unknown arch: assume the smaller budget
 
