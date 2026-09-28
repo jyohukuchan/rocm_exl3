@@ -40,6 +40,34 @@ and the examples Generator/Job API -- hardened for Phase 2 acceptance:
   * Missing job results or "stage: error" results fail truthfully.
   * Peak device memory per timed job via torch.cuda.reset_peak_memory_stats /
     max_memory_allocated, plus allocated-after-load baseline.
+
+Phase 3 -- dual-V620 layer split (rocm_tools/rdna2/multi_gpu.py):
+  * EXL3 autosplit, NOT tensor parallelism: --use-per-device GIB GIB ... is
+    the only sanctioned split path here. It loads through the official
+    model.load(use_per_device=[...], max_chunk_size=...) API WITHOUT a device
+    argument (the engine forbids combining them). At least two finite positive
+    GiB budgets, mapping 1:1 to visible order (cuda:0, cuda:1, ...). Without
+    the flag the single-GPU path is untouched: exactly one visible GPU is
+    still required, and on a multi-device box the run refuses with a pointer
+    to --use-per-device instead of silently switching modes.
+  * Split-mode gate (before loading): ROCm torch, visible device count EQUALS
+    the budget count, and EVERY visible device's gcnArchName equals
+    --expect-arch. PCI/uuid/name/memory/index of each device is captured into
+    the artifact. No monkeypatching anywhere.
+  * After the split load the placement is AUDITED, not assumed: every module's
+    and cache layer's actual device attribute is inspected recursively
+    (modules, cache layers, their backing k/v tensors, the loader's
+    active_devices), both devices must own real transformer modules (by
+    capability/key pattern, not layer_idx) and cache layers, and the device
+    progression in forward order must be contiguous. The ordered placement
+    record and per-device memory land in the artifact ("layer_split"); an
+    audit failure aborts measurement (nonzero, JSON written) -- throughput
+    numbers are never emitted for an unverified split.
+  * In split mode torch.cuda.synchronize + reset_peak_memory_stats run on ALL
+    used devices at job boundaries only (never per token), and every job row
+    carries per-device peak/allocated/reserved plus the delta of the engine's
+    device_copy transfer counters (direct/bounced/probes) for that job.
+    All single-GPU output keys are preserved unchanged.
   * Per-run rows + median/spread summaries go to --json-out together with the
     repo git commit, model fingerprint and full env block (including
     EXL3_ROCM_* switches, so conservative vs optimized executions are
@@ -69,6 +97,15 @@ Examples
         -m /work/models/qwen3-8b-exl3-4bpw --mode bench \
         --contexts 512 2048 8192 --new-tokens 256 --repeats 5 --warmup 1 \
         --seed 1234 --json-out /work/phase0/bench_qwen3_8b_exl3.json
+
+    # Phase 3: explicit GiB budgets forcing the split point (root-verified for
+    # Qwen3-8B exl3-4bpw on the V620 pair: [3, 4] -> 21/15 transformer layers,
+    # cache k/v tensors local). Placement is audited after load; the run
+    # aborts nonzero if either device owns no real transformer modules.
+    /opt/venv/bin/python rocm_tools/rdna2/bench.py \
+        -m /work/models/qwen3-8b-exl3-4bpw --mode bench \
+        --use-per-device 3 4 \
+        --json-out /work/phase3/bench_ls_qwen3_8b.json
 """
 
 from __future__ import annotations
@@ -97,21 +134,30 @@ from rocm_tools.rdna2.common import (
     visible_gpu_env,
     write_json,
 )
+from rocm_tools.rdna2 import multi_gpu   # stdlib-only at import (CPU-safe)
 
 NOISE_FLOOR = 0.05   # same convention as bench_model.py
+
+
+class _SkipJobs(Exception):
+    """Internal control flow: load happened but MUST not be measured (e.g.
+    placement audit failed). The try/finally below still unloads the model and
+    the JSON artifact is still written with the failures recorded."""
 
 
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog = "bench.py",
-        description = "Single-V620 exl3 end-to-end prefill/decode throughput + smoke.",
+        description = "exl3 end-to-end prefill/decode throughput + smoke "
+                      "(single gfx1030 V620, or audited layer split across "
+                      "multiple visible V620s).",
     )
     ap.add_argument("-m", "--model-dir", required = True)
     ap.add_argument("--mode", choices = ("bench", "smoke"), default = "bench",
                     help = "bench: strict length enforcement, median of repeats; "
                            "smoke: one run per job, early EOS allowed but labeled")
     ap.add_argument("-d", "--device", default = "cuda:0",
-                    help = "must be cuda:0 (single-GPU box; validated)")
+                    help = "must be cuda:0 (single-GPU box; validated; unused in layer-split mode)")
     ap.add_argument("--contexts", type = int, nargs = "+", default = [512, 2048, 8192],
                     help = "total context sizes; each job gets a fresh prompt of exactly N tokens")
     ap.add_argument("--new-tokens", type = int, default = 256,
@@ -122,6 +168,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help = "prefill chunk size for model.load()/Generator")
     ap.add_argument("--cache-tokens", type = int, default = None,
                     help = "override KV cache token count (default: auto, >= max(ctx)+out)")
+    ap.add_argument("--use-per-device", type = float, nargs = "+", default = None,
+                    metavar = "GIB",
+                    help = "EXL3 layer split (not TP): explicit GiB budgets passed to the official "
+                           "model.load(use_per_device=[...]) autosplit API WITHOUT a device arg. "
+                           "At least two finite positive values, one per visible GPU in cuda:0, "
+                           "cuda:1... order, and the visible device count must equal it. Without "
+                           "this flag the single-GPU path is unchanged (exactly one visible GPU "
+                           "required; multi-device boxes are refused with a pointer to this flag)")
     ap.add_argument("--seed", type = int, default = 1234)
     ap.add_argument("--expect-arch", default = "gfx1030")
     ap.add_argument("--json-out", default = "rdna2_bench_results.json")
@@ -139,7 +193,9 @@ def validate_gpu(torch, device_str: str, expect_arch: str) -> dict:
     if n != 1:
         raise SystemExit(f" !! FATAL: expected exactly one visible GPU, found {n}. "
                          f"Check CUDA_VISIBLE_DEVICES/HIP_VISIBLE_DEVICES "
-                         f"(env: {visible_gpu_env()})")
+                         f"(env: {visible_gpu_env()})"
+                         + (f" -- for an audited multi-GPU layer split pass "
+                            f"--use-per-device GIB GIB ... instead" if n > 1 else ""))
     if not torch.cuda.is_available():
         raise SystemExit(" !! FATAL: torch.cuda.is_available() is False for the single visible device")
     props = torch.cuda.get_device_properties(0)
@@ -211,6 +267,24 @@ def run_job(generator, Job, ids, max_new: int, min_new: int,
     return final, events
 
 
+def observed_timing(events, wall_start: float) -> dict:
+    """Actual first-token latency and subsequent token time, using the ITL clock.
+
+    The generator's legacy time_first_token is set before its first decode
+    forward, so time_generate can include a slow first-token initialization.
+    Keep those legacy fields for comparison, and expose both observed stages.
+    """
+    if not events or events[0][0] <= wall_start:
+        raise ValueError("missing or nonpositive first-token observation")
+    decode_s = events[-1][0] - events[0][0]
+    return {
+        "first_token_wall_ms": (events[0][0] - wall_start) * 1000,
+        "decode_observed_s": decode_s,
+        "decode_observed_tps": ((len(events) - 1) / decode_s
+                                if len(events) > 1 and decode_s > 0 else None),
+    }
+
+
 def percentile(samples: list[float], q: float) -> float:
     """
     Nearest-rank percentile: the smallest sample value v such that at least
@@ -277,11 +351,20 @@ def summarize(samples: list[float]) -> dict:
 
 
 def run(args) -> int:
+    # Budget validation happens at the CLI boundary, before any GPU import.
+    try:
+        budgets = multi_gpu.validate_use_per_device(args.use_per_device)
+    except ValueError as e:
+        raise SystemExit(f" !! FATAL: {e}")
+    if budgets is not None and args.device not in ("cuda:0", "cuda"):
+        raise SystemExit(f" !! FATAL: --device must stay cuda:0 with --use-per-device "
+                         f"(layer split spans all visible devices; --device is unused there)")
+
     # GPU-facing imports happen only after argparse (so --help works on the host).
     import torch
     from exllamav3 import Cache, Config, Generator, Job, Model, Tokenizer
+    from exllamav3.util import device_copy
 
-    gpu = validate_gpu(torch, args.device, args.expect_arch)
     if args.new_tokens < 1 or not args.contexts:
         raise SystemExit(" !! FATAL: --new-tokens must be >= 1 and --contexts non-empty")
     contexts = sorted(set(args.contexts))
@@ -289,10 +372,27 @@ def run(args) -> int:
     warmups = max(0, args.warmup) if args.mode == "bench" else 0
     dev = torch.device(args.device)
 
+    # Load mode from the CLI budgets ONLY (explicit --use-per-device is the
+    # single sanctioned split path):
+    #   budgets given -> gated autosplit with those exact budgets,
+    #                   model.load WITHOUT device, placement audited
+    #   no budgets    -> untouched single-GPU path + gate (exactly 1 visible)
+    plan = multi_gpu.plan_load_mode(torch, budgets, args.expect_arch)
+    split = plan["mode"] == "layer_split"
+    if split:
+        gpu = plan["gate"]
+        used_idx = list(range(gpu["visible_devices"]))
+    else:
+        gpu = validate_gpu(torch, args.device, args.expect_arch)
+        used_idx = [0]
+
     runs: list[dict] = []
     failures: list[str] = []
     load_s = None
     mem_after_load = None
+    mem_after_load_per_device = None
+    placement = None
+    copy_stats_after_load = None
     cache_tokens = None
     model = None
 
@@ -311,12 +411,45 @@ def run(args) -> int:
         cache = Cache(model, max_num_tokens = cache_tokens)   # BEFORE model.load()
 
         t0 = time.time()
-        model.load(device = args.device, max_chunk_size = args.max_chunk_size, progressbar = False)
+        if split:
+            # Official layer-split autosplit API: NO device argument (the engine
+            # asserts device and use_per_device are mutually exclusive).
+            load_kwargs = {"max_chunk_size": args.max_chunk_size, "progressbar": False}
+            if plan["budgets"] is not None:
+                load_kwargs["use_per_device"] = plan["budgets"]
+            model.load(**load_kwargs)
+        else:
+            model.load(device = args.device, max_chunk_size = args.max_chunk_size,
+                       progressbar = False)
         load_s = time.time() - t0
         mem_after_load = torch.cuda.memory_allocated(dev)
-        print(f" -- loaded {args.model_dir} in {load_s:.1f}s on {args.device}; "
-              f"cache {cache_tokens} tokens; gpu {gpu['name']} ({gpu['gcnArchName']}, "
-              f"hip {gpu['torch_version_hip']})", flush = True)
+        copy_stats_after_load = dict(device_copy.stats)
+        if split:
+            multi_gpu.sync_devices(torch, used_idx)
+            mem_after_load_per_device = multi_gpu.device_memory_snapshot(torch, used_idx)
+            placement = multi_gpu.audit_placement(model, used_idx)
+            tp = placement["transformer_modules_per_device"]
+            print(f" -- loaded {args.model_dir} in {load_s:.1f}s as LAYER SPLIT "
+                  f"(budgets {plan['budgets']} GiB over "
+                  f"{len(used_idx)}x {gpu['expect_arch']}); transformer modules per device: {tp}; "
+                  f"cache layers per device: {placement['cache_layers_per_device']}; "
+                  f"placement audit: {'OK' if placement['ok'] else 'FAILED'}", flush = True)
+            if not placement["ok"]:
+                for p in placement["problems"]:
+                    print(f"    AUDIT FAIL: {p}", file = sys.stderr, flush = True)
+        else:
+            print(f" -- loaded {args.model_dir} in {load_s:.1f}s on {args.device}; "
+                  f"cache {cache_tokens} tokens; gpu {gpu['name']} ({gpu['gcnArchName']}, "
+                  f"hip {gpu['torch_version_hip']})", flush = True)
+
+        if split and not placement["ok"]:
+            # Fail-closed: never measure an unverified split. The audit and the
+            # JSON artifact still land; nonzero exit via "failures"; the
+            # finally below still runs model.unload() on the normal path.
+            failures.append("layer-split placement audit failed: "
+                            + "; ".join(placement["problems"])
+                            + " -- no throughput jobs were run")
+            raise _SkipJobs()
 
         generator = Generator(
             model = model, cache = cache, tokenizer = tokenizer,
@@ -341,14 +474,33 @@ def run(args) -> int:
             # bench mode: stop tokens suppressed until the full requested length
             # is delivered (Job min_new_tokens), so exact-length is enforceable.
             min_new = deliv if (args.mode == "bench" and phase == "decode") else 0
+            # ---- job boundary: peak stats reset (ALL used devices in split
+            # mode; the single old call is kept verbatim for one GPU) ----
             if timed:
-                torch.cuda.reset_peak_memory_stats(dev)
+                if split:
+                    multi_gpu.sync_devices(torch, used_idx)
+                    multi_gpu.reset_peak_on_devices(torch, used_idx)
+                else:
+                    torch.cuda.reset_peak_memory_stats(dev)
+            stats0 = dict(device_copy.stats)
+            wall_start_unix_s = time.time()
             wall0 = time.perf_counter()
             res, events = run_job(generator, Job, ids, max_new = deliv, min_new = min_new,
                                   seed = args.seed + rep)
             wall = time.perf_counter() - wall0
+            # ---- job boundary end: sync every used device (split only), then
+            # read peak/allocated/reserved per GPU + transfer-counter delta.
+            # NO per-token synchronization anywhere: these calls sit outside
+            # the measured wall window's token loop (wall is already closed
+            # for single-GPU semantics; the sync only settles device state for
+            # the stats read, never the ITL samples). ----
+            if split:
+                multi_gpu.sync_devices(torch, used_idx)
+            mem_after_job = multi_gpu.device_memory_snapshot(torch, used_idx)
             row = {
                 "phase": phase, "context": ctx, "repeat": rep, "timed": timed,
+                "wall_start_unix_s": wall_start_unix_s,
+                **observed_timing(events, wall0),
                 "ids_sha256": sha,
                 "seed": args.seed + rep,
                 "prompt_tokens_expected": ctx,
@@ -360,7 +512,15 @@ def run(args) -> int:
                 "ttft_ms": res.get("time_prefill", 0.0) * 1000.0,
                 "time_generate_s": res.get("time_generate"),
                 "wall_s": wall,
-                "peak_mem_bytes": (torch.cuda.max_memory_allocated(dev) if timed else None),
+                # old key preserved: single GPU -> identical expression as
+                # before; split -> the max per-device peak (timed rows only)
+                "peak_mem_bytes": ((max(v["peak_bytes"] for v in mem_after_job.values())
+                                    if timed else None) if split
+                                   else (torch.cuda.max_memory_allocated(dev) if timed else None)),
+                # Phase 3 additions (both modes; keys are device strings):
+                "memory_after_job": mem_after_job,
+                "device_copy_delta": multi_gpu.diff_transfer_stats(
+                    stats0, dict(device_copy.stats)),
             }
             # Raw per-token ITL (decode rows only). Mean TPOT below stays
             # exactly as before; these are the actual per-token intervals.
@@ -452,6 +612,8 @@ def run(args) -> int:
                     print(f" -- {label:16} FAIL: {e}", flush = True)
                     if not isinstance(e, (AssertionError, RuntimeError, SystemExit)):
                         traceback.print_exc()
+    except _SkipJobs:
+        pass   # audit already recorded the failure in "failures"; run cleanup
     finally:
         if model is not None:
             try:
@@ -469,12 +631,15 @@ def run(args) -> int:
             if not rows:
                 continue
             entry = {"phase": phase, "context": ctx, "repeats": len(rows),
-                     "ttft_ms": summarize([r["ttft_ms"] for r in rows])}
+                     "ttft_ms": summarize([r["ttft_ms"] for r in rows]),
+                     "first_token_wall_ms": summarize([r["first_token_wall_ms"] for r in rows])}
             if phase == "prefill":
                 entry["prefill_tps"] = summarize([r["prefill_tps"] for r in rows])
             else:
                 entry["tpot_ms"] = summarize([r["tpot_ms"] for r in rows])
                 entry["decode_tps"] = summarize([r["decode_tps"] for r in rows])
+                entry["decode_observed_tps"] = summarize(
+                    [r["decode_observed_tps"] for r in rows if r["decode_observed_tps"] is not None])
                 entry["e2e_tps"] = summarize([r["e2e_tps"] for r in rows])
                 merged_itl = [s for r in rows for s in r["itl_samples_ms"]]
                 entry["itl_ms"] = {
@@ -486,6 +651,17 @@ def run(args) -> int:
                             "the per-job mean time_generate/(new_tokens-1))",
                 }
             entry["peak_mem_bytes_max"] = max(r["peak_mem_bytes"] for r in rows)
+            # Phase 3 addition: per-device aggregate of the timed rows' peaks
+            # (single-GPU runs report the same value under "cuda:0").
+            pmax: dict = {}
+            for r in rows:
+                for k, v in (r.get("memory_after_job") or {}).items():
+                    pmax[k] = max(pmax.get(k, 0), v["peak_bytes"])
+            entry["peak_mem_bytes_max_per_device"] = pmax
+            if split:
+                entry["device_copy_delta_total"] = {
+                    kk: sum((r.get("device_copy_delta") or {}).get(kk, 0) for r in rows)
+                    for kk in ("direct", "bounced", "probes")}
             summary.append(entry)
 
     exit_code = 0 if not failures else 1
@@ -503,14 +679,37 @@ def run(args) -> int:
         "model_fingerprint": model_fingerprint(args.model_dir),
         "load_s": load_s,
         "cache_tokens": cache_tokens,
-        "memory": {"after_load_allocated_bytes": mem_after_load},
+        "memory": {"after_load_allocated_bytes": mem_after_load,
+                   "after_load_per_device": mem_after_load_per_device},
         "gpu_gate": gpu,
+        "load_mode": plan["mode"],
+        "layer_split": ({
+            "enabled": True,
+            "use_per_device_gib": plan["budgets"],
+            "budget_semantics": "GiB per visible GPU (engine converts "
+                                 "int(gib*1024**3)), applied ON TOP of memory already "
+                                 "allocated at load() time; maps 1:1 to visible order",
+            "load_call": "model.load(use_per_device=..., max_chunk_size=...) -- "
+                         "no device argument (engine forbids combining them)",
+            "gate": gpu,
+            "placement_audit": placement,
+            "memory_after_load_per_device": mem_after_load_per_device,
+            "device_copy_stats_after_load": copy_stats_after_load,
+            "sync_policy": "torch.cuda.synchronize + reset_peak_memory_stats on all "
+                           "used devices at job boundaries only; no per-token sync",
+        } if split else {
+            "enabled": False,
+            "use_per_device_gib": None,
+            "placement_audit": None,
+        }),
         "spec_decode": {"enabled": False, "asserted": True,
                         "draft_model": None, "ngram_match_min": 0},
         "sampler": "ArgmaxSampler (greedy, deterministic; min_new_tokens=max_new_tokens in bench mode)",
         "fresh_prompt": "exactly N random IDs in [5%,95%) of actual vocab per run from seeded CPU rng",
         "formulas": {
-            "ttft": "job time_prefill (first prefill start -> first token)",
+            "first_token_wall_ms": "observed first token after generator.iterate minus job wall start; includes first decode forward",
+            "decode_observed_tps": "observed inter-token count / elapsed time after first token; excludes first-token initialization",
+            "ttft": "legacy generator time_prefill (first prefill start -> entry to first decode); actual first-token latency is first_token_wall_ms",
             "tpot": "time_generate / (new_tokens - 1)",
             "itl": "raw per-token intervals: positive ms between successive "
                    "generator.iterate() completions (time.perf_counter; no extra "

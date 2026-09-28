@@ -1,4 +1,4 @@
-# rocm_tools/rdna2 — single-V620 measurement harness (Phase 0-2)
+# rocm_tools/rdna2 — V620 measurement harness (Phase 0-2 single card; Phase 3 audited dual-card layer split)
 
 Small, reusable toolset for measuring exllamav3 on one RDNA2 card (gfx1030,
 "V620"): a frozen token manifest, teacher-forced top-1 collection for the
@@ -186,7 +186,8 @@ before measurement). Source-reference agreement includes quantization error.
 Before loading anything the tool fails (nonzero) unless: `torch.version.hip`
 is set, **exactly one** GPU is visible, `gcnArchName == gfx1030`
 (`--expect-arch` to override for another RDNA2 card), and `--device cuda:0`.
-Speculative decoding is structurally disabled and asserted (no draft model,
+(This is the no-budget path, unchanged in Phase 3; with two V620s visible the
+error points at `--use-per-device` below.) Speculative decoding is structurally disabled and asserted (no draft model,
 `ngram_match_min=0`, `num_draft_tokens==0`). Every job uses a fresh random
 prompt of exactly `ctx` in-vocab IDs from the seeded CPU rng; the run fails if
 a job reports `prompt_tokens != ctx`, `cached_tokens != 0` (prefix-cache hit),
@@ -243,16 +244,107 @@ agreement D 1021/1024, M 1024/1024). Repeat the pair for the M model dir
 recorded in the A/B index (`num_kv_heads == 4`); eligibility is
 device/shape-gated, so non-gfx1030 hosts run identical code paths to before.
 
+## Phase 3: dual-V620 layer split (`--use-per-device`, audited placement)
+
+The second container exposes **two** gfx1030 V620s (logical 0 = PCI 67 / 43,
+logical 1 = PCI 3 / 03, 32 GiB each). `bench.py` and `collect_top1.py` can run
+the model as a real **layer split** across both cards through the official
+EXL3 autosplit API — `model.load(use_per_device=[...], max_chunk_size=...)`
+with **no** `device` argument (the engine forbids combining them). This is
+layer splitting, **not** tensor parallelism, and the CLIs do not expose any
+other multi-GPU mode: without `--use-per-device` the single-GPU path is
+untouched (bench still requires exactly one visible GPU; collect_top1 loads
+onto its explicit `--device`). `--backend transformers` (including `--device cpu`)
+never accepts the flag, and `profile_stages.py` reuses the same
+`rocm_tools/rdna2/multi_gpu.py` helpers.
+
+**Flags (EXL3 only):**
+
+```bash
+/opt/venv/bin/python /src/rocm_tools/rdna2/bench.py \
+    -m /work/models/qwen3-8b-exl3-4bpw --mode bench \
+    --use-per-device 3 4 --cache-tokens 8704 \
+    --contexts 512 2048 8192 --new-tokens 256 \
+    --json-out /work/phase3/bench_ls_d.json
+
+/opt/venv/bin/python /src/rocm_tools/rdna2/collect_top1.py \
+    --manifest /work/phase3/manifest_qwen3_8b.json \
+    --backend exl3 -m /work/models/qwen3-8b-exl3-4bpw \
+    --use-per-device 3 4 --cache-tokens 8704 \
+    --execution chunked --chunk-size 1 \
+    -o /work/phase3/top1_ls_d_chunked1.json
+```
+
+- `--use-per-device GIB GIB ...`: **GiB** budgets (the engine converts
+  `int(gib*1024**3)`), applied **on top of** memory already allocated when
+  `load()` is called, mapped 1:1 to visible device order (`cuda:0`, `cuda:1`,
+  ...). At least two values, all finite and > 0 (0 would *exclude* a device,
+  which is not a forced split). The budgets decide where the autosplit loader
+  *closes* each device — the actual outcome is measured, never assumed.
+- Split gate (before loading): ROCm torch build; the visible GPU count must
+  **equal** the budget count (never a partial split, never an extra device);
+  **every** visible device's `gcnArchName` must equal `--expect-arch`
+  (`gfx1030`). Each device's index, name, gcnArchName, total memory, `uuid`
+  and `pci_bus_id` are captured from torch device properties directly (no
+  sysfs guesswork) into the artifact.
+- `--cache-tokens` (`bench.py` already had it; new on `collect_top1.py`): the
+  paged KV cache is allocated **before** `model.load()`, so in a split its
+  layers land on the devices owning their attention modules — cache size
+  changes the split point. `collect_top1` chunked keeps the old auto sizing
+  (max(4096, load chunk, longest case), page-rounded) as default and refuses
+  a `--cache-tokens` **below** that required capacity; bulk stays cache-free
+  by default, and when `--cache-tokens` is *given* the cache is allocated
+  anyway for placement parity with an identically sized bench run while the
+  bulk forward still ignores it (`cache_max_seq_len` vs `uses_kv_cache`
+  are labeled separately). Use the same value (e.g. 8704) and the same
+  `--load-max-chunk-size`/`max-chunk-size` (2048) across bench and collect so
+  their splits are comparable.
+
+**Forcing a real split is verified by audit, not inferred from budgets.**
+After a split load `multi_gpu.audit_placement()` reads the live objects:
+every module's `.device` (recursively, submodules must agree with their top
+module), each cache layer's recorded device **and** its backing `k`/`v`
+tensor devices vs the **owning attention module's** device (empty storage
+fails), transformer ownership per device decided by capability flags and the
+`layers.<N>` key pattern (never `layer_idx`, which this fork also assigns to
+embed/head — a card holding only embed/head fails the ownership check),
+contiguous device progression in forward order (one run per device; 0→1→0
+interleaving fails), and cross-checks against the loader's own
+`model.active_devices` and `output_device`. The full ordered module +
+cache-layer records, per-device transformer/cache counts and per-device
+memory after load are stored in the artifact (`bench.py`: `layer_split`;
+`collect_top1.py`: `execution.layer_split`). An audit failure is
+**fail-closed**: bench records it, runs zero jobs and still writes the JSON
+nonzero; collect records it in the artifact, collects nothing and exits
+nonzero. No throughput or top-1 numbers are ever emitted for an unverified
+split.
+
+**Split-mode measurement hygiene:** at job boundaries only (never per token)
+`torch.cuda.synchronize` + `reset_peak_memory_stats` run on **all** used
+devices; each job row carries per-device `peak/allocated/reserved`
+(`memory_after_job`) and the per-job `device_copy_delta` of the engine's
+cross-device transfer counters (`direct`/`bounced`/`probes`); summary entries
+add `peak_mem_bytes_max_per_device` (and `device_copy_delta_total` in split).
+All pre-existing single-GPU output keys and the ITL/fresh-input/strict-length
+enforcement are unchanged; input RNG order is identical and every row keeps
+its `ids_sha256`.
+
+No performance claims are made here: what a given budget pair delivers
+(split point, per-device layer counts, decode cost of cross-device state
+movement) is exactly what the Phase-3 GPU runs measure; the artifacts above
+carry the per-device and transfer evidence for that analysis.
+
 ## CPU tests
 
 ```bash
 python3 -m unittest discover -s /src/rocm_tools/rdna2/tests -v
 ```
 
-Tests in the harness's four CPU suites — `test_harness_cpu.py` (28),
-`test_bench_itl_cpu.py` (14), and the two gfx1030-patch helper suites
+Tests in the harness's five CPU suites — `test_harness_cpu.py` (28),
+`test_bench_itl_cpu.py` (14), the two gfx1030-patch helper suites
 `test_mlp_range_balance_cpu.py` (21) and `test_gqa_decode_tune_cpu.py`
-(27), stdlib plus CPU torch only (`unittest`, `tempfile`; the helper
+(27), and the Phase-3 layer-split suite `test_ls_split_cpu.py` (44), stdlib
+plus CPU torch only (`unittest`, `tempfile`; the helper
 modules are loaded from file so no compiled extension is ever imported).
 Compare accepts a well-formed pair and computes hand-checked agreement (10/12 with
 two flips localized to
@@ -273,6 +365,20 @@ eligibility/geometry/signature/alignment decision tables of
 `exllamav3/rocm_py/gqa_decode_tune.py` — including source-order guards on
 `bc_attn.BCAttn._configure` (cache pointers gate tuning before geometry;
 statics asserted aligned before slot registration) — without a GPU or model.
+The Phase-3 suite drives the real `multi_gpu.py` gates/auditor and the new
+CLI wiring with duck-typed fakes: budget validation (<2/zero/negative/NaN/Inf
+refused, order kept), split gate (no-ROCm, wrong visible count both ways, any
+arch mismatch), `plan_load_mode` (no budgets = single always; explicit is the
+only split path), single-GPU regression (pair visible → still refused with a
+flag hint), per-device memory/sync/reset/`diff_transfer_stats`, and placement
+audit outcomes proven on fake module trees (valid contiguous 3+3 passes with
+ordered records; embed/head-only card rejected by caps-based transformer
+ownership; interleaved 0→1→0 rejected; missing module device, stray `cuda:5`
+(no crash, clear problem), submodule disagreement, cache device vs owning
+attention, remote k/v tensor, empty cache storage, `active_devices` mismatch,
+cache-free bulk pass-through, prefer_cpu embed allowed). These prove the
+reject/accept logic only — GPU success is established exclusively by the
+container runs' artifacts.
 
 ## Limitations / to validate at runtime (GPU, by orchestrator/runtime agent)
 

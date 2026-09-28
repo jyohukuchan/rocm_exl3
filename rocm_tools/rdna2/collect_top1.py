@@ -42,10 +42,24 @@ transformers (unquantized source reference, e.g. the Qwen3-8B BF16 dir):
 Output: JSON with per-case top-1 IDs, manifest/case/input hashes, model and
 config fingerprints, environment (python/torch/HIP/GPU, EXL3_ROCM_* switches that
 distinguish conservative vs optimized executions) and all run parameters.
-Runtime note (as of 2026-09-28, from the runtime agent): on this stack the
-default EXL3 BC attention HANGS at module load; run exl3 collections with
-EXL3_BC_ATTN=0 (verified to generate coherent Qwen3-8B with finite logits).
-The switch set actually in effect is captured into every artifact's env block.
+Runtime note (updated 2026-09-29): the earlier "default EXL3 BC attention HANGS
+at module load" claim was a MISATTRIBUTION -- it coincided with a concurrent GPU
+probe on the same card. Default BC attention works on this stack (isolated warm
+plain and fresh-cache plain runs generate correctly and exit 0), so normal
+commands do NOT set EXL3_BC_ATTN=0; that switch remains a diagnostic for
+bisecting the attention path under contention only. The switch set actually in
+effect is captured into every artifact's env block.
+Phase 3: exl3 collections can run on the gfx1030 PAIR as an audited LAYER SPLIT
+(official model.load(use_per_device=[GiB,...]) autosplit API, no device
+argument -- not tensor parallelism). --use-per-device is EXL3-only and refused
+on the transformers backend; --cache-tokens sizes the KV cache allocated before
+load so a split places identically to an equally sized bench run (bulk stays
+cache-free by default; if forced, cache_max_seq_len and uses_kv_cache are
+labeled separately). The gate (ROCm, visible count == budget count, EVERY
+device gcnArchName == --expect-arch) plus the verified placement audit (per
+module/cache layer + backing k/v tensors, contiguous device progression) are
+recorded in the artifact under execution.layer_split; collection refuses to run
+on an unverified split.
 total_positions is ALWAYS relative to the full manifest: running a subset with
 --limit-cases yields collected < total, which marks the artifact incomplete and
 makes comparison refuse it -- two identically truncated artifacts cannot pass.
@@ -70,18 +84,29 @@ Examples
         --backend transformers -m /work/models/qwen3-30b-a3b-bf16 \
         --device cpu -o /work/phase0/top1_ref_30b_cpu.json
 
-    # EXL3 bulk-prefill candidate
-    EXL3_BC_ATTN=0 /opt/venv/bin/python rocm_tools/rdna2/collect_top1.py \
+    # EXL3 bulk-prefill candidate (default BC attention ON -- verified working)
+    /opt/venv/bin/python rocm_tools/rdna2/collect_top1.py \
         --manifest /work/phase0/manifest_qwen3_8b.json \
         --backend exl3 -m /work/models/qwen3-8b-exl3-4bpw \
         --execution bulk -o /work/phase0/top1_cand_exl3_bulk.json
 
     # EXL3 autoregressive (decode-route) candidate
-    EXL3_BC_ATTN=0 /opt/venv/bin/python rocm_tools/rdna2/collect_top1.py \
+    /opt/venv/bin/python rocm_tools/rdna2/collect_top1.py \
         --manifest /work/phase0/manifest_qwen3_8b.json \
         --backend exl3 -m /work/models/qwen3-8b-exl3-4bpw \
         --execution chunked --chunk-size 1 \
         -o /work/phase0/top1_cand_exl3_chunked1.json
+
+    # Phase 3: audited LAYER SPLIT over both gfx1030 V620s. --cache-tokens 8704
+    # (both executions) so the split point matches an identically sized bench
+    # run; the placement audit lands in execution.layer_split and collection
+    # refuses to run on an unverified split.
+    /opt/venv/bin/python rocm_tools/rdna2/collect_top1.py \
+        --manifest /work/phase0/manifest_qwen3_8b.json \
+        --backend exl3 -m /work/models/qwen3-8b-exl3-4bpw \
+        --use-per-device 3 4 --cache-tokens 8704 \
+        --execution chunked --chunk-size 1 \
+        -o /work/phase3/top1_ls_exl3_chunked1.json
 """
 
 from __future__ import annotations
@@ -112,6 +137,51 @@ from rocm_tools.rdna2.common import (
     visible_gpu_env,
     write_json,
 )
+from rocm_tools.rdna2 import multi_gpu   # stdlib-only at import (CPU-safe)
+
+
+def check_cli_options(args) -> None:
+    """Backend cross-checks that need no GPU/torch: validate budgets once and
+    refuse EXL3-only options (--use-per-device, --cache-tokens) on the
+    transformers backend before anything loads."""
+    try:
+        budgets = multi_gpu.validate_use_per_device(args.use_per_device)
+    except ValueError as e:
+        raise SystemExit(f" !! FATAL: {e}")
+    multi_gpu.reject_split_on_transformers(args.backend, budgets)
+    if args.backend == "transformers" and getattr(args, "cache_tokens", None) is not None:
+        raise SystemExit(" !! FATAL: --cache-tokens is an exl3 paged-KV-cache option; the "
+                         "transformers backend runs use_cache=False and never allocates one")
+    if getattr(args, "cache_tokens", None) is not None and args.cache_tokens < 1:
+        raise SystemExit(f" !! FATAL: --cache-tokens must be >= 1 (got {args.cache_tokens})")
+
+
+def compute_cache_tokens(args, max_case_len: int) -> int | None:
+    """
+    KV-cache capacity to allocate BEFORE model.load() (cache tensors are
+    allocated with the layers; in a layer split they land on the devices that
+    own the attention modules).
+
+      chunked: required = max(4096, load_max_chunk_size, max_case_len); the
+               default (no --cache-tokens) is exactly the old auto size.
+      bulk:    no cache by default (cache-free whole-sequence forward). If
+               --cache-tokens IS given, allocate it anyway so the split
+               placement matches an identically-sized bench run; the bulk
+               forward still ignores the cache (uses_kv_cache stays False,
+               the allocation is recorded separately as cache_max_seq_len).
+      --cache-tokens below the required capacity is refused, never clamped.
+    """
+    required = max(4096, args.load_max_chunk_size, max_case_len)
+    if args.cache_tokens is not None:
+        if args.cache_tokens < required:
+            raise SystemExit(
+                f" !! FATAL: --cache-tokens {args.cache_tokens} is below the required capacity "
+                f"{required} (max(4096, load-max-chunk-size {args.load_max_chunk_size}, longest "
+                f"case {max_case_len})) -- raise it, don't under-allocate")
+        return round_up_page(args.cache_tokens)
+    if args.execution == "chunked":
+        return round_up_page(required)
+    return None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -132,8 +202,25 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--chunk-size", type = int, default = None,
                     help = "exl3 chunked: tokens per cached forward step; 1 = autoregressive decode route")
     ap.add_argument("--load-max-chunk-size", type = int, default = 2048,
-                    help = "exl3: max_chunk_size passed to model.load() (single-device load; "
-                           "also the sanity bound on --chunk-size)")
+                    help = "exl3: max_chunk_size passed to model.load() (bounds the load-time "
+                           "dummy forward, incl. the split autosplit; also the sanity bound on "
+                           "--chunk-size)")
+    ap.add_argument("--use-per-device", type = float, nargs = "+", default = None,
+                    metavar = "GIB",
+                    help = "exl3 only: FORCE a layer split (not TP) through the official "
+                           "model.load(use_per_device=[...]) autosplit API, without a device "
+                           "argument. At least two finite positive GiB budgets, one per visible "
+                           "GPU in cuda:0, cuda:1... order; the visible device count must equal "
+                           "it and every device must match --expect-arch. Placement is audited "
+                           "after load and recorded in the artifact")
+    ap.add_argument("--cache-tokens", type = int, default = None,
+                    help = "exl3 only: KV-cache capacity allocated BEFORE load (must be >= "
+                           "max(4096, --load-max-chunk-size, longest case)). Chunked: defaults to "
+                           "that auto size. Bulk: no cache by default; giving this flag allocates "
+                           "the cache anyway so a split places identically to an identically "
+                           "sized bench run -- bulk forward still ignores it (uses_kv_cache=false)")
+    ap.add_argument("--expect-arch", default = "gfx1030",
+                    help = "exl3 layer split only: required gcnArchName of EVERY visible GPU")
     ap.add_argument("--dtype", choices = DTYPE_KEYS, default = "auto",
                     help = "transformers only: load dtype. auto (default) keeps the "
                            "checkpoint's declared torch_dtype so a BF16 source gives a "
@@ -168,10 +255,18 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
     import torch
     from exllamav3 import Cache, Config, Model, Tokenizer
     from exllamav3.constants import PAGE_SIZE as EXL_PAGE_SIZE
+    from exllamav3.util import device_copy
 
     if not args.device.startswith("cuda"):
         raise SystemExit(f" !! exl3 backend needs a ROCm/CUDA device, got --device {args.device!r} "
                          f"(use --backend transformers --device cpu for host-RAM references)")
+
+    budgets = multi_gpu.validate_use_per_device(args.use_per_device)
+    plan = multi_gpu.plan_load_mode(torch, budgets, args.expect_arch)
+    split = plan["mode"] == "layer_split"
+    if split and args.device not in ("cuda:0", "cuda"):
+        raise SystemExit(f" !! FATAL: --device must stay cuda:0 with --use-per-device "
+                         f"(the split spans all visible devices; --device is unused there)")
 
     all_cases = manifest["cases"]
     cases = all_cases
@@ -182,6 +277,8 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
             raise SystemExit(f" !! --limit-cases matched no manifest case ({wanted})")
 
     model = None
+    placement = None
+    mem_after_load = None
     try:
         config = Config.from_directory(args.model_dir)
         tokenizer = Tokenizer.from_config(config)
@@ -204,23 +301,41 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
                 raise SystemExit(f" !! --chunk-size {chunk} exceeds --load-max-chunk-size "
                                  f"{args.load_max_chunk_size}; raise the latter")
 
+        # Cache must exist BEFORE load so cache tensors get allocated with the
+        # layers (in a split: on the devices owning their attention modules).
+        # Bulk without --cache-tokens stays cache-free exactly as before.
+        max_case_len = max(c["len_ids"] for c in cases)
+        cache_max_seq_len = compute_cache_tokens(args, max_case_len)
         cache = None
-        cache_max_seq_len = None
-        if execution == "chunked":
-            # bsz=1, one case at a time, pages reused across cases (each case rewrites
-            # from page 0 and reads only its own prefix), so the cache only needs to
-            # hold the longest case. Floored at max(4096, load_max_chunk_size):
-            # model.load() runs a dummy forward at max_chunk_size and asserts cache
-            # capacity (see bench_model.py).
-            max_len = max(c["len_ids"] for c in cases)
-            cache_max_seq_len = round_up_page(max(4096, args.load_max_chunk_size, max_len))
+        if cache_max_seq_len is not None:
             cache = Cache(model, max_num_tokens = cache_max_seq_len)
 
-        # Cache must exist BEFORE load so cache tensors get allocated with the layers.
-        model.load(device = args.device, max_chunk_size = args.load_max_chunk_size)
+        if split:
+            load_kwargs = {"max_chunk_size": args.load_max_chunk_size}
+            if plan["budgets"] is not None:
+                load_kwargs["use_per_device"] = plan["budgets"]
+            model.load(**load_kwargs)   # NO device argument -- engine autosplit
+            expect_idx = list(range(plan["gate"]["visible_devices"]))
+            multi_gpu.sync_devices(torch, expect_idx)
+            copy_after_load = dict(device_copy.stats)
+            mem_after_load = multi_gpu.device_memory_snapshot(torch, expect_idx)
+            placement = multi_gpu.audit_placement(model, expect_idx)
+            print(f" -- loaded {args.model_dir} as LAYER SPLIT (budgets "
+                  f"{plan['budgets']} GiB over {len(expect_idx)}x "
+                  f"{args.expect_arch}); transformer modules per device: "
+                  f"{placement['transformer_modules_per_device']}, cache layers per device: "
+                  f"{placement['cache_layers_per_device']}, audit: "
+                  f"{'OK' if placement['ok'] else 'FAILED'}", flush = True)
+            if not placement["ok"]:
+                for p in placement["problems"]:
+                    print(f"    AUDIT FAIL: {p}", file = sys.stderr)
+            ids_device = multi_gpu.device_key(expect_idx[0])
+        else:
+            model.load(device = args.device, max_chunk_size = args.load_max_chunk_size)
+            ids_device = args.device
 
         def run_case(case):
-            ids_t = torch.tensor([case["ids"]], dtype = torch.long, device = args.device)
+            ids_t = torch.tensor([case["ids"]], dtype = torch.long, device = ids_device)
             positions = case["positions"]
             top1 = [None] * len(positions)
             nonfinite = []
@@ -274,7 +389,15 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
         results = {}
         errors = []
         collected = 0
-        for case in cases:
+        audit_failed = split and placement is not None and not placement["ok"]
+        if audit_failed:
+            # Fail-closed, but auditable: zero positions collected makes the
+            # artifact incomplete -> nonzero exit; the failed placement record
+            # still lands in execution.layer_split.placement_audit.
+            errors.append("layer-split placement audit failed: "
+                          + "; ".join(placement["problems"])
+                          + " -- no cases were collected on an unverified split")
+        for case in ([] if audit_failed else cases):
             cid = case["case_id"]
             try:
                 top1, nonfinite = run_case(case)
@@ -315,8 +438,29 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
             "attn_mode": "flash_attn_nc" if execution == "bulk" else "flash_attn",
             "uses_kv_cache": execution == "chunked",
             "cache_max_seq_len": cache_max_seq_len,
+            "cache_requested_tokens": args.cache_tokens,
             "exl3_page_size": EXL_PAGE_SIZE,
             "load_max_chunk_size": args.load_max_chunk_size,
+            "input_ids_device": ids_device,
+            "load_mode": plan["mode"],
+            "layer_split": ({
+                "enabled": True,
+                "use_per_device_gib": plan["budgets"],
+                "budget_semantics": "GiB per visible GPU (engine converts int(gib*1024**3)), "
+                                     "applied ON TOP of memory already allocated at load() time; "
+                                     "maps 1:1 to visible order",
+                "load_call": "model.load(use_per_device=..., max_chunk_size=...) -- no device "
+                             "argument (engine forbids combining them)",
+                "gate": plan["gate"],
+                "placement_audit": placement,
+                "memory_after_load_per_device": mem_after_load,
+                "device_copy_stats_after_load": copy_after_load,
+                "device_copy_stats_at_end": dict(device_copy.stats),
+            } if split else {
+                "enabled": False,
+                "use_per_device_gib": None,
+                "placement_audit": None,
+            }),
             "dtype_label": "EXL3 quantized weights; logits upcast per row for argmax",
             "teacher_forcing": "manifest literal IDs only; no generated continuation",
         }
@@ -508,6 +652,7 @@ def cuda_devices():
 
 
 def run(args) -> int:
+    check_cli_options(args)   # refuses EXL3-only options on transformers, validates budgets
     manifest = read_json(args.manifest)
     errors = validate_manifest(manifest)
     if errors:

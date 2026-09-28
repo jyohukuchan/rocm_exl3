@@ -114,5 +114,23 @@ class TestTokenIntervals(unittest.TestCase):
         self.assertTrue(all(s > 0.0 for s in samples))
 
 
+class ObservedTimingTests(unittest.TestCase):
+    def test_slow_first_token_is_not_steady_decode_time(self):
+        timing = bench.observed_timing([(150.0, 1), (151.0, 2), (153.0, 3)], 100.0)
+        self.assertEqual(timing["first_token_wall_ms"], 50000.0)
+        self.assertEqual(timing["decode_observed_s"], 3.0)
+        self.assertAlmostEqual(timing["decode_observed_tps"], 2 / 3)
+
+    def test_prefill_only_has_no_decode_rate(self):
+        timing = bench.observed_timing([(2.0, 1)], 1.0)
+        self.assertEqual(timing["first_token_wall_ms"], 1000.0)
+        self.assertIsNone(timing["decode_observed_tps"])
+
+    def test_missing_or_invalid_first_event_is_refused(self):
+        for events in ([], [(1.0, 1)]):
+            with self.assertRaises(ValueError):
+                bench.observed_timing(events, 1.0)
+
+
 if __name__ == "__main__":
     unittest.main()
