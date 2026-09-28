@@ -4,6 +4,42 @@
 Qwen3-30B-A3B EXL3 3bpw（M）。TPおよびQwen3.8大型モデルは後続段階。
 この文書は途中経過であり、正式な品質・速度・連続実行の合格宣言ではない。
 
+## SDMA無効・固定性能設定での合格結果（処理時間の最終監査は継続中）
+
+推奨候補は **`HSA_ENABLE_SDMA=0` + 推論中のみ両V620を `profile_peak`**。
+Dは `[2.7, 4]` GiBで19/17層、Mは `[6.1, 8]` GiBで24/24層。
+同じ量子化checkpointの1GPU参照に対し、両モデルともbulk/decode各1024位置のtop1が100%一致。
+両モデルで8K+256の全logits有限、36連続jobの通常終了を確認した。
+全36入力SHA256は元の1GPU benchmarkと一致。FP16 KV/cache8704、batch1、chunk2048、生成256、seed1234、warm1+timed5。
+1GPU欄はPhase2のauto基準、2GPU欄はprofile_peak・SDMA無効。同じpolicyでの対照も別途取得する。
+
+| モデル | 入力 | 1GPU prefill t/s | 2GPU prefill t/s | 1GPU decode t/s | 2GPU decode t/s |
+|---|---:|---:|---:|---:|---:|
+| 8B 4bpw | 512 | 1131.3 | 1105.0 | 58.5 | 58.5 |
+| 8B 4bpw | 2048 | 1155.3 | 1114.0 | 57.6 | 57.5 |
+| 8B 4bpw | 8192 | 906.2 | 1269.0 | 47.8 | 47.8 |
+| 30B-A3B 3bpw | 512 | 471.5 | 471.2 | 70.6 | 70.1 |
+| 30B-A3B 3bpw | 2048 | 967.9 | 968.4 | 69.2 | 68.6 |
+| 30B-A3B 3bpw | 8192 | 742.5 | 744.9 | 56.9 | 56.7 |
+
+全12速度群のspreadは0.2〜2.2%以内。Dのallocated VRAMはwarm後一定。Mは2K向けbufferが各device128KiB増えた後、以降の全groupで一定。
+最新の根拠は `runs/two-gpu/acceptance-sdma0-audit.json` と `acceptance-sdma0-process-status.json`。
+通常の推論・品質・長文試験は全てexit0。GPU policyはcontrollerのfinallyで元のautoへ復元した。
+
+### 速度低下と同期停止の切り分け
+
+- 初期のauto設定ではD decodeが約36〜37t/sへ低下。GPU間コピーは数値一致し、転送API時間は小さい。
+- GPUの詳細metricsで前段43カードのGFXCLK低下を確認。通常のSMI/pp_dpm_sclkは0MHz等を返し、このカードのコアクロック確認には使えなかった。
+- 同じ短文試験のauto→high→profile_peak→autoは36.98→58.82→58.68→36.83t/s。最初の別high試験では改善しなかった事実も保持し、profile_peakを確認対象に選んだ。
+- 層ごとのdevice context変更は+0.2%で不採用。host bounceも速度低下を解消しなかった。
+- 別にSDMA有効・autoで長いGPU同期待ちが再現。Mの同じ2K入力で約28/2.1/22秒、8K warmupで長時間停止。再有効化した確認でも28/2.1/22秒となり、試験全体は180秒でtimeout(exit124)。
+- SDMA無効では同じMの2K入力が2.14〜2.17秒、8K入力が10.76〜10.79秒で完了し、さらに上記の両モデル36job・品質試験を通過した。ドライバ内部の原因までは断定しない。
+- `profile_peak`は待機時にも高クロックを維持するため、実行期間に限定し元の設定を保存・復元する。
+
+生成器の従来`time_first_token`は最初のdecode forwardより前に設定され、初回token待ちが`time_generate`に入る。
+既存比較用の値を残し、harnessに実際の`first_token_wall_ms`と`decode_observed_tps`も追加した。
+初期runの大きな外れ値は削除していない。現在のSDMA無効の正式runでは全群が5%のばらつき基準内。
+
 ## 環境と再現
 
 既存 `rocm-exl3-phase2-env:tested` imageから `rocm-exl3-v620-pair` containerを作成。
