@@ -22,13 +22,14 @@ git diff --stat v1.5.0 -- '*.cu' '*.cuh' '*.cpp' '*.h' ':(exclude)exllamav3/exll
 # (empty)
 ```
 
-Outside `rocm/`, `rocm_py/` and `rocm_tools/`, exactly four upstream files differ from v1.5.0, plus one added file
+Outside `rocm/`, `rocm_py/` and `rocm_tools/`, five upstream code/README files differ from v1.5.0, alongside local validation documentation, plus one added file
 (`requirements_rocm.txt`) and one ignore line in `.gitignore`:
 
 | file | change |
 |---|---|
 | `setup.py` | ROCm backend selector and `hipcc` builder. All ROCm behaviour is inside `HIPBuildExtension`, so a CUDA build is untouched upstream code. |
 | `exllamav3/__init__.py` | Six lines calling `rocm_py.apply()` at the end of package init. Returns immediately when `torch.version.hip` is `None`, so it is inert on CUDA. |
+| `exllamav3/modules/attention_fn/bc_attn.py` | gfx1030 FP16 BC decode-attention tuning in `BCAttn._configure`: the GQA head tile narrows to the group size and the AOT decode signatures get verified `:16` alignment hints. Gated to HIP + gfx1030 + the validated decode shape family (provenance and the alignment contract: `rocm_py/gqa_decode_tune.py`); every other shape, device and build — CUDA included — keeps the original geometry and signatures. `EXL3_ROCM_GQA_TUNE=0` opts out. |
 | `exllamav3/modules/attention_fn/triton_paged.py` | Selects the narrow-KV prefill tile explicitly on RDNA instead of relying on `get_device_capability()` accidentally reporting `(11, 5)`, plus measured notes on decode split counts. |
 | `README.md` | This section. |
 
@@ -36,14 +37,14 @@ Outside `rocm/`, `rocm_py/` and `rocm_tools/`, exactly four upstream files diffe
 git diff --stat v1.5.0 -- . ':(exclude)exllamav3/exllamav3_ext/rocm' ':(exclude)exllamav3/rocm_py' ':(exclude)rocm_tools'
 ```
 
-That is the whole surface. Rebasing onto a new upstream means re-applying four files, none of them kernels.
+The table lists the upstream integration points; local validation documentation is under `doc/`.
 
 ### Requirements
 
 | | |
 |---|---|
 | ROCm | **7.2.4 or newer** — the build hard-fails below this |
-| GPU | RDNA3 / RDNA3.5: `gfx1100`, `gfx1101`, `gfx1102`, `gfx1150`, `gfx1151` — developed and validated on gfx1151. RDNA4 (`gfx1200`, `gfx1201`): builds and should run, but MoE models take a slower per-expert path (the fused MoE kernel's WMMA has no gfx12 encoding) and no RDNA4 hardware has validated the port — reports welcome. |
+| GPU | RDNA2 `gfx1030` (V620): experimental single-GPU support, validated on Qwen3-8B EXL3 4bpw and Qwen3-30B-A3B EXL3 3bpw. See [V620 results](doc/rdna2_phase2_results.md) for the tested mixed runtime and limits. RDNA3 / RDNA3.5: `gfx1100`, `gfx1101`, `gfx1102`, `gfx1150`, `gfx1151` — developed and validated on gfx1151. RDNA4 (`gfx1200`, `gfx1201`): builds and should run, but MoE models take a slower per-expert path (the fused MoE kernel's WMMA has no gfx12 encoding) and no RDNA4 hardware has validated the port — reports welcome. |
 | Python | 3.10+ (whatever the ROCm torch index publishes a wheel for) |
 | Torch | ROCm build, from `download.pytorch.org/whl/rocmX.Y` — see below |
 

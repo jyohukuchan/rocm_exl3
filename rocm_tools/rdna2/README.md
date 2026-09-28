@@ -161,11 +161,11 @@ Prints both model roots, config fingerprints, execution modes, git commits and
 env switches **before** the agreement rate. Exit codes: `0` valid comparison
 (≥ threshold if given), `1` rejected (different manifest/positions/vocab,
 incomplete or truncated results, error records, non-finite logit flags,
-out-of-vocab IDs), `2` agreement below `--min-agreement`. Recommended
-thresholds (orchestrator to confirm on first runs): same-checkpoint
-conservative-vs-optimized and bulk-vs-chunked rows should be ≈1.0 (any real
-divergence is kernel-path error); the transformers-vs-exl3 row is a
-quantization-quality expectation, typically 0.97-0.995 at 4 bpw on Qwen3-8B.
+out-of-vocab IDs), `2` agreement below `--min-agreement`. Acceptance thresholds are recorded in `doc/rdna2_port_plan.md`: source
+BF16 agreement >=90% for D and >=80% for M; same-checkpoint optimization
+agreement >=99%. For low-margin path differences, full-vocabulary KLD may
+be used instead (M bulk/chunk1: mean <=0.01 nats and p99 <=0.05, declared
+before measurement). Source-reference agreement includes quantization error.
 
 ### 5. Smoke + benchmark (exl3, gated to the single V620)
 
@@ -216,15 +216,45 @@ process exit — no `os._exit`. If native teardown still segfaults on some
 builds (this fork documents such crashes), the JSON file and the RESULT line
 were already emitted: judge by the artifacts.
 
+### 6. gfx1030 BC decode-attention tuning (in tree; root verification, serial GPU)
+
+The prototype A/B (`/work/runs/d-aot-{base,align,rows,both}.json`, inputs
+hash-matched via `/work/runs/aot-experiment-index.json`) is implemented in
+`bc_attn.BCAttn._configure`; the decision tables and the pointer-alignment
+contract live in `exllamav3/rocm_py/gqa_decode_tune.py`. Verify the in-tree
+build against the same protocol (8192-prompt / 64-output, warmup 1 + 2
+repeats; prototype measured 17.6 -> 47.2 tok/s on D and 29.5 -> 56.3 on M):
+
+```bash
+# OFF baseline first; both runs must report identical input-token hashes
+EXL3_ROCM_GQA_TUNE=0 /opt/venv/bin/python /src/rocm_tools/rdna2/bench.py \
+    -m /work/models/qwen3-8b-exl3-4bpw --mode bench \
+    --contexts 8192 --new-tokens 64 --repeats 2 --warmup 1 --seed 1234 \
+    --max-chunk-size 2048 --json-out /work/runs/d-tune-off.json
+/opt/venv/bin/python /src/rocm_tools/rdna2/bench.py \
+    -m /work/models/qwen3-8b-exl3-4bpw --mode bench \
+    --contexts 8192 --new-tokens 64 --repeats 2 --warmup 1 --seed 1234 \
+    --max-chunk-size 2048 --json-out /work/runs/d-tune-on.json
+```
+
+Numerics gate: a tuned-vs-off `collect_top1` pair on the same manifest and
+execution mode through `compare_top1` (prototype expectation: top-1
+agreement D 1021/1024, M 1024/1024). Repeat the pair for the M model dir
+recorded in the A/B index (`num_kv_heads == 4`); eligibility is
+device/shape-gated, so non-gfx1030 hosts run identical code paths to before.
+
 ## CPU tests
 
 ```bash
 python3 -m unittest discover -s /src/rocm_tools/rdna2/tests -v
 ```
 
-Tests in the harness's two CPU suites — `test_harness_cpu.py` (28) and
-`test_bench_itl_cpu.py` (14), stdlib only (`unittest`, `tempfile`): compare
-accepts a well-formed pair and computes hand-checked agreement (10/12 with
+Tests in the harness's four CPU suites — `test_harness_cpu.py` (28),
+`test_bench_itl_cpu.py` (14), and the two gfx1030-patch helper suites
+`test_mlp_range_balance_cpu.py` (21) and `test_gqa_decode_tune_cpu.py`
+(27), stdlib plus CPU torch only (`unittest`, `tempfile`; the helper
+modules are loaded from file so no compiled extension is ever imported).
+Compare accepts a well-formed pair and computes hand-checked agreement (10/12 with
 two flips localized to
 positions 2 and 6); rejects mismatched manifests/positions/vocab, incomplete,
 error-status, non-finite, out-of-vocab, missing-case and **identically
@@ -237,27 +267,31 @@ fallbacks labeled); bench's nearest-rank `percentile()` against hand-checked
 known samples (including the ceil-boundary ranks), and `token_intervals()` on
 synthetic event streams (first-token anchor excluded ⇒ N-1 samples for plain
 AR, non-positive dt dropped, multi-token jumps reported as bursts that
-contribute no averaged sample).
+contribute no averaged sample). The helper suites drive the real
+eligibility/geometry/signature/alignment decision tables of
+`exllamav3/rocm_py/mlp_range_balance.py` and
+`exllamav3/rocm_py/gqa_decode_tune.py` — including source-order guards on
+`bc_attn.BCAttn._configure` (cache pointers gate tuning before geometry;
+statics asserted aligned before slot registration) — without a GPU or model.
 
 ## Limitations / to validate at runtime (GPU, by orchestrator/runtime agent)
 
-1. **Nothing GPU has been executed by these tools yet.** The exl3 chunked
+1. The exl3 chunked
    params mirror `eval/perf.py` (`attn_mode: flash_attn`, `past_len`,
    `batch_shape`) and the MTP full-chain prefill forward (`job.py`); bulk
    mirrors `eval/ppl.py`. The harness shape-checks logits (`(1, w, >=vocab)`,
-   row i = global s+i mapping in chunked mode) and refuses mismatches — but
-   first container runs must confirm those invariants on the RDNA2 build.
-2. Manifest token capacity (~2x1024) was estimated without running the
-   tokenizer; `manifest.py` hard-fails (with the true capacity) if a run's
-   tokenizer makes 1024 positions not fit, so it is safe by refusal. Both
-   source BF16 CPU references now complete with 1024 valid positions.
+   row i = global s+i mapping in chunked mode) and refuses mismatches — the
+   complete D/M GPU collections confirmed these invariants on gfx1030.
+2. Both frozen manifests contain 2009 tokens and 1024 selected positions.
+   Both source BF16 CPU references complete with 1024 valid positions.
+   `manifest.py` refuses requests beyond the actual tokenizer capacity.
 3. Top-1 fp16/bf16 ties (possible, rare) resolve by argmax's lowest-index rule
-   on both backends; a spurious disagreement would show as a handful of flipped
-   positions. `--dtype fp32` on the transformers side, or KLD mode, resolves
-   it.
-4. KLD / full-logit artifacts are intentionally out of scope (artifact
-   volume); extend `collect_top1` to dump fp16 logit rows and reuse
-   `exllamav3.util.measures.compute_kl_div` semantics if needed later.
+   on both backends. Low-margin disagreements can be characterized by
+   full-vocabulary KLD; changing reference dtype alone does not guarantee
+   identical argmax results.
+4. The CLI stores top-1 only. The separate full-vocabulary M KLD capture
+   and comparison scripts and artifacts are preserved in
+   `/home/homelab1/datapool/rocm-exl3-rdna2`; see the Phase 2 results report.
 5. Chunked C=1 over a 1024-position manifest is O(total tokens) forwards —
    slow by nature; use `--limit-cases` for localization (comparison then
    correctly refuses the partial file).
