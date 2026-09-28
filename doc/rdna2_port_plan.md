@@ -206,6 +206,14 @@ TPはモデル分割と通信backendの二層に分けて実装する。
 - 計測harnessはレビュー中（CPU test 21件成功、追加修正をOpenCodeへ依頼）。top-1実測とMoE生成、正式benchmark、速度改善は未完了。
 - OpenCode2.0.12はrelay/CLI終了後もdaemon sessionが継続する。実停止は `opencode api session.interrupt --param sessionID=...`、生存確認は `session.active`。観測timeoutだけで再dispatchしない。APIには `session.prompt` の `delivery=queue` があり、同一担当へレビュー修正を順番に渡せることを確認。
 
+精度・性能の続報（実装中）:
+
+- 初回BC読込停止はGPUテストの同時実行と重なっていた。単独の無修正warm再試行、新しいTriton cacheを使うcold再試行とも生成・通常終了に成功。同期追加が必要な修正とは証明できないため、BCを既定で無効にはしない。GPU処理は実プロセスを確認して直列化する。
+- DのPython3ケースは層2の `silu(gate)*up` がFP16上限を超過。gate/up各々は約314で有限、積が約9.9万となりInfになることを追跡確認。ロード後にup.svhを1/8、down.svhを8倍にする相殺スケーリングの試作で全1,024位置が有限となり、native BF16 CPU参照とのtop-1は969/1024=94.63%。遅延ロード後の一回適用としてOpenCode実装・検証中。
+- Mは既定bulk経路で936/1024=91.41%対BF16。2反復の予備測定はprefill512=473.6、prefill2048=969.3、decode512=52.0、decode2048=49.7 tok/s。正式5反復・8K・256-token試験はまだ未完了。
+- Mのbulk対chunk=1は1,005/1,024=98.14%一致で、従来の同一checkpoint99%目安を下回った。生成token完全一致へ戻すのではなく、全語彙分布のKLDを追加評価する。**測定前の受入条件**を `KL(P_bulk || P_chunk1)` の平均0.01 nats以下、p99が0.05以下、全1,024位置有限と定める。これを満たさなければ実装を調査し、閾値を結果に合わせて緩めない。BF16参照に対する各経路のtop-1も併記する。
+- Torch profilerはCPUイベントのみを出力し、GPUイベントは欠落。rocprofv3はこの混在runtimeでAPI登録error16となった。GPU時間0と解釈しない。CPU traceと既存kernel実測を診断に使い、性能の合否はGPU完了を伴うunprofiled benchmarkで判断する。GPU profiler対応自体の追加移植はPhase 0–2の前提にしない。
+
 ## 参照
 
 - [D: Qwen3-8B 4.0bpw](https://huggingface.co/turboderp/Qwen3-8B-exl3/tree/4.0bpw)
