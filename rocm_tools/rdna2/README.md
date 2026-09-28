@@ -29,11 +29,16 @@ the weights genuinely differ (quantization), so the rate is a quality signal,
 not an error budget.
 
 **Runtime state carried by the orchestrator (2026-09-28):** the extension
-builds/imports now; the **default EXL3 BC attention hangs at module load on
-this stack — run every exl3 command with `EXL3_BC_ATTN=0`** (verified to
-generate coherent Qwen3-8B with finite logits). The harness captures the
-EXL3*/EXL3_ROCM_* environment into every artifact, so the switch set used by a
-run is auditable afterwards.
+builds/imports now, and **plain default EXL3 (BC attention ON) works**: the
+isolated warm plain and fresh-cache plain runs both generated correctly and
+exited 0. The earlier "default EXL3 BC attention hangs at module load" finding
+was a misattribution — the initial hang coincided with a *concurrent* GPU probe
+on the same card. `EXL3_BC_ATTN=0` is therefore a **diagnostic-only** switch
+(bisecting the attention path), not a requirement in normal commands; both a
+sync-before-load wrapper and the unmodified plain load passed, so nothing here
+makes sync-before-load necessary either. The harness captures the EXL3*/EXL3_ROCM_*
+environment into every artifact, so the switch set used by a run is auditable
+afterwards.
 
 ## Ownership
 
@@ -104,22 +109,21 @@ with it). `--device cpu` is only valid for this backend.
 
 ```bash
 # bulk prefill route (cache-free whole-sequence forward, eval/ppl.py pattern)
-EXL3_BC_ATTN=0 /opt/venv/bin/python /src/rocm_tools/rdna2/collect_top1.py \
+/opt/venv/bin/python /src/rocm_tools/rdna2/collect_top1.py \
     --manifest /work/phase0/manifest_qwen3_8b.json \
     --backend exl3 -m /work/models/qwen3-8b-exl3-4bpw \
     --device cuda:0 --execution bulk --load-max-chunk-size 2048 \
     -o /work/phase0/top1_exl3_bulk.json
 
 # autoregressive / decode route (Model.forward with params/cache, chunk=1)
-EXL3_BC_ATTN=0 /opt/venv/bin/python /src/rocm_tools/rdna2/collect_top1.py \
+/opt/venv/bin/python /src/rocm_tools/rdna2/collect_top1.py \
     --manifest /work/phase0/manifest_qwen3_8b.json \
     --backend exl3 -m /work/models/qwen3-8b-exl3-4bpw \
     --device cuda:0 --execution chunked --chunk-size 1 \
     -o /work/phase0/top1_exl3_chunked1.json
 
 # conservative reference execution of the same checkpoint (bisect handle)
-EXL3_BC_ATTN=0 EXL3_ROCM_FORCE_TORCH=1 \
-/opt/venv/bin/python /src/rocm_tools/rdna2/collect_top1.py \
+EXL3_ROCM_FORCE_TORCH=1 /opt/venv/bin/python /src/rocm_tools/rdna2/collect_top1.py \
     --manifest /work/phase0/manifest_qwen3_8b.json \
     --backend exl3 -m /work/models/qwen3-8b-exl3-4bpw \
     --device cuda:0 --execution bulk \
@@ -167,12 +171,12 @@ quantization-quality expectation, typically 0.97-0.995 at 4 bpw on Qwen3-8B.
 
 ```bash
 # smoke: one run per job on the visible GPU; early EOS allowed but labeled
-EXL3_BC_ATTN=0 /opt/venv/bin/python /src/rocm_tools/rdna2/bench.py \
+/opt/venv/bin/python /src/rocm_tools/rdna2/bench.py \
     -m /work/models/qwen3-8b-exl3-4bpw --mode smoke \
     --json-out /work/phase0/bench_smoke.json
 
 # bench: warmup 1 + 5 timed repeats, prefill+decode at 512/2048/8192, out 256
-EXL3_BC_ATTN=0 /opt/venv/bin/python /src/rocm_tools/rdna2/bench.py \
+/opt/venv/bin/python /src/rocm_tools/rdna2/bench.py \
     -m /work/models/qwen3-8b-exl3-4bpw --mode bench \
     --contexts 512 2048 8192 --new-tokens 256 --repeats 5 --warmup 1 \
     --max-chunk-size 2048 --seed 1234 \
@@ -194,7 +198,19 @@ in a `finally` and its failure is recorded and forces nonzero exit. Metrics:
 TTFT = job `time_prefill`; TPOT = `time_generate/(new_tokens-1)`; prefill t/s,
 decode t/s, e2e t/s (formulas embedded in the JSON); per-run peak
 `torch.cuda.max_memory_allocated`; medians + spread with the 5% noise-floor
-flag (conventions from `rocm_tools/bench_model.py`). All rows/summary/params/
+flag (conventions from `rocm_tools/bench_model.py`). Per-token ITL (decode
+rows): `generator.iterate()` completions are timestamped with
+`time.perf_counter` — deliberately **no extra per-token
+`torch.cuda.synchronize`**, which would itself perturb the latency — and the
+increase of `job.new_tokens` (batch=1, spec decode asserted off ⇒ plain AR
+advances by +1 per round) gives the raw intervals. The first token is
+excluded (its dt carries prefill/TTFT), so N generated tokens ⇒ N-1 positive
+samples. Each decode run stores `itl_samples_ms` plus nearest-rank
+`itl_p50_ms`/`itl_p95_ms`; the summary merges the raw samples of all timed
+runs into `itl_ms` (one empirical distribution — distinct from the per-job
+mean `tpot_ms`). A multi-token increment is impossible in plain AR; it is
+recorded in `itl_bursts` and fails the row instead of being averaged into
+fake per-token samples. All rows/summary/params/
 seed/commit/env go to `--json-out`, written and fsynced before **normal**
 process exit — no `os._exit`. If native teardown still segfaults on some
 builds (this fork documents such crashes), the JSON file and the RESULT line
@@ -206,8 +222,10 @@ were already emitted: judge by the artifacts.
 python3 -m unittest discover -s /src/rocm_tools/rdna2/tests -v
 ```
 
-28 tests, stdlib only (`unittest`, `tempfile`): compare accepts a well-formed
-pair and computes hand-checked agreement (10/12 with two flips localized to
+Tests in the harness's two CPU suites — `test_harness_cpu.py` (28) and
+`test_bench_itl_cpu.py` (14), stdlib only (`unittest`, `tempfile`): compare
+accepts a well-formed pair and computes hand-checked agreement (10/12 with
+two flips localized to
 positions 2 and 6); rejects mismatched manifests/positions/vocab, incomplete,
 error-status, non-finite, out-of-vocab, missing-case and **identically
 truncated** artifacts (the `--limit-cases` regression: `total_positions` is
@@ -215,7 +233,11 @@ full-manifest-relative, and a subset pair is refused with or without
 `--manifest`); threshold exit codes 0/1/2; manifest digest tamper detection;
 position bounds/semantics validation; deterministic position selection and
 allocation; `--dtype auto` resolution (native BF16 kept, explicit wins,
-fallbacks labeled).
+fallbacks labeled); bench's nearest-rank `percentile()` against hand-checked
+known samples (including the ceil-boundary ranks), and `token_intervals()` on
+synthetic event streams (first-token anchor excluded ⇒ N-1 samples for plain
+AR, non-positive dt dropped, multi-token jumps reported as bursts that
+contribute no averaged sample).
 
 ## Limitations / to validate at runtime (GPU, by orchestrator/runtime agent)
 
@@ -225,9 +247,10 @@ fallbacks labeled).
    mirrors `eval/ppl.py`. The harness shape-checks logits (`(1, w, >=vocab)`,
    row i = global s+i mapping in chunked mode) and refuses mismatches — but
    first container runs must confirm those invariants on the RDNA2 build.
-2. Manifest token capacity (~2x1024) is estimated without running the
+2. Manifest token capacity (~2x1024) was estimated without running the
    tokenizer; `manifest.py` hard-fails (with the true capacity) if a run's
-   tokenizer makes 1024 positions not fit, so it is safe by refusal.
+   tokenizer makes 1024 positions not fit, so it is safe by refusal. Both
+   source BF16 CPU references now complete with 1024 valid positions.
 3. Top-1 fp16/bf16 ties (possible, rare) resolve by argmax's lowest-index rule
    on both backends; a spurious disagreement would show as a handful of flipped
    positions. `--dtype fp32` on the transformers side, or KLD mode, resolves
@@ -242,6 +265,14 @@ fallbacks labeled).
 7. Bench prompts are random in-vocab IDs (cold-cache throughput proxy, the
    `bench_model.py` convention), not natural text; quality is measured by the
    top-1 tools, not the bench.
-8. `EXL3_BC_ATTN=0` is required on the current stack for any exl3 model load
-   (runtime-agent finding 2026-09-28); this is an environment fact, not a
-   harness switch — the harness only records whether it was set.
+8. Troubleshooting (updated 2026-09-28): the default EXL3 BC attention is
+   **not** blocked on this stack — isolated warm plain and fresh-cache plain
+   runs generate correctly and exit 0. The original "hangs at module load"
+   observation coincided with a *concurrent GPU probe* on the same card, so:
+   run exactly one GPU workload at a time, and keep cold JIT/module-load time
+   out of the numbers (untimed warmup runs exist for this; do not fold
+   first-touch JIT into timed medians). `EXL3_BC_ATTN=0` remains available as
+   a *diagnostic* for bisecting the attention path under contention — it is
+   not part of the normal command set. A sync-before-load wrapper and the
+   unmodified plain load both passed, so no command here requires syncing
+   before model load.
