@@ -50,6 +50,7 @@ fi
 # the same choice -- otherwise it would validate shapes the real build rejects,
 # or vice versa, on any non-Strix card.
 case "$GPU_ARCH" in
+  gfx1030) SMEM_MAX_BYTES=65536 ;;        # RDNA 2, 64 KB LDS per workgroup
   gfx1150|gfx1151) SMEM_MAX_BYTES=65536 ;;
   gfx1100|gfx1101|gfx1102|gfx1200|gfx1201) SMEM_MAX_BYTES=92160 ;;
   *)               SMEM_MAX_BYTES=65536 ;;   # unknown: conservative

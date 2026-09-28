@@ -2,7 +2,11 @@
 // RDNA 3.5 primitives for EXL3 -- the ptx.cuh replacement
 // =============================================================================
 //
-// Target: gfx1150/gfx1151 (RDNA 3.5), wave32.
+// Target: gfx1150/gfx1151 (RDNA 3.5), wave32. gfx1030 (RDNA 2) builds the
+// same fragment API through the SIMT/fdot2 fallback defined below: no WMMA
+// exists there, so the mma_* wrappers emulate it in plain ops while keeping
+// every fragment layout identical -- see the gfx1030 block before the
+// rdna_wmma namespace.
 //
 // Upstream `exllamav3_ext/ptx.cuh` is 22 blocks of NVIDIA inline PTX. None of it
 // parses under hipcc -- the constraint letters `f` and `l` are not valid on
@@ -198,6 +202,8 @@ struct WmmaFragC_i32 {
 // =============================================================================
 //
 // Native RDNA 3.5 WMMA: 16x16x16 FP16 -> FP32, computes C += A x B.
+// On gfx1030 the mma_* wrappers compute the same function in SIMT ops
+// (fdot2 / widened fma / udot4 + __shfl); the layouts below hold on both.
 //
 // Builtin signature -- note B precedes A:
 //   __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(B, A, C) -> C
@@ -213,6 +219,66 @@ struct WmmaFragC_i32 {
 // 8 halves/lane for A and 4 floats/lane for C. That mismatch is why the GEMM
 // inner loop is rewritten around these calls rather than shimmed per-primitive.
 // =============================================================================
+
+// =============================================================================
+// gfx1030 (RDNA 2) SIMT fallback for the mma_* primitives
+// =============================================================================
+//
+// gfx1030 has wave32 and V_DOT2_F32_F16 (fdot2) but NO WMMA: the four
+// __builtin_amdgcn_wmma_* builtins fail clang's target-feature check
+// ("needs target feature wmma-256b-insts") on every RDNA2 part. Rather than
+// trap or stub, the mma wrappers below compute the same 16x16x16 product in
+// plain SIMT ops, keeping the fragment layouts and the (row, col) lane mapping
+// of the native path *bit-for-bit identical*:
+//
+//   lane L:  row = L % 16,  col_base = (L >= 16) ? 1 : 0
+//   C slot i (0..7)  <->  output C[row][2*i + col_base]
+//   A fragment: lane L holds row L%16, 16 consecutive k   (load_matrix_a, no change)
+//   B fragment: lane L holds column L%16, all 16 k        (load_matrix_b,  no change)
+//
+// Only the multiply crosses lanes: column c is held by lane c, so lane L
+// gathers its eight columns with __shfl (c = 2i + col_base) and accumulates
+// k-pairs with fdot2. 8 columns x 8 dwords = 64 shuffles + 64 fdot2 per mma
+// -- functional, deterministic, and honest about being a SIMT path. Dispatch
+// and tile-shape tuning for RDNA2 follow separately; until then gfx1030 pays
+// this for GEMM and fused MoE correctness. Verified against the same CPU
+// reference as the native path by rocm_tools/wmma_check.hip.
+//
+// Why the builtin is not simply guarded off: clang checks target features on
+// *emitted* functions, so a call in a wrapper any kernel instantiates breaks
+// the whole TU. The native branch stays for every other arch exactly as
+// before; __gfx1030__ exists only in the device pass, matching the existing
+// __gfx1200__ pattern in mma_sync (host pass never codegens these bodies).
+
+#if defined(__gfx1030__)
+
+// Packed dword <-> half2 without aliasing UB (folds to a register move).
+__device__ __forceinline__ half2 exl3_u32_as_half2(unsigned u)
+{
+    half2 h;
+    __builtin_memcpy(&h, &u, 4);
+    return h;
+}
+
+// bf16 low/high half of a packed dword -> float. bf16 is a truncated f32:
+// left-shift the bits 16 and reinterpret. Exact (8 exponent + 7 mantissa bits
+// fit f32's 8 + 23), and RDNA2 has no bf16 arithmetic to convert with.
+__device__ __forceinline__ float exl3_bf16_lo_to_f32(unsigned u)
+{
+    float f;
+    unsigned b = (u << 16) & 0xffff0000u;
+    __builtin_memcpy(&f, &b, 4);
+    return f;
+}
+__device__ __forceinline__ float exl3_bf16_hi_to_f32(unsigned u)
+{
+    float f;
+    unsigned b = u & 0xffff0000u;
+    __builtin_memcpy(&f, &b, 4);
+    return f;
+}
+
+#endif // __gfx1030__
 
 namespace rdna_wmma {
 
@@ -267,7 +333,33 @@ __device__ __forceinline__ void mma_sync(
     const WmmaFragA& a,
     const WmmaFragB& b)
 {
-#if defined(__gfx1200__) || defined(__gfx1201__)
+#if defined(__gfx1030__)
+    // SIMT fallback -- see the gfx1030 block above the namespace.
+    //   c[i] += sum_k A[row][k] * B[k][2i + col_base]
+    // A is already row-local in a.data (16 halves, k order). B column c lives
+    // on lane c, so each k-pair arrives through __shfl: dword j of lane c's
+    // frag holds (B[2j][c], B[2j+1][c]) in the same layout as dword j of A
+    // holds (A[row][2j], A[row][2j+1]). fdot2 then folds both products into
+    // the fp32 accumulator in one op. Full-wave call sites, converged lanes,
+    // so the maskless __shfl (hip_compat) is the correct form.
+    const int lane = threadIdx.x & 31;
+    const int col_base = (lane >= 16) ? 1 : 0;
+    const unsigned* ad = reinterpret_cast<const unsigned*>(&a.data);
+    const unsigned* bd = reinterpret_cast<const unsigned*>(&b.data);
+
+    #pragma unroll
+    for (int i = 0; i < 8; i++) {
+        const int src = 2 * i + col_base;   // lane src holds column src
+        float acc = c[i];
+        #pragma unroll
+        for (int j = 0; j < 8; j++)
+            acc = __builtin_amdgcn_fdot2(
+                exl3_u32_as_half2(ad[j]),
+                exl3_u32_as_half2(__shfl(bd[j], src)),
+                acc, false);
+        c[i] = acc;
+    }
+#elif defined(__gfx1200__) || defined(__gfx1201__)
     // RDNA4: the gfx11 WMMA encodings do not exist -- LLVM fails instruction
     // selection on this intrinsic ("Cannot select: llvm.amdgcn.wmma.f32...").
     // The only live instantiations reaching this wrapper are the fused-MoE
@@ -491,7 +583,39 @@ __device__ __forceinline__ void mma_sync_bf16(
     const WmmaFragA_bf16& a,
     const WmmaFragB_bf16& b)
 {
+#if defined(__gfx1030__)
+    // SIMT fallback, same lane mapping as mma_sync. RDNA2 has no bf16
+    // arithmetic at all, so each bf16 is widened to f32 by bit-shifting (the
+    // conversion is exact, and an exact bf16 x bf16 product fits f32), then
+    // accumulated with fmaf. No fdot2 here: its f16 sources would require a
+    // bf16->f16 narrowing step that loses exponent range.
+    const int lane = threadIdx.x & 31;
+    const int col_base = (lane >= 16) ? 1 : 0;
+    const unsigned* ad = reinterpret_cast<const unsigned*>(&a.data);
+    const unsigned* bd = reinterpret_cast<const unsigned*>(&b.data);
+
+    float af[16];   // A is row-local: widen once, reuse across all 8 columns
+    #pragma unroll
+    for (int j = 0; j < 8; j++) {
+        af[2 * j]     = exl3_bf16_lo_to_f32(ad[j]);
+        af[2 * j + 1] = exl3_bf16_hi_to_f32(ad[j]);
+    }
+
+    #pragma unroll
+    for (int i = 0; i < 8; i++) {
+        const int src = 2 * i + col_base;
+        float acc = c[i];
+        #pragma unroll
+        for (int j = 0; j < 8; j++) {
+            const unsigned bu = __shfl(bd[j], src);
+            acc = __fmaf_rn(af[2 * j],     exl3_bf16_lo_to_f32(bu), acc);
+            acc = __fmaf_rn(af[2 * j + 1], exl3_bf16_hi_to_f32(bu), acc);
+        }
+        c[i] = acc;
+    }
+#else
     c.data = __builtin_amdgcn_wmma_f32_16x16x16_bf16_w32(b.data, a.data, c.data);
+#endif
 }
 
 // =============================================================================
@@ -513,7 +637,45 @@ __device__ __forceinline__ void mma_sync_f16(
     const WmmaFragA& a,
     const WmmaFragB& b)
 {
+#if defined(__gfx1030__)
+    // SIMT fallback. The native instruction accumulates the 16 products of
+    // this k-block into the half slot 2i + opsel and writes it back once per
+    // mma call; this reproduces that granularity: start from the slot's
+    // current half value, fold the products in f32 via fdot2 (more accurate
+    // than any intermediate rounding the HW could take inside the call), and
+    // round to half once on store. The 2i + (1 - opsel) slots are left
+    // untouched, preserving the dual-accumulator property the f16 form
+    // exists for.
+    const int lane = threadIdx.x & 31;
+    const int col_base = (lane >= 16) ? 1 : 0;
+    const unsigned* ad = reinterpret_cast<const unsigned*>(&a.data);
+    const unsigned* bd = reinterpret_cast<const unsigned*>(&b.data);
+    // Slot storage is unsigned short here, not _Float16: WmmaFragC_f16::get
+    // and store_matrix_c_f16 read it with __ushort_as_half (a BIT
+    // reinterpretation). Reading through a _Float16 lvalue and feeding it to
+    // __ushort_as_half instead NUMERICALLY converts half -> integer first
+    // (fraction lost, negatives wrap to garbage bit patterns); clear()/write
+    // paths keep the slots at 0.0 or freshly rounded, so a zero-only test
+    // like wmma_check.hip cannot see it -- chained k-tile accumulation
+    // read-back can. Verified by /work/runs/gfx1030/f16acc_chain_check.hip.
+    unsigned short* cd = reinterpret_cast<unsigned short*>(&c.data);
+    constexpr int slot_off = opsel ? 1 : 0;
+
+    #pragma unroll
+    for (int i = 0; i < 8; i++) {
+        const int src = 2 * i + col_base;
+        float acc = __half2float(__ushort_as_half(cd[i * 2 + slot_off]));
+        #pragma unroll
+        for (int j = 0; j < 8; j++)
+            acc = __builtin_amdgcn_fdot2(
+                exl3_u32_as_half2(ad[j]),
+                exl3_u32_as_half2(__shfl(bd[j], src)),
+                acc, false);
+        cd[i * 2 + slot_off] = __half_as_ushort(__float2half_rn(acc));
+    }
+#else
     c.data = __builtin_amdgcn_wmma_f16_16x16x16_f16_w32(b.data, a.data, c.data, opsel);
+#endif
 }
 
 template <bool opsel = false>
@@ -613,10 +775,65 @@ __device__ __forceinline__ void mma_sync_i8(
     const WmmaFragA_i8& a,
     const WmmaFragB_i8& b)
 {
+#if defined(__gfx1030__)
+    // SIMT fallback, same lane mapping as mma_sync. gfx1030 has udot4
+    // (unsigned dp4a) but NOT sudot4: clang requires dot8-insts, which RDNA2
+    // lacks, so the signed and mixed-sign forms widen the bytes with plain
+    // integer ops. The 16 byte-products of one call sum to at most
+    // 16 * 255 * 255 ~= 1.04e6 in absolute value, so the exact total always
+    // fits int64; truncating that to int32 reproduces the native wrapping
+    // accumulator's low bits bit-for-bit when it overflows across chained
+    // calls.
+    const int lane = threadIdx.x & 31;
+    const int col_base = (lane >= 16) ? 1 : 0;
+    const unsigned* ad = reinterpret_cast<const unsigned*>(&a.data);
+    const unsigned* bd = reinterpret_cast<const unsigned*>(&b.data);
+
+    #pragma unroll
+    for (int i = 0; i < 8; i++) {
+        const int src = 2 * i + col_base;
+        if constexpr (!signed_a && !signed_b && !clamp) {
+            // The one combination with hardware on RDNA2: byte y of dword j
+            // is k = 4j + y, the same order the loaders stored.
+            unsigned acc = (unsigned)c[i];
+            #pragma unroll
+            for (int j = 0; j < 4; j++)
+                acc = __builtin_amdgcn_udot4(ad[j], __shfl(bd[j], src), acc, false);
+            c[i] = (int)acc;
+        } else {
+            long long acc = (long long)c[i];
+            #pragma unroll
+            for (int j = 0; j < 4; j++) {
+                const unsigned au = ad[j];
+                const unsigned bu = __shfl(bd[j], src);
+                #pragma unroll
+                for (int y = 0; y < 4; y++) {
+                    const unsigned sh = 8u * y;
+                    const int av = signed_a ? (int)(int8_t)(au >> sh) : (int)((au >> sh) & 0xffu);
+                    const int bv = signed_b ? (int)(int8_t)(bu >> sh) : (int)((bu >> sh) & 0xffu);
+                    acc += (long long)av * (long long)bv;
+                }
+            }
+            if constexpr (clamp) {
+                // Native WMMA clamps per accumulating step; this clamps the
+                // one exact per-call sum. The difference is observable only
+                // for chained calls whose intermediate crossed int32 bounds,
+                // and clamp == true has no caller anywhere in this codebase
+                // (the RDNA int8 GEMV is a disabled stub). If a real user
+                // appears, pin down the native step semantics first -- the
+                // same way the f16/int8 layouts were.
+                if (acc > (long long)0x7fffffff) acc = (long long)0x7fffffff;
+                else if (acc < (long long)-0x80000000LL) acc = (long long)-0x80000000LL;
+            }
+            c[i] = (int)(unsigned)acc;   // long long -> uint32 is defined mod 2^32
+        }
+    }
+#else
     c.data = __builtin_amdgcn_wmma_i32_16x16x16_iu8_w32(
         signed_b, b.data,     // first flag/vector pair is B
         signed_a, a.data,
         c.data, clamp);
+#endif
 }
 
 __device__ __forceinline__ void store_matrix_c_i32(

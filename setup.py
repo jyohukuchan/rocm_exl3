@@ -283,19 +283,24 @@ def _check_rocm_version():
 
 
 SUPPORTED_GPU_ARCHS = {
-    # RDNA3 / RDNA3.5 / RDNA4 consumer + APU parts this port targets.
+    # RDNA2 / RDNA3 / RDNA3.5 / RDNA4 consumer + workstation + APU parts this
+    # port targets. gfx1030 (V620, Navi 21) has wave32 and fdot2 but NO WMMA:
+    # the rocm/rdna_wmma.hip.h fragment API runs its SIMT fallback there.
+    "gfx1030",
     "gfx1100", "gfx1101", "gfx1102", "gfx1150", "gfx1151", "gfx1200", "gfx1201",
 }
 
 # LDS (shared memory) per workgroup the EXL3 kernels may assume, per arch.
 #
-# The APUs are the odd ones out: Strix / Strix Halo report sharedMemPerBlock =
-# 65536 (measured on gfx1151), while the discrete parts take upstream's 90 KB.
-# Getting this wrong is not a correctness bug -- exl3_rdna_smem_budget() clamps
-# to the device's real sharedMemPerBlock at runtime and shape admission uses the
-# clamped value -- but too high a figure costs a failed shape selection and too
-# low costs the wider tiles.
+# The APUs and RDNA2 are the odd ones out: Strix / Strix Halo report
+# sharedMemPerBlock = 65536 (measured on gfx1151) and gfx1030 (V620/Navi 21)
+# has 64 KB LDS per workgroup, while the discrete RDNA3+ parts take upstream's
+# 90 KB. Getting this wrong is not a correctness bug --
+# exl3_rdna_smem_budget() clamps to the device's real sharedMemPerBlock at
+# runtime and shape admission uses the clamped value -- but too high a figure
+# costs a failed shape selection and too low costs the wider tiles.
 GPU_ARCH_SMEM = {
+    "gfx1030": 65536,         # RDNA 2, 64 KB LDS per workgroup
     "gfx1100": 92160, "gfx1101": 92160, "gfx1102": 92160,
     "gfx1150": 65536, "gfx1151": 65536,   # Strix / Strix Halo APUs
     "gfx1200": 92160, "gfx1201": 92160,
