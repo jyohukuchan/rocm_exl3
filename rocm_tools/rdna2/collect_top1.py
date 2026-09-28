@@ -1,0 +1,589 @@
+#!/usr/bin/env python3
+"""Teacher-forced top-1 collection for one backend, over a frozen token manifest.
+
+This is the accuracy primitive for Phase 0-2 on the single V620: at each manifest
+position p of a case, record the argmax token ID of the teacher-forced next-token
+distribution after consuming ids[0..p]. Only manifest tokens are ever fed to the
+model -- no generated continuation participates -- so both backends see exactly
+the same literal input sequence and the artifact is a small list of integers
+(top-1 agreement is the Phase 0-2 criterion; full-vocab KLD would need logit rows
+and is intentionally not collected here).
+
+Backends
+--------
+exl3, execution=bulk (default):
+    model.forward(ids, {"attn_mode": "flash_attn_nc"})
+    One cache-free full-sequence forward per case -> logits for every position.
+    Same route eval/ppl.py uses. Exercises prefill/GEMM kernels end-to-end.
+
+exl3, execution=chunked --chunk-size C:
+    model.forward(chunk, {"attn_mode": "flash_attn", "cache": cache,
+                          "past_len": s, "batch_shape": (1, cache_max_seq_len)})
+    The exact cached-call pattern of eval/perf.py and the generator's full-chain
+    prefill forward (job.py MTP branch). K/V go through the paged Cache; C=1 is
+    the autoregressive decode route (single-token forward + cached attention),
+    C>1 is bulk-style cached prefill in C-token steps. Chunked-vs-bulk disagreement
+    localizes prefill-vs-decode kernel divergence at identical inputs.
+
+transformers (unquantized source reference, e.g. the Qwen3-8B BF16 dir):
+    model(input_ids, use_cache=False)["logits"]
+    --dtype auto (default) loads the checkpoint in its declared torch_dtype, so a
+    BF16 source gives a native BF16 reference (both BF16 GEMM and full-model BF16
+    generation are verified working on this gfx1030 stack); fp16/bf16/fp32 are
+    explicit overrides. Requested dtype, checkpoint-declared dtype, effective
+    parameter dtype and the model config's ACTUAL attention implementation are
+    all recorded in the artifact. from_pretrained is passed the real kwargs
+    (dtype= on current Transformers, torch_dtype= fallback) -- signature
+    inspection is not used because **kwargs would hide them and silently drop
+    options. --device cpu is fully supported for this backend (large BF16
+    references that do not fit the V620 can be measured on host RAM; slower,
+    but numerically valid; recorded honestly in metadata).
+
+Output: JSON with per-case top-1 IDs, manifest/case/input hashes, model and
+config fingerprints, environment (python/torch/HIP/GPU, EXL3_ROCM_* switches that
+distinguish conservative vs optimized executions) and all run parameters.
+Runtime note (as of 2026-09-28, from the runtime agent): on this stack the
+default EXL3 BC attention HANGS at module load; run exl3 collections with
+EXL3_BC_ATTN=0 (verified to generate coherent Qwen3-8B with finite logits).
+The switch set actually in effect is captured into every artifact's env block.
+total_positions is ALWAYS relative to the full manifest: running a subset with
+--limit-cases yields collected < total, which marks the artifact incomplete and
+makes comparison refuse it -- two identically truncated artifacts cannot pass.
+Non-finite logit rows are flagged per position and also mark the result
+incomplete. Per-case exceptions are recorded truthfully, the partial artifact is
+written, and the process exits nonzero. Cleanup (model.unload() for exl3) runs
+in a finally block and its errors are recorded into the artifact as failures --
+never silently swallowed, never via os._exit; models are released through the
+normal path.
+
+Examples
+--------
+    # transformers reference from the unquantized BF16 source (native dtype)
+    /opt/venv/bin/python rocm_tools/rdna2/collect_top1.py \
+        --manifest /work/phase0/manifest_qwen3_8b.json \
+        --backend transformers -m /work/models/qwen3-8b-bf16 \
+        --device cuda:0 -o /work/phase0/top1_ref_transformers.json
+
+    # ...or on host RAM when the reference does not fit the V620 (e.g. 30B)
+    /opt/venv/bin/python rocm_tools/rdna2/collect_top1.py \
+        --manifest /work/phase0/manifest_qwen3_30b.json \
+        --backend transformers -m /work/models/qwen3-30b-a3b-bf16 \
+        --device cpu -o /work/phase0/top1_ref_30b_cpu.json
+
+    # EXL3 bulk-prefill candidate
+    EXL3_BC_ATTN=0 /opt/venv/bin/python rocm_tools/rdna2/collect_top1.py \
+        --manifest /work/phase0/manifest_qwen3_8b.json \
+        --backend exl3 -m /work/models/qwen3-8b-exl3-4bpw \
+        --execution bulk -o /work/phase0/top1_cand_exl3_bulk.json
+
+    # EXL3 autoregressive (decode-route) candidate
+    EXL3_BC_ATTN=0 /opt/venv/bin/python rocm_tools/rdna2/collect_top1.py \
+        --manifest /work/phase0/manifest_qwen3_8b.json \
+        --backend exl3 -m /work/models/qwen3-8b-exl3-4bpw \
+        --execution chunked --chunk-size 1 \
+        -o /work/phase0/top1_cand_exl3_chunked1.json
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import traceback
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from rocm_tools.rdna2.common import (
+    DTYPE_KEYS,
+    POSITION_SEMANTICS,
+    TOP1_FORMAT,
+    git_commit,
+    model_fingerprint,
+    now_utc,
+    python_env,
+    read_json,
+    repo_root,
+    resolve_dtype_choice,
+    rocm_patch_env,
+    round_up_page,
+    torch_env,
+    validate_manifest,
+    visible_gpu_env,
+    write_json,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog = "collect_top1.py",
+        description = "Teacher-forced top-1 collection over a frozen manifest.",
+    )
+    ap.add_argument("--manifest", required = True, help = "Manifest JSON (rocm_tools/rdna2/manifest.py output)")
+    ap.add_argument("-m", "--model-dir", required = True, help = "Model directory for this backend")
+    ap.add_argument("--backend", required = True, choices = ("exl3", "transformers"))
+    ap.add_argument("-o", "--output", required = True, help = "Top-1 result JSON path to write")
+    ap.add_argument("-d", "--device", default = "cuda:0",
+                    help = "cuda:0 for exl3; transformers also accepts cpu (large reference "
+                           "that cannot fit the V620)")
+    ap.add_argument("--execution", choices = ("bulk", "chunked"), default = "bulk",
+                    help = "exl3 only: bulk = cache-free whole-sequence forward; "
+                           "chunked = Model.forward with params/cache in C-token steps")
+    ap.add_argument("--chunk-size", type = int, default = None,
+                    help = "exl3 chunked: tokens per cached forward step; 1 = autoregressive decode route")
+    ap.add_argument("--load-max-chunk-size", type = int, default = 2048,
+                    help = "exl3: max_chunk_size passed to model.load() (single-device load; "
+                           "also the sanity bound on --chunk-size)")
+    ap.add_argument("--dtype", choices = DTYPE_KEYS, default = "auto",
+                    help = "transformers only: load dtype. auto (default) keeps the "
+                           "checkpoint's declared torch_dtype so a BF16 source gives a "
+                           "native BF16 reference; fp16/bf16/fp32 force the cast. What "
+                           "was requested, declared and effective is recorded either way")
+    ap.add_argument("--attn-implementation", default = None,
+                    help = "transformers only: pass attn_implementation to from_pretrained "
+                           "(e.g. eager for the conservative reference). The actually "
+                           "selected implementation is read back from model config and "
+                           "recorded; left unset = Transformers default")
+    ap.add_argument("--limit-cases", default = None,
+                    help = "comma-separated case_ids to run (debug aid; total_positions stays "
+                           "the FULL manifest count, so the artifact is flagged incomplete "
+                           "and comparison refuses it by design)")
+    return ap
+
+
+def _harvest_row(torch, logits_row, vocab):
+    """Float-upcast, finite-check, argmax over [0, vocab) only."""
+    row = logits_row[:vocab].float()
+    finite = bool(torch.isfinite(row).all())
+    top1 = int(torch.argmax(row).item())
+    del row
+    return top1, finite
+
+
+# ---------------------------------------------------------------------------
+# exl3
+# ---------------------------------------------------------------------------
+
+def collect_exl3(args, manifest, vocab, cleanup_errors: list):
+    import torch
+    from exllamav3 import Cache, Config, Model, Tokenizer
+    from exllamav3.constants import PAGE_SIZE as EXL_PAGE_SIZE
+
+    if not args.device.startswith("cuda"):
+        raise SystemExit(f" !! exl3 backend needs a ROCm/CUDA device, got --device {args.device!r} "
+                         f"(use --backend transformers --device cpu for host-RAM references)")
+
+    all_cases = manifest["cases"]
+    cases = all_cases
+    if args.limit_cases:
+        wanted = [s.strip() for s in args.limit_cases.split(",")]
+        cases = [c for c in all_cases if c["case_id"] in wanted]
+        if not cases:
+            raise SystemExit(f" !! --limit-cases matched no manifest case ({wanted})")
+
+    model = None
+    try:
+        config = Config.from_directory(args.model_dir)
+        tokenizer = Tokenizer.from_config(config)
+        av = int(tokenizer.actual_vocab_size)
+        if av != vocab:
+            raise SystemExit(
+                f" !! tokenizer.actual_vocab_size {av} != manifest valid_vocab_size {vocab}: "
+                f"manifest and model do not share a tokenizer -- refusing (cross-tokenizer misalignment)")
+        model = Model.from_config(config)
+        if model.get_recurrent_layers():
+            raise SystemExit(" !! recurrent-state models are not supported by this harness "
+                             "(Phase 0-2 target is Qwen3: dense attention only)")
+
+        execution = args.execution
+        chunk = args.chunk_size if execution == "chunked" else None
+        if execution == "chunked":
+            if not chunk or chunk < 1:
+                raise SystemExit(" !! --execution chunked requires --chunk-size C >= 1 (C=1 autoregressive)")
+            if chunk > args.load_max_chunk_size:
+                raise SystemExit(f" !! --chunk-size {chunk} exceeds --load-max-chunk-size "
+                                 f"{args.load_max_chunk_size}; raise the latter")
+
+        cache = None
+        cache_max_seq_len = None
+        if execution == "chunked":
+            # bsz=1, one case at a time, pages reused across cases (each case rewrites
+            # from page 0 and reads only its own prefix), so the cache only needs to
+            # hold the longest case. Floored at max(4096, load_max_chunk_size):
+            # model.load() runs a dummy forward at max_chunk_size and asserts cache
+            # capacity (see bench_model.py).
+            max_len = max(c["len_ids"] for c in cases)
+            cache_max_seq_len = round_up_page(max(4096, args.load_max_chunk_size, max_len))
+            cache = Cache(model, max_num_tokens = cache_max_seq_len)
+
+        # Cache must exist BEFORE load so cache tensors get allocated with the layers.
+        model.load(device = args.device, max_chunk_size = args.load_max_chunk_size)
+
+        def run_case(case):
+            ids_t = torch.tensor([case["ids"]], dtype = torch.long, device = args.device)
+            positions = case["positions"]
+            top1 = [None] * len(positions)
+            nonfinite = []
+            if execution == "bulk":
+                logits = model.forward(ids_t, {"attn_mode": "flash_attn_nc"})
+                if logits.dim() != 3 or logits.shape[1] != case["len_ids"] or logits.shape[2] < vocab:
+                    raise RuntimeError(f"unexpected bulk logits shape {tuple(logits.shape)} "
+                                       f"(want (1, {case['len_ids']}, >={vocab}))")
+                try:
+                    for j, p in enumerate(positions):
+                        top1[j], ok = _harvest_row(torch, logits[0, p, :], vocab)
+                        if not ok:
+                            nonfinite.append(p)
+                finally:
+                    del logits
+            else:
+                want = {p: j for j, p in enumerate(positions)}
+                L = case["len_ids"]
+                for s in range(0, L, chunk):
+                    e = min(s + chunk, L)
+                    params = {
+                        "attn_mode": "flash_attn",
+                        "cache": cache,
+                        "past_len": s,
+                        "batch_shape": (1, cache_max_seq_len),
+                        "recurrent_states": None,
+                    }
+                    logits = model.forward(ids_t[:, s:e], params)
+                    if logits.dim() != 3 or logits.shape[1] != e - s or logits.shape[2] < vocab:
+                        raise RuntimeError(f"unexpected chunked logits shape "
+                                           f"{tuple(logits.shape)} (need (1, {e - s}, >={vocab})); "
+                                           f"row-to-position mapping (row i = global s+i) unverified")
+                    try:
+                        for i in range(logits.shape[1]):
+                            p = s + i
+                            j = want.pop(p, None)
+                            if j is None:
+                                continue
+                            top1[j], ok = _harvest_row(torch, logits[0, i, :], vocab)
+                            if not ok:
+                                nonfinite.append(p)
+                    finally:
+                        del logits
+                    del params
+                if want:
+                    missing = sorted(want)
+                    raise RuntimeError(f"chunked run produced no logits for positions "
+                                       f"{missing[:8]}{'...' if len(missing) > 8 else ''}")
+            return top1, nonfinite
+
+        results = {}
+        errors = []
+        collected = 0
+        for case in cases:
+            cid = case["case_id"]
+            try:
+                top1, nonfinite = run_case(case)
+                if nonfinite:
+                    errors.append(f"case {cid}: non-finite logit rows at "
+                                  f"{len(nonfinite)} position(s)")
+                results[cid] = {
+                    "status": "ok",
+                    "case_id": cid,
+                    "ids_sha256": case["ids_sha256"],
+                    "len_ids": case["len_ids"],
+                    "positions": case["positions"],
+                    "n_positions": len(case["positions"]),
+                    "top1": top1,
+                    "nonfinite_positions": sorted(nonfinite),
+                }
+                collected += len(case["positions"])
+            except SystemExit:
+                raise
+            except Exception as e:
+                results[cid] = {
+                    "status": "error",
+                    "case_id": cid,
+                    "error": repr(e),
+                    "traceback_tail": traceback.format_exc().splitlines()[-6:],
+                }
+                errors.append(f"case {cid}: {e!r}")
+            print(f" -- exl3/{execution}: case {cid:20} -> {results[cid]['status']} "
+                  f"({results[cid].get('n_positions', 0)} positions)", flush = True)
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        execution_info = {
+            "mode": execution,
+            "chunk_size": chunk,
+            "attn_mode": "flash_attn_nc" if execution == "bulk" else "flash_attn",
+            "uses_kv_cache": execution == "chunked",
+            "cache_max_seq_len": cache_max_seq_len,
+            "exl3_page_size": EXL_PAGE_SIZE,
+            "load_max_chunk_size": args.load_max_chunk_size,
+            "dtype_label": "EXL3 quantized weights; logits upcast per row for argmax",
+            "teacher_forcing": "manifest literal IDs only; no generated continuation",
+        }
+        return results, errors, collected, execution_info
+
+    finally:
+        # Normal cleanup belongs here and must not swallow problems: teardown errors
+        # land in cleanup_errors, which run() folds into the artifact's error list,
+        # marking the result incomplete (fail-closed). No os._exit anywhere.
+        if model is not None:
+            try:
+                model.unload()
+            except Exception as e:
+                msg = f"model.unload() during cleanup: {e!r}"
+                cleanup_errors.append(msg)
+                print(f" !! {msg}", file = sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# transformers
+# ---------------------------------------------------------------------------
+
+def collect_transformers(args, manifest, vocab, cleanup_errors: list):
+    import torch
+    import transformers
+    from transformers import AutoModelForCausalLM
+
+    # Declared checkpoint dtype, read straight from config.json (for the "auto"
+    # resolution and for honest labeling of whatever actually loaded).
+    declared_dtype = None
+    cfg_path = Path(args.model_dir) / "config.json"
+    if cfg_path.is_file():
+        declared_dtype = json.loads(cfg_path.read_text(encoding = "utf-8")).get("torch_dtype")
+    choice, dtype_note = resolve_dtype_choice(args.dtype, declared_dtype)
+    torch_dtype = {"fp16": torch.float16, "bf16": torch.bfloat16,
+                   "fp32": torch.float32}[choice]
+
+    cases = manifest["cases"]
+    if args.limit_cases:
+        wanted = [s.strip() for s in args.limit_cases.split(",")]
+        cases = [c for c in cases if c["case_id"] in wanted]
+        if not cases:
+            raise SystemExit(f" !! --limit-cases matched no manifest case ({wanted})")
+
+    device = torch.device(args.device)
+    model = None
+    used_dtype_kw = None
+    used_attn_kw = False
+    effective_dtype = None
+    effective_attn = None
+    results: dict = {}
+    errors: list = []
+    collected = 0
+    try:
+        # from_pretrained takes these options through **kwargs, so signature
+        # inspection cannot see them -- pass them for real, and fall back only
+        # on TypeError (unexpected keyword). dtype replaced torch_dtype in
+        # current Transformers; the ACTUAL attention implementation is read
+        # back from the model config afterwards, which is authoritative.
+        attempts = [("dtype", True), ("dtype", False), ("torch_dtype", True), ("torch_dtype", False)]
+        last_type_error = None
+        for dtype_kw, with_attn in attempts:
+            load_kwargs = {dtype_kw: torch_dtype}
+            if with_attn and args.attn_implementation:
+                load_kwargs["attn_implementation"] = args.attn_implementation
+            try:
+                model = AutoModelForCausalLM.from_pretrained(args.model_dir, **load_kwargs)
+                used_dtype_kw = dtype_kw
+                used_attn_kw = bool(with_attn and args.attn_implementation
+                                    and "attn_implementation" in load_kwargs)
+                break
+            except TypeError as e:
+                last_type_error = e
+        if model is None:
+            raise last_type_error
+        if args.attn_implementation and not used_attn_kw:
+            print(f" !! this transformers build rejected attn_implementation="
+                  f"{args.attn_implementation!r}; recording what the config actually selected",
+                  file = sys.stderr)
+
+        model.to(device)
+        model.eval()
+        effective_dtype = str(next(model.parameters()).dtype).replace("torch.", "")
+        effective_attn = getattr(model.config, "_attn_implementation", None) \
+            or getattr(model.config, "attn_implementation", None)
+
+        for case in cases:
+            cid = case["case_id"]
+            try:
+                ids_t = torch.tensor([case["ids"]], dtype = torch.long, device = device)
+                with torch.inference_mode():
+                    out = model(input_ids = ids_t, use_cache = False)
+                logits = out["logits"]
+                if (logits.shape[0] != 1 or logits.shape[1] != case["len_ids"]
+                        or logits.shape[-1] < vocab):
+                    raise RuntimeError(f"unexpected logits shape {tuple(logits.shape)} "
+                                       f"for ids (1, {case['len_ids']}) with vocab >= {vocab}")
+                top1 = [None] * len(case["positions"])
+                nonfinite = []
+                for j, p in enumerate(case["positions"]):
+                    top1[j], ok = _harvest_row(torch, logits[0, p, :], vocab)
+                    if not ok:
+                        nonfinite.append(p)
+                del logits, out
+                if nonfinite:
+                    errors.append(f"case {cid}: non-finite logit rows at "
+                                  f"{len(nonfinite)} position(s)")
+                results[cid] = {
+                    "status": "ok",
+                    "case_id": cid,
+                    "ids_sha256": case["ids_sha256"],
+                    "len_ids": case["len_ids"],
+                    "positions": case["positions"],
+                    "n_positions": len(case["positions"]),
+                    "top1": top1,
+                    "nonfinite_positions": sorted(nonfinite),
+                }
+                collected += len(case["positions"])
+            except Exception as e:
+                results[cid] = {
+                    "status": "error",
+                    "case_id": cid,
+                    "error": repr(e),
+                    "traceback_tail": traceback.format_exc().splitlines()[-6:],
+                }
+                errors.append(f"case {cid}: {e!r}")
+            print(f" -- transformers: case {cid:20} -> {results[cid]['status']} "
+                  f"({results[cid].get('n_positions', 0)} positions)", flush = True)
+
+        converted = (declared_dtype is not None and effective_dtype != str(declared_dtype))
+        execution_info = {
+            "mode": "hf_forward_no_cache",
+            "device_requested": args.device,
+            "device_effective": str(device),
+            "dtype_requested": args.dtype,
+            "dtype_resolved": choice,
+            "dtype_resolution_note": dtype_note,
+            "dtype_kwarg_used": used_dtype_kw,
+            "dtype_effective": effective_dtype,
+            "dtype_converted_from_checkpoint": converted,
+            "checkpoint_declared_torch_dtype": declared_dtype,
+            "attn_implementation_requested": args.attn_implementation,
+            "attn_implementation_kwarg_passed": used_attn_kw,
+            "attn_implementation_effective": effective_attn,
+            "dtype_label": (
+                f"{effective_dtype} converted from declared {declared_dtype}" if converted
+                else f"native {effective_dtype}" + (f" (declared {declared_dtype})"
+                                                    if declared_dtype else " (checkpoint declares no dtype)")),
+            "transformers_version": transformers.__version__,
+            "teacher_forcing": "manifest literal IDs only; use_cache=False; no generated continuation",
+        }
+        return results, errors, collected, execution_info
+
+    finally:
+        # Release the HF model on the normal path; errors here are surfaced and
+        # recorded (-> incomplete artifact -> nonzero exit), not swallowed.
+        try:
+            model = None
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
+            import gc
+            gc.collect()
+        except Exception as e:
+            msg = f"transformers cleanup: {e!r}"
+            cleanup_errors.append(msg)
+            print(f" !! {msg}", file = sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+def cuda_devices():
+    try:
+        import torch
+        if not torch.cuda.is_available():
+            return {"count": 0}
+        devs = []
+        for i in range(torch.cuda.device_count()):
+            p = torch.cuda.get_device_properties(i)
+            devs.append({
+                "index": i, "name": p.name,
+                "gcnArchName": getattr(p, "gcnArchName", None),
+                "total_memory_bytes": getattr(p, "total_memory", None),
+            })
+        return {"count": len(devs), "devices": devs}
+    except Exception as e:
+        return {"error": repr(e)}
+
+
+def run(args) -> int:
+    manifest = read_json(args.manifest)
+    errors = validate_manifest(manifest)
+    if errors:
+        print(" !! manifest invalid, refusing to collect:", file = sys.stderr)
+        for e in errors:
+            print(f"    {e}", file = sys.stderr)
+        return 1
+    vocab = manifest["valid_vocab_size"]
+    # total_positions is ALWAYS the full-manifest count, independent of any
+    # --limit-cases subset that actually ran.
+    full_total = sum(len(c["positions"]) for c in manifest["cases"])
+
+    cleanup_errors: list[str] = []
+    if args.backend == "exl3":
+        results, case_errors, collected, execution_info = collect_exl3(args, manifest, vocab, cleanup_errors)
+    else:
+        results, case_errors, collected, execution_info = collect_transformers(args, manifest, vocab, cleanup_errors)
+
+    errors_list = list(case_errors) + list(cleanup_errors)
+    if args.limit_cases and collected != full_total:
+        errors_list.append(f"--limit-cases used: {collected}/{full_total} positions of the "
+                           f"FULL manifest collected; this artifact is partial by design")
+    if collected != full_total:
+        errors_list.append(f"incomplete: collected {collected}/{full_total} positions")
+    complete = (collected == full_total and not errors_list)
+
+    out = {
+        "format": TOP1_FORMAT,
+        "created_utc": now_utc(),
+        "tool": "rocm_tools/rdna2/collect_top1.py",
+        "backend": args.backend,
+        "device": args.device,
+        "model_dir": str(Path(args.model_dir).resolve()),
+        "model_fingerprint": model_fingerprint(args.model_dir),
+        "repo_git_commit": git_commit(repo_root()),
+        "env": {
+            "python": python_env(),
+            "torch": torch_env(),
+            "visible_gpu": visible_gpu_env(),
+            "exl3_rocm_switches": rocm_patch_env(),
+            "cuda_devices": cuda_devices(),
+        },
+        "params": vars(args),
+        "manifest_path": str(Path(args.manifest).resolve()),
+        "manifest_sha256": manifest["manifest_sha256"],
+        "position_semantics": POSITION_SEMANTICS,
+        "valid_vocab_size": vocab,
+        "config_vocab_size": manifest.get("config_vocab_size"),
+        "execution": execution_info,
+        "cases": results,
+        "total_positions": full_total,
+        "collected_positions": collected,
+        "complete": complete,
+        "errors": errors_list,
+    }
+    write_json(args.output, out)
+    print(f" -- wrote {args.output}: complete={complete} "
+          f"positions={collected}/{full_total} errors={len(errors_list)}")
+    if not complete:
+        for e in errors_list:
+            print(f"    ERR {e}", file = sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return run(args)
+    except SystemExit:
+        raise
+    except Exception as e:
+        traceback.print_exc()
+        print(f" !! collection failed: {e}", file = sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
