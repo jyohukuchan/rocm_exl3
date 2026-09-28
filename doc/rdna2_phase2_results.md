@@ -163,6 +163,8 @@ swapは0。RSS/PSSはhost側使用量でありGPUの全割当量ではない。
   GPU eventがないことをGPU時間0とは解釈しない。計画の「上位3 GPU kernel」
   の時間割合は未取得で、CPU traceと独立kernel/E2E A/Bへ調査手法を変更した。
   詳細は `runs/profiling-limitations.json`。
+  後続調査では読み込み順等を調整して [GPU時間内訳](exl3_timing_breakdown.md) を取得した。
+  上記はPhase 2当時の制約を記録したもの。
 - gfx1030全モデル、他RDNA2機種、全batch/cache精度への一般化は未検証。
   今回の成果はD/Mの単一V620経路。2GPU、Qwen3.8-Flash-Next、PLE RAM、TP2は
   [Phase 3以降](rdna2_port_plan.md)の対象。
