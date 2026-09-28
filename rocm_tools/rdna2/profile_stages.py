@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Bounded per-stage GPU profiling harness for the single-GPU RDNA boxes.
+"""Bounded per-stage GPU profiling harness for the RDNA boxes (single-GPU
+Phase-2 flow; optional explicit two-V620 layer split, Phase-4).
 
 This tool does NOT optimize anything and does NOT touch the engine. It drives
 the production Generator/Job flow exactly as bench.py does, and marks two
@@ -52,6 +53,31 @@ Measurement design (why it looks like this):
     recorded in the artifact and force a nonzero exit. There is no os._exit
     and no device reset anywhere: the JSON is written (fsynced) in a finally
     before normal process exit, including on error paths.
+  * Optional explicit layer split (--use-per-device GIB...): >= 2 finite
+    positive GiB budgets, one per visible GPU. The split path validates the
+    budgets at the CLI boundary (multi_gpu.validate_use_per_device), gates on
+    EXACTLY len(budgets) visible GPUs all matching --expect-arch
+    (multi_gpu.validate_split_gate), loads through the official autosplit API
+    model.load(use_per_device=budgets, max_chunk_size=2048) with NO device
+    argument, and REQUIRES the live placement audit
+    (multi_gpu.audit_placement) to pass; the full audit is recorded. Every
+    boundary/cleanup synchronize then blocks ALL active devices, in index
+    order (multi_gpu.device_memory_snapshot records allocated/reserved/peak
+    per device at safe points, never inside a window body). Omitting the
+    option keeps the single-GPU gate and the Phase-2 behavior untouched.
+  * Optional transfer observation (--observe-transfers): instrumentation that
+    lives in THIS tool, not the engine. TransferObserver wraps the
+    exllamav3.modules.module / exllamav3.util.tensor to_device aliases and
+    torch.cuda.synchronize at runtime, ARMED only inside the profiled stage
+    windows (load/warmup/unprofiled-gap excluded), and snapshots per-window
+    CUDA->CUDA counts/bytes/direct-vs-bounced (from before/after deltas of
+    device_copy.stats; needs_bounce is never called an extra time, no extra
+    sync), separate H2D/D2H param-upload counts, and per-device explicit
+    synchronize counts + host-wall. Copy durations are copy-call HOST WALL
+    (may include pending compute wait; NOT pure DMA). Wrappers are restored
+    in the finally; a failed restore is a cleanup failure, never swallowed.
+    It is an independent overhead knob (combine with --no-roctx to isolate
+    observer cost from profiler cost). Instrumentation OFF => identical flow.
 
 Runtime bootstrap is root's responsibility and is intentionally NOT patched
 here: rocprofv3 must be launched with
@@ -72,6 +98,12 @@ Examples
     # matched control (no markers, no tracing; same flow + timings):
     /opt/venv/bin/python rocm_tools/rdna2/profile_stages.py \
         -m ... --baseline-json ... --no-roctx --output .../control.json
+
+    # explicit two-V620 layer split, with per-window transfer observation:
+    /opt/venv/bin/python rocm_tools/rdna2/profile_stages.py \
+        -m ... --baseline-json ... \
+        --use-per-device 6.5 8 --observe-transfers \
+        --expect-arch gfx1030 --output /work/profile/split.json
 """
 
 from __future__ import annotations
@@ -91,6 +123,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from rocm_tools.rdna2 import bench  # CPU-safe import (torch lives inside functions)
+from rocm_tools.rdna2 import multi_gpu  # CPU-safe split helpers (teammate-owned module)
+from rocm_tools.rdna2.profile_transfer_observer import TransferObserver
 from rocm_tools.rdna2.common import (
     BENCH_FORMAT,
     canonical_bytes,
@@ -145,6 +179,21 @@ def build_parser() -> argparse.ArgumentParser:
                     help = "JSON artifact path (written in finally, fsynced)")
     ap.add_argument("--no-roctx", dest = "roctx", action = "store_false", default = True,
                     help = "control mode: identical flow, no-op marker/pause/resume calls")
+    ap.add_argument("--use-per-device", type = float, nargs = "+", default = None,
+                    metavar = "GIB",
+                    help = "explicit layer split: one finite positive GiB use-budget per visible "
+                           "GPU (>= 2; visible order == list order). Loads via the official "
+                           "model.load(use_per_device=..., max_chunk_size=%d) path with NO device "
+                           "arg, gates every visible GPU on --expect-arch and requires the "
+                           "placement audit to pass. Omit to keep the single-GPU gate." % MAX_CHUNK_SIZE)
+    ap.add_argument("--observe-transfers", action = "store_true",
+                    help = "opt-in, profiling-side only (engine untouched): wrap the "
+                           "exllamav3.modules.module / exllamav3.util.tensor to_device aliases "
+                           "and torch.cuda.synchronize, armed ONLY inside profiled stage windows; "
+                           "records per-window CUDA->CUDA counts/bytes/direct-vs-bounced, H2D/D2H "
+                           "param uploads and per-device explicit syncs with copy-call HOST WALL "
+                           "(NOT pure DMA). Independent observer-overhead knob, orthogonal to "
+                           "--no-roctx")
     return ap
 
 
@@ -209,11 +258,45 @@ class NoopControls:
     def close(self) -> None: pass
 
 
+def parse_use_per_device(values):
+    """CLI-boundary split validation via the NEW multi_gpu helper: >= 2 finite
+    positive GiB budgets or None (single-GPU). ValueError becomes a clear
+    SystemExit, exactly like the other pre-GPU argument failures."""
+    try:
+        return multi_gpu.validate_use_per_device(values)
+    except ValueError as e:
+        raise SystemExit(f" !! FATAL: {e}")
+
+
+def make_boundary_sync(torch, device_indices):
+    """Boundary/cleanup synchronize covering ALL active devices, in visible
+    index order. Single-GPU runs get the identical one-device call the Phase-2
+    harness always made. Used ONLY at window boundaries, warmup edges and
+    cleanup -- never per token (that would perturb what is measured)."""
+    devs = [torch.device(f"cuda:{i}") for i in device_indices]
+
+    def sync():
+        for d in devs:
+            torch.cuda.synchronize(d)
+    return sync
+
+
+def model_load_kwargs(budgets, max_chunk_size: int = MAX_CHUNK_SIZE) -> dict:
+    """Official load paths, kept apart explicitly: a use_per_device split load
+    must NOT pass device (the engine asserts the two are mutually exclusive).
+    budgets None keeps the Phase-2 single-device call byte-identical."""
+    if budgets:
+        return {"use_per_device": list(budgets), "max_chunk_size": max_chunk_size,
+                "progressbar": False}
+    return {"device": "cuda:0", "max_chunk_size": max_chunk_size, "progressbar": False}
+
+
 @contextlib.contextmanager
-def stage_window(controls, label: str, record: dict, sync):
+def stage_window(controls, label: str, record: dict, sync, observer = None):
     """Exception-safe bounded window, IDENTICAL in both modes:
 
-        sync -> resume -> push -> [body] -> sync -> clock-stop -> pop -> pause
+        sync -> [arm observer] -> resume -> push -> [body] -> sync
+        -> clock-stop -> [snapshot observer] -> pop -> pause
 
     With NoopControls the resume/push/pop/pause calls do nothing, but the two
     synchronizes and the wall clock still bracket the body, so a --no-roctx
@@ -221,8 +304,22 @@ def stage_window(controls, label: str, record: dict, sync):
     gains wall_s (host perf_counter across the synchronized body) and, on any
     teardown hiccup, window_errors -- pop/pause/sync failures after a body
     exception are recorded, never silently swallowed.
+
+    observer (TransferObserver, --observe-transfers) is armed AFTER the opening
+    synchronize and snapshotted AFTER the closing synchronize + wall stop, so
+    the window's transfer/sync counts exclude load, warmup and the unprofiled
+    gap. Closing measurement-boundary syncs are included in record["transfers"];
+    they must be distinguished from model-internal syncs. Arming/snapshot failures are
+    recorded as window_errors -- the window itself still closes.
     """
     sync()
+    armed = False
+    if observer is not None:
+        try:
+            observer.begin_window()
+            armed = True
+        except Exception as e:
+            record.setdefault("window_errors", []).append(f"transfer-observer-begin: {e!r}")
     controls.resume()
     controls.push(label)
     t0 = time.perf_counter()
@@ -234,6 +331,11 @@ def stage_window(controls, label: str, record: dict, sync):
         except Exception as e:
             record.setdefault("window_errors", []).append(f"end-sync: {e!r}")
         record["wall_s"] = time.perf_counter() - t0
+        if armed:
+            try:
+                record["transfers"] = observer.end_window()
+            except Exception as e:
+                record.setdefault("window_errors", []).append(f"transfer-observer-end: {e!r}")
         for name, fn in (("pop", controls.pop), ("pause", controls.pause)):
             try:
                 fn()
@@ -371,7 +473,7 @@ def regenerate_prompts(baseline: dict, torch, vocab: int) -> list[dict]:
 
 def run_timed_decode_job(generator, Job, ids, ctx: int, rep: int, seed: int,
                          controls, decode_start: int, decode_tokens: int,
-                         sync) -> dict:
+                         sync, observer = None) -> dict:
     """One full decode job with two bounded windows around/inside it.
 
     Flow ('iterate until' = while the job.new_tokens target is unreached and
@@ -383,7 +485,9 @@ def run_timed_decode_job(generator, Job, ids, ctx: int, rep: int, seed: int,
     The job completes on the last decode-window token (min_new == max_new),
     so the completion result is captured within this call. The generated
     sequence is copied out (list + hashes) BEFORE any cleanup can drop the
-    job references.
+    job references. `observer` (--observe-transfers) is armed per window only;
+    the unprofiled gap runs with it disarmed, so gap transfers/syncs are
+    excluded from every snapshot.
     """
     from exllamav3.generator.sampler import ArgmaxSampler
 
@@ -417,7 +521,7 @@ def run_timed_decode_job(generator, Job, ids, ctx: int, rep: int, seed: int,
     # iters before the first token). Strict +1 is decode-only; for prefill we
     # assert no bursts and that the window closes at new_tokens == 1.
     pf = new_window("prefill", prefill_label, 1)
-    with stage_window(controls, prefill_label, pf, sync):
+    with stage_window(controls, prefill_label, pf, sync, observer = observer):
         generator.enqueue(job)
         tracker.begin("prefill")
         while job.new_tokens < 1 and generator.num_remaining_jobs() > 0:
@@ -439,7 +543,7 @@ def run_timed_decode_job(generator, Job, ids, ctx: int, rep: int, seed: int,
 
     # -- decode window: exactly decode_tokens one-token advances.
     dc = new_window("decode", decode_label, decode_tokens)
-    with stage_window(controls, decode_label, dc, sync):
+    with stage_window(controls, decode_label, dc, sync, observer = observer):
         tracker.begin("decode")
         while job.new_tokens < total and generator.num_remaining_jobs() > 0:
             drive_one()
@@ -561,15 +665,18 @@ def run_warmup_decode_job(generator, Job, ids, ctx: int, seed: int,
     }
 
 
-def release_gpu_resources(torch, names: dict, cleanup_failures: list) -> None:
+def release_gpu_resources(torch, names: dict, cleanup_failures: list,
+                          device_indices = None) -> None:
     """Best-effort post-unload release, run ONLY when nothing is used anymore.
 
     Root's verified pilot sequence (minus any engine *implementation* edits --
     these are existing public helpers, each guarded independently so a missing
     or renamed hook is recorded, not fatal): drop the local references, gc,
     then ask the two known caches (module-level tensor cache, BC-attention
-    kernel cache) to release, empty the torch allocator and synchronize.
-    Every failure is recorded into cleanup_failures and forces nonzero exit.
+    kernel cache) to release, empty the torch allocator and synchronize EVERY
+    active device (device_indices; None keeps the historical default-device
+    call). Every failure is recorded into cleanup_failures and forces nonzero
+    exit.
     """
     if torch is None:
         # Validation may have failed before the engine was imported. Do not
@@ -601,7 +708,11 @@ def release_gpu_resources(torch, names: dict, cleanup_failures: list) -> None:
     try:
         if torch is not None:
             torch.cuda.empty_cache()
-            torch.cuda.synchronize()
+            if device_indices:
+                for i in device_indices:
+                    torch.cuda.synchronize(torch.device(f"cuda:{i}"))
+            else:
+                torch.cuda.synchronize()
     except Exception as e:
         cleanup_failures.append(f"empty_cache/synchronize: {e!r}")
 
@@ -616,6 +727,9 @@ def run(args) -> int:
         raise SystemExit(" !! FATAL: --contexts empty")
     contexts = sorted(set(int(c) for c in args.contexts))
     decode_total = args.decode_start + args.decode_tokens
+    # CLI-boundary split validation (pure Python, via the NEW multi_gpu
+    # helper): None keeps the single-GPU path, a list means an explicit split.
+    budgets = parse_use_per_device(args.use_per_device)
 
     result: dict = {
         "format": PROFILE_FORMAT,
@@ -626,11 +740,23 @@ def run(args) -> int:
         "cleanup_failures": [],
         "mode": {"roctx": bool(args.roctx),
                  "control_mode": not args.roctx,
+                 "split": budgets is not None,
+                 "use_per_device": budgets,
+                 "observe_transfers": bool(args.observe_transfers),
                  "note": ("--no-roctx matched control: identical flow, timing and syncs, "
                           "no-op marker/pause/resume calls; windows are wall-clock only, "
                           "NOT profiler windows" if not args.roctx else
                           "rocprofv3 attached externally (SDK-first LD_PRELOAD, root's "
-                          "bootstrap); only the stage windows are traced")},
+                          "bootstrap); only the stage windows are traced")
+                          + ("; explicit layer split: budgets "
+                             f"{budgets} GiB over the {len(budgets)} visible GPUs, official "
+                             "use_per_device load, placement audit required"
+                             if budgets is not None else
+                             "; single-GPU gate (cuda:0, exactly one visible device)")
+                          + ("; transfer observer installed (profiling-side only), armed "
+                             "per profiled window; copy/sync durations are HOST WALL, "
+                             "bypassing call sites are NOT observed"
+                             if args.observe_transfers else "")},
         "params": vars(args),
         "provenance": {
             "commit": git_commit(repo_root()),
@@ -660,15 +786,30 @@ def run(args) -> int:
             "exllamav3_init_path": None,
             "roctx_lib": ROCTX_LIB_DEFAULT if args.roctx else None,
             "roctx_paused_before_load": False,
+            "active_devices": None,          # [0] single, or range(len(budgets)) split
+            "use_per_device": budgets,
+            "placement_audit": "required" if budgets is not None else "n/a (single GPU)",
+            "transfer_observer": {"requested": bool(args.observe_transfers),
+                                  "installed": False,
+                                  "restored": None,
+                                  "targets": (list(".".join(t) for t in
+                                                   TransferObserver.ENGINE_TARGETS)
+                                              if args.observe_transfers else None)},
         },
         "gpu_gate": None,
         "prompt_replay": {"runs": None, "ids_sha256_all_match": None},
+        "placement_audit": None,             # full multi_gpu.audit_placement dict (split)
+        "memory_snapshots": {},              # multi_gpu.device_memory_snapshot, safe points
+        "transfer_observation": None,        # aggregate totals (observer runs only)
         "runs": [],
     }
     held: dict = {}          # model/generator/cache/... refs for cleanup
     torch = None
     model = None
     controls = NoopControls()
+    sync = None              # boundary sync covering ALL active devices (set at the gate)
+    observer = None          # TransferObserver when --observe-transfers
+    active_indices: list = [0]
     try:
         baseline = load_and_validate_baseline(args.baseline_json, contexts,
                                               args.repeats, decode_total)
@@ -698,9 +839,25 @@ def run(args) -> int:
         result["provenance"]["loaded_extension_path"] = getattr(ext_mod, "__file__", None)
         result["provenance"]["exllamav3_init_path"] = getattr(exllamav3, "__file__", None)
 
-        result["gpu_gate"] = bench.validate_gpu(torch, "cuda:0", args.expect_arch)
-        dev = torch.device("cuda:0")
-        sync = lambda: torch.cuda.synchronize(dev)
+        if budgets:
+            # split gate: EXACTLY len(budgets) visible GPUs, every one
+            # matching --expect-arch (multi_gpu raises SystemExit otherwise).
+            # active_indices is only set once the gate proves they exist.
+            result["gpu_gate"] = multi_gpu.validate_split_gate(
+                torch, len(budgets), args.expect_arch)
+            active_indices = list(range(len(budgets)))
+        else:
+            # single-device default retains the Phase-2 gate verbatim.
+            result["gpu_gate"] = bench.validate_gpu(torch, "cuda:0", args.expect_arch)
+        result["provenance"]["active_devices"] = active_indices
+        # Boundary/cleanup syncs cover ALL active devices (identical one-call
+        # behavior for a single GPU). Never per token.
+        sync = make_boundary_sync(torch, active_indices)
+
+        if args.observe_transfers:
+            observer = TransferObserver(torch)
+            observer.install()
+            result["provenance"]["transfer_observer"]["installed"] = True
 
         config = Config.from_directory(args.model_dir)
         model = Model.from_config(config)
@@ -738,10 +895,24 @@ def run(args) -> int:
             raise AssertionError(f"expected FP16 cache, got {cache.layer_type.__name__}")
 
         t0 = time.perf_counter()
-        model.load(device = "cuda:0", max_chunk_size = MAX_CHUNK_SIZE, progressbar = False)
+        model.load(**model_load_kwargs(budgets))   # split: use_per_device, NO device arg
         result["provenance"]["load_s"] = time.perf_counter() - t0
-        print(f" -- loaded {args.model_dir}; cache {cache_tokens} tokens; "
-              f"profiler {'paused (roctx)' if args.roctx else 'not attached (control)'}",
+        result["memory_snapshots"]["after_load"] = \
+            multi_gpu.device_memory_snapshot(torch, active_indices)   # sync=False
+        if budgets:
+            # Placement is the evidence, budgets are not: audit the LIVE module
+            # graph and require ok before measuring anything.
+            audit = multi_gpu.audit_placement(model, active_indices)
+            result["placement_audit"] = audit
+            if not audit["ok"]:
+                raise AssertionError(
+                    "layer-split placement audit FAILED: "
+                    + "; ".join(str(p) for p in audit["problems"][:8]))
+        where = (f"SPLIT {budgets} GiB on {len(active_indices)} GPUs" if budgets
+                 else "single cuda:0")
+        print(f" -- loaded {args.model_dir} ({where}); cache {cache_tokens} tokens; "
+              f"profiler {'paused (roctx)' if args.roctx else 'not attached (control)'}"
+              f"{'; transfer observer armed per window' if observer is not None else ''}",
               flush = True)
 
         generator = Generator(
@@ -772,7 +943,8 @@ def run(args) -> int:
                 e = by_key[("decode", ctx, rep)]
                 rec = run_timed_decode_job(generator, Job, e["ids"], ctx, rep,
                                            int(e["row"]["seed"]), controls,
-                                           args.decode_start, args.decode_tokens, sync)
+                                           args.decode_start, args.decode_tokens, sync,
+                                           observer = observer)
                 result["runs"].append(rec)
                 if rec["problems"]:
                     raise AssertionError(f"decode@{ctx} rep{rep}: {rec['problems']}")
@@ -780,23 +952,38 @@ def run(args) -> int:
                 print(f" -- decode@{ctx:5} rep{rep} ok  prefill "
                       f"{pw['wall_s'] * 1000:8.2f} ms  decode({args.decode_tokens}tok) "
                       f"{dw['wall_s'] * 1000:8.2f} ms", flush = True)
+            result["memory_snapshots"][f"after_context_{ctx}"] = \
+                multi_gpu.device_memory_snapshot(torch, active_indices)   # sync=False
     except SystemExit as e:
         result["errors"].append(f"FATAL: {e}")
     except Exception as e:
         traceback.print_exc()
         result["errors"].append(f"aborted: {e!r}")
     finally:
-        # Normal cleanup, in root's verified order: unload + sync first, then
-        # drop references and best-effort release caches. Sequences/hashes are
+        # Normal cleanup, in root's verified order: FIRST restore the transfer
+        # observer (cleanup must run unpatched and no restore failure may be
+        # swallowed), then unload + sync ALL active devices, then drop
+        # references and best-effort release caches. Sequences/hashes are
         # already copied out of the job in run_timed_decode_job. A teardown
         # failure is recorded and forces a nonzero exit -- never swallowed.
+        if observer is not None:
+            try:
+                result["transfer_observation"] = observer.totals()
+            except Exception as e:
+                result["cleanup_failures"].append(f"transfer-observer totals: {e!r}")
+            for err in observer.uninstall():
+                result["cleanup_failures"].append(f"transfer-observer restore: {err}")
+            result["provenance"]["transfer_observer"]["installed"] = bool(observer.installed)
+            result["provenance"]["transfer_observer"]["restored"] = not observer.installed
         try:
             controls.close()
         except Exception as e:
             result["cleanup_failures"].append(f"controls.close(): {e!r}")
         if model is not None:
             try:
-                if torch is not None:
+                if sync is not None:
+                    sync()                       # every active device
+                elif torch is not None:
                     torch.cuda.synchronize()
                 model.unload()
             except Exception as e:
@@ -805,7 +992,9 @@ def run(args) -> int:
         generator = cache = model = config = tokenizer = None
         held.clear()
         try:
-            release_gpu_resources(torch, held, result["cleanup_failures"])
+            release_gpu_resources(
+                torch, held, result["cleanup_failures"],
+                device_indices = active_indices if torch is not None else None)
         except Exception as e:
             result["cleanup_failures"].append(f"release_gpu_resources: {e!r}")
         result["ok"] = (not result["errors"] and not result["cleanup_failures"]

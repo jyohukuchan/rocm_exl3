@@ -32,10 +32,20 @@ What it does
      overlapping kernels); memory-copy sum and union (an absent copy file is
      reported as NOT MEASURED, never as zero); GPU busy = union of kernels
      and copies; kernel overlap = sum - union; the non-GPU remainder of the
-     window. Percentages are relative to the window's total kernel time --
-     never silently to wall. Decode windows normalize per generated token
-     (marker ``tokens``); prefill reports the whole-prompt total plus an
-     optional per-input-token figure derived from ``context``.
+     window; and a PER-AGENT breakdown keyed by the rocprof Agent_Id recorded
+     in the CSV (an agent id is NOT a HIP device index -- root maps it via
+     agent_info trace metadata): per-agent kernel count/sum/union and
+     category sums, plus per-agent copy totals bucketed by Source_Agent_Id
+     (falling back to Agent_Id) when the copy CSV supplies them. Per-agent
+     unions are computed WITHIN one agent; the window-level kernel_union_ns
+     is the cross-agent union -- never conflate or sum the two. Copy rows
+     keep Direction/src/dst/bytes RAW as the CSV supplies them (Direction
+     labels have been observed wrong; no inference, and bytes is None when
+     the CSV has no size column -- never fabricated). Percentages are
+     relative to the window's total kernel time -- never silently to wall.
+     Decode windows normalize per generated token (marker ``tokens``);
+     prefill reports the whole-prompt total plus an optional per-input-token
+     figure derived from ``context``.
   5. Aggregates across repeats per (stage, context): median category
      duration per window and per decode token, plus min/max/distribution.
      Raw windows are always preserved. Global medians mix processes only
@@ -462,9 +472,33 @@ def parse_kernels(fs: FileSet) -> tuple[list[dict], list[str]]:
     return out, errors
 
 
+COPY_SRC_ADDR_KEYS = ("Src_Address", "Src_Addr", "Source_Address")
+COPY_DST_ADDR_KEYS = ("Dst_Address", "Dst_Addr", "Destination_Address")
+COPY_SIZE_KEYS = ("Memory_Copy_Size", "Size")
+
+
+def _raw_field(row: dict, keys: tuple[str, ...]):
+    """First non-empty value among candidate column names, else None. Used to
+    preserve CSV-supplied fields verbatim without fabricating absent data."""
+    for k in keys:
+        v = row.get(k)
+        if v not in (None, ""):
+            return v
+    return None
+
+
 def parse_copies(fs: FileSet) -> tuple[list[dict], list[str]]:
     """Memory-copy-trace rows. An absent file is NOT zero copy time; it is
-    reported as not measured by the caller (fs.copy is None)."""
+    reported as not measured by the caller (fs.copy is None).
+
+    Raw-field preservation for the two-agent split: Agent_Id, Source_Agent_Id,
+    Destination_Agent_Id and Direction are kept exactly as the CSV supplies
+    them (empty string when the column is absent). Direction labels have been
+    observed WRONG on real traces (GPU->GPU copies labeled HOST_TO_DEVICE), so
+    nothing here ever infers a host/CPU endpoint from Direction -- agent
+    attribution downstream uses only the explicit agent-id fields. bytes is
+    the size column when present, None when the CSV supplies none (the
+    two-GPU copy trace showed no bytes at all) -- never fabricated as 0."""
     if fs.copy is None:
         return [], []
     errors: list[str] = []
@@ -491,12 +525,21 @@ def parse_copies(fs: FileSet) -> tuple[list[dict], list[str]]:
             continue
         kind = row.get("Kind", "")
         ctype = row.get("Copy_Type") or row.get("Location_Type") or ""
-        try:
-            size = int(row.get("Memory_Copy_Size", "") or 0)
-        except ValueError:
-            size = 0
+        raw_size = _raw_field(row, COPY_SIZE_KEYS)
+        size: int | None = None
+        if raw_size is not None:
+            try:
+                size = int(raw_size)
+            except ValueError:
+                errors.append(f"{where}: copy size {raw_size!r} is not an integer")
         out.append({"process": fs.key, "start_ns": s, "end_ns": e, "kind": kind,
-                    "copy_type": f"{kind} {ctype}".strip(), "bytes": size})
+                    "copy_type": f"{kind} {ctype}".strip(), "bytes": size,
+                    "agent": row.get("Agent_Id", ""),
+                    "source_agent": row.get("Source_Agent_Id", ""),
+                    "dest_agent": row.get("Destination_Agent_Id", ""),
+                    "direction": row.get("Direction", ""),
+                    "src_addr": _raw_field(row, COPY_SRC_ADDR_KEYS),
+                    "dst_addr": _raw_field(row, COPY_DST_ADDR_KEYS)})
     return out, errors
 
 
@@ -596,6 +639,14 @@ def summarize_window(w: dict, kernels: list[dict], copies: list[dict],
                         "never GPU idle")
     cats: dict[str, dict] = {}
     names: dict[str, dict] = {}
+    per_agent: dict[str, dict] = {}
+
+    def agent_bucket(akey: str) -> dict:
+        return per_agent.setdefault(akey, {
+            "kernel_count": 0, "kernel_sum_ns": 0, "_kint": [], "categories": {},
+            "copy_count": 0, "copy_sum_ns": 0, "_cint": [],
+            "_copy_bytes": 0, "_copy_bytes_missing": 0})
+
     for ev in kernels:
         dur = ev["end_ns"] - ev["start_ns"]
         c = cats.setdefault(ev["category"],
@@ -614,6 +665,15 @@ def summarize_window(w: dict, kernels: list[dict], copies: list[dict],
                                "count": 0, "kernel_sum_ns": 0})
         nm["count"] += 1
         nm["kernel_sum_ns"] += dur
+        a = agent_bucket(ev.get("agent") or "unknown")
+        a["kernel_count"] += 1
+        a["kernel_sum_ns"] += dur
+        a["_kint"].append((ev["start_ns"], ev["end_ns"]))
+        ac = a["categories"].setdefault(
+            ev["category"], {"kernel_count": 0, "kernel_sum_ns": 0, "_kint": []})
+        ac["kernel_count"] += 1
+        ac["kernel_sum_ns"] += dur
+        ac["_kint"].append((ev["start_ns"], ev["end_ns"]))
     for c in cats.values():
         c["kernel_union_ns"] = interval_union_ns(
             [(ev["start_ns"], ev["end_ns"]) for ev in c["kernels"]])
@@ -624,6 +684,36 @@ def summarize_window(w: dict, kernels: list[dict], copies: list[dict],
         for s in c["subcategories"].values():
             s["pct_of_window_kernel_sum"] = (round(100.0 * s["kernel_sum_ns"] / ksum, 3)
                                              if ksum else None)
+
+    # Per-agent copy totals: bucketed by the explicit Source_Agent_Id field
+    # (Agent_Id fallback). Direction labels are NEVER consulted for agent
+    # attribution -- they have been observed wrong (GPU->GPU labeled
+    # HOST_TO_DEVICE). bytes stays None when the CSV supplies no size column.
+    for ev in copies:
+        a = agent_bucket(ev.get("source_agent") or ev.get("agent") or "unknown")
+        a["copy_count"] += 1
+        a["copy_sum_ns"] += ev["end_ns"] - ev["start_ns"]
+        a["_cint"].append((ev["start_ns"], ev["end_ns"]))
+        if ev.get("bytes") is None:
+            a["_copy_bytes_missing"] += 1
+        else:
+            a["_copy_bytes"] += ev["bytes"]
+    per_agent_out: dict[str, dict] = {}
+    for akey in sorted(per_agent, key = lambda k: (-per_agent[k]["kernel_sum_ns"], k)):
+        a = per_agent[akey]
+        a["kernel_union_ns"] = interval_union_ns(a.pop("_kint"))
+        for ac in a["categories"].values():
+            ac["kernel_union_ns"] = interval_union_ns(ac.pop("_kint"))
+        a["copy_union_ns"] = interval_union_ns(a.pop("_cint")) if copy_measured else None
+        if not copy_measured:
+            a["copy_sum_ns"] = None
+            a["copy_bytes"] = None
+        else:
+            a["copy_bytes"] = (None if a["copy_count"] and a["_copy_bytes_missing"]
+                               else a["_copy_bytes"])
+        a.pop("_copy_bytes")
+        a.pop("_copy_bytes_missing")
+        per_agent_out[akey] = a
     out = {
         "stage": w["stage"], "context": w["context"], "repeat": w["repeat"],
         "tokens": tokens, "label": w["label"],
@@ -640,6 +730,17 @@ def summarize_window(w: dict, kernels: list[dict], copies: list[dict],
         "non_gpu_interval_ns": wall - busy,
         "non_gpu_note": non_gpu_note,
         "categories": cats,
+        "per_agent": per_agent_out,
+        "per_agent_note": ("keyed by the rocprof Agent_Id in the CSV (an agent id is NOT a "
+                           "HIP device index; root maps it via agent_info trace metadata, "
+                           "e.g. Location_Id/Drm_Render_Minor). *_union_ns are computed "
+                           "WITHIN this agent; the window-level kernel_union_ns/gpu_busy_"
+                           "union_ns are the CROSS-agent union -- never conflate them and "
+                           "never sum per-agent unions into a global busy figure. Copies are "
+                           "bucketed by Source_Agent_Id (fallback Agent_Id), never by the "
+                           "unreliable Direction label; copy_bytes is None when the CSV "
+                           "supplies no size for some rows and copy_* fields are None when "
+                           "the copy trace was not measured at all"),
         "per_kernel": sorted(names.values(), key = lambda r: -r["kernel_sum_ns"]),
         "per_token": {
             "kernel_sum_per_token_ns": round(ksum / tokens, 3),
@@ -949,6 +1050,23 @@ def build_summary(trace_dir: Path, run: dict | None) -> dict:
             "kernel vs marker time": "kernel_sum/union/busy are GPU time; "
                                      "marker_wall_ns is the host API range -- kept as "
                                      "separate fields, never summed",
+            "per_agent": "per-window, per-rocprof-Agent_Id kernel count/sum/union and "
+                "category sums. Agent ids are trace agent ids, NOT HIP device indices "
+                "(root maps via agent_info Location_Id / Drm_Render_Minor metadata). "
+                "Per-agent unions are that agent's own busy; the window-level "
+                "kernel_union_ns/gpu_busy_union_ns are the cross-agent union -- the two "
+                "are never conflated and per-agent busy is never summed into a global "
+                "figure (on a healthy split the per-agent unions overlap in time and "
+                "exceed the global union)",
+            "copy_raw_fields": "memory-copy rows preserve Agent_Id, Source_Agent_Id, "
+                "Destination_Agent_Id, Direction, src/dst addresses and size exactly as "
+                "the CSV supplies them (empty string / None when absent). Direction "
+                "labels have been observed WRONG on real two-GPU traces (GPU->GPU "
+                "labeled HOST_TO_DEVICE): no host/CPU endpoint is ever inferred from "
+                "Direction, and per-agent copy attribution uses only the explicit agent "
+                "id fields. bytes is None when no size column is supplied -- never "
+                "fabricated as 0. Root may disable the copy trace when it is unstable; "
+                "its absence is NOT MEASURED, never zero",
         },
     })
     if run is not None:

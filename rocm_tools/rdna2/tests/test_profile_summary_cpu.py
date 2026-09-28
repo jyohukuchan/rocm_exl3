@@ -54,8 +54,8 @@ def marker_row(domain, fn, pid, s, e, cid = 1):
     return [domain, fn, str(pid), str(pid), str(cid), str(s), str(e)]
 
 
-def kernel_row(pid, name, s, e, dispatch = 1):
-    return ["KERNEL_DISPATCH", "Agent 1", "1", "0", str(pid), str(dispatch),
+def kernel_row(pid, name, s, e, dispatch = 1, agent = "Agent 1"):
+    return ["KERNEL_DISPATCH", agent, "1", "0", str(pid), str(dispatch),
             str(dispatch), name, str(dispatch), str(s), str(e),
             "0", "0", "120", "0", "128", "32", "1", "1", "512", "16", "1"]
 
@@ -609,6 +609,168 @@ class TestRefusals(SyntheticTraceMixin, unittest.TestCase):
         res = self.summarize()
         self.assertTrue(res["ok"], res["errors"])
         self.assertIn("traced copies", res["windows"][0]["non_gpu_note"])
+
+
+# ---------------------------------------------------------------------------
+# two-agent split: per-agent kernel count/sum/union + category sums per
+# window, and raw memory-copy field preservation
+#
+#   window [1000, 5000] tokens 4
+#       Agent 1:  exl3_gemv  [1100, 2100]  1000    (dequant)
+#       Agent 1:  rms_norm   [2200, 2400]   200    (other)
+#       Agent 3:  paged attn [1100, 1600]   500    (attention, CONCURRENT
+#                                                   with Agent 1's gemv)
+#   global: sum 1700, cross-agent union 1200 (overlap 500)
+#   per-agent unions: Agent 1 1200, Agent 3 500 -- their SUM (1700) EXCEEDS
+#   the global union: that is the point; per-GPU busy is never the global
+#   union and the global union is never the sum of per-agent busy.
+# ---------------------------------------------------------------------------
+
+AGENT_COPY_HEADER = ["Kind", "Agent_Id", "Source_Agent_Id", "Destination_Agent_Id",
+                     "Direction", "Memory_Copy_Size", "Start_Timestamp", "End_Timestamp"]
+AGENT_COPY_ADDR_HEADER = ["Kind", "Agent_Id", "Source_Agent_Id", "Destination_Agent_Id",
+                          "Direction", "Memory_Copy_Size", "Src_Address", "Dst_Address",
+                          "Start_Timestamp", "End_Timestamp"]
+AGENT_COPY_NOSIZE_HEADER = ["Kind", "Agent_Id", "Source_Agent_Id", "Destination_Agent_Id",
+                            "Direction", "Start_Timestamp", "End_Timestamp"]
+
+
+class TestPerAgentWindows(SyntheticTraceMixin, unittest.TestCase):
+    DECODE = "stage=decode;context=2048;repeat=1;tokens=4"
+
+    def build(self, copies = None):
+        markers = [marker_row(sr.MARKER_RANGE_DOMAIN, self.DECODE, 1001, 1000, 5000)]
+        kernels = [
+            kernel_row(1001, "void exl3_gemv_dot_kernel<6>(x)", 1100, 2100, 1, "Agent 1"),
+            kernel_row(1001, "void rms_norm_kernel<0>(x)", 2200, 2400, 2, "Agent 1"),
+            kernel_row(1001, "_paged_attn_decode_split_kernel", 1100, 1600, 3, "Agent 3"),
+        ]
+        self.write_unit(1001, markers, kernels, copies)
+        return kernels
+
+    def test_two_agents_have_separate_unions_never_conflated(self):
+        self.build()
+        res = self.summarize()
+        self.assertTrue(res["ok"], res["errors"])
+        w = res["windows"][0]
+        # global window numbers unchanged (additive schema):
+        self.assertEqual(w["kernel_count"], 3)
+        self.assertEqual(w["kernel_sum_ns"], 1700)
+        self.assertEqual(w["kernel_union_ns"], 1200)      # cross-agent union
+        self.assertEqual(w["kernel_overlap_ns"], 500)
+        self.assertEqual(w["gpu_busy_union_ns"], 1200)    # copy trace absent
+        pa = w["per_agent"]
+        self.assertEqual(sorted(pa), ["Agent 1", "Agent 3"])
+        a1, a3 = pa["Agent 1"], pa["Agent 3"]
+        self.assertEqual((a1["kernel_count"], a1["kernel_sum_ns"], a1["kernel_union_ns"]),
+                         (2, 1200, 1200))
+        self.assertEqual((a3["kernel_count"], a3["kernel_sum_ns"], a3["kernel_union_ns"]),
+                         (1, 500, 500))
+        # the whole point: sum of per-agent busy exceeds the global union and
+        # must never be read as, or replaced by, it:
+        self.assertGreater(a1["kernel_union_ns"] + a3["kernel_union_ns"],
+                           w["kernel_union_ns"])
+        self.assertIn("NOT a HIP device index", w["per_agent_note"])
+        self.assertIn("never conflate", w["per_agent_note"])
+        self.assertIn("per_agent", res["legend"])
+
+    def test_per_agent_category_sums(self):
+        self.build()
+        w = self.summarize()["windows"][0]
+        pa = w["per_agent"]
+        self.assertEqual(pa["Agent 1"]["categories"][sr.CAT_DEQUANT]["kernel_sum_ns"], 1000)
+        self.assertEqual(pa["Agent 1"]["categories"][sr.CAT_DEQUANT]["kernel_union_ns"], 1000)
+        self.assertEqual(pa["Agent 1"]["categories"][sr.CAT_DEQUANT]["kernel_count"], 1)
+        self.assertEqual(pa["Agent 1"]["categories"][sr.CAT_OTHER]["kernel_sum_ns"], 200)
+        self.assertNotIn(sr.CAT_ATTENTION, pa["Agent 1"]["categories"])
+        self.assertEqual(pa["Agent 3"]["categories"][sr.CAT_ATTENTION]["kernel_sum_ns"], 500)
+        # window-level categories still aggregate across agents (unchanged):
+        self.assertEqual(w["categories"][sr.CAT_DEQUANT]["kernel_sum_ns"], 1000)
+        self.assertEqual(w["categories"][sr.CAT_ATTENTION]["kernel_sum_ns"], 500)
+
+    def test_per_agent_copies_attributed_by_source_agent_not_direction(self):
+        # real two-GPU traces showed copies WITHOUT bytes whose Direction is
+        # mislabeled HOST_TO_DEVICE even though Source/Destination are BOTH
+        # GPUs: attribution must follow the explicit Source_Agent_Id field.
+        self.build()
+        d = self.trace_dir / "uuidA"
+        write_csv(d / "1001_memory_copy_trace.csv", AGENT_COPY_HEADER, [
+            ["MEMCPY_ACTIVITY", "Agent 3", "Agent 3", "Agent 1", "HOST_TO_DEVICE",
+             "4096", "1300", "1350"]])
+        res = self.summarize()
+        self.assertTrue(res["ok"], res["errors"])
+        w = res["windows"][0]
+        pa = w["per_agent"]
+        self.assertEqual(pa["Agent 3"]["copy_count"], 1)
+        self.assertEqual(pa["Agent 3"]["copy_sum_ns"], 50)
+        self.assertEqual(pa["Agent 3"]["copy_bytes"], 4096)
+        self.assertEqual(pa["Agent 1"]["copy_count"], 0)
+        self.assertEqual(pa["Agent 1"]["copy_bytes"], 0)
+        # the copy lives inside Agent 1's kernel span: busy stays the union
+        self.assertEqual(w["gpu_busy_union_ns"], 1200)
+        self.assertIn("Direction", w["per_agent_note"])
+
+    def test_unmeasured_copy_trace_gives_none_not_zero_per_agent(self):
+        self.build()
+        w = self.summarize()["windows"][0]
+        for a in w["per_agent"].values():
+            self.assertIsNone(a["copy_sum_ns"])
+            self.assertIsNone(a["copy_union_ns"])
+            self.assertIsNone(a["copy_bytes"])
+            self.assertEqual(a["copy_count"], 0)
+
+
+class TestCopyRawFieldPreservation(unittest.TestCase):
+    """parse_copies keeps whatever CSV columns exist verbatim and fabricates
+    nothing: bytes None when no size column, empty-string agent fields when
+    absent, addresses only when supplied."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name)
+
+    def parse(self, header, rows):
+        p = self.dir / "1001_memory_copy_trace.csv"
+        write_csv(p, header, rows)
+        fs = sr.FileSet(("x", 1001))
+        fs.copy = p
+        out, errors = sr.parse_copies(fs)
+        self.assertEqual(errors, [])
+        return out
+
+    def test_all_raw_fields_preserved(self):
+        rows = self.parse(AGENT_COPY_ADDR_HEADER, [
+            ["MEMCPY_ACTIVITY", "Agent 1", "Agent 1", "Agent 3", "HOST_TO_DEVICE",
+             "4096", "0x7000", "0x8000", "1300", "1350"]])
+        self.assertEqual(len(rows), 1)
+        r = rows[0]
+        self.assertEqual(r["agent"], "Agent 1")
+        self.assertEqual(r["source_agent"], "Agent 1")
+        self.assertEqual(r["dest_agent"], "Agent 3")
+        self.assertEqual(r["direction"], "HOST_TO_DEVICE")   # kept RAW, never re-derived
+        self.assertEqual(r["bytes"], 4096)
+        self.assertEqual(r["src_addr"], "0x7000")
+        self.assertEqual(r["dst_addr"], "0x8000")
+
+    def test_missing_size_column_is_none_not_zero(self):
+        rows = self.parse(AGENT_COPY_NOSIZE_HEADER, [
+            ["MEMCPY_ACTIVITY", "Agent 1", "Agent 3", "Agent 1", "HOST_TO_DEVICE",
+             "1300", "1350"]])
+        self.assertIsNone(rows[0]["bytes"])                  # NOT fabricated as 0
+        self.assertEqual(rows[0]["src_addr"], None)
+        self.assertEqual(rows[0]["dst_addr"], None)
+        self.assertEqual(rows[0]["agent"], "Agent 1")
+        self.assertEqual(rows[0]["source_agent"], "Agent 3")
+        self.assertEqual(rows[0]["dest_agent"], "Agent 1")
+
+    def test_legacy_header_still_parses(self):
+        rows = self.parse(COPY_HEADER, [copy_row(1001, 1300, 1350, size = 2048)])
+        r = rows[0]
+        self.assertEqual(r["bytes"], 2048)
+        self.assertEqual(r["agent"], "Agent 1")
+        self.assertEqual(r["source_agent"], "")              # column absent, not inferred
+        self.assertEqual(r["direction"], "")
 
 
 def minimal_run_json(trace_dir_marker_wall_ns = 1000):
