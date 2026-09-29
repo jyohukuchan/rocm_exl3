@@ -20,8 +20,11 @@
 | 8K入力＋256生成、batch1/MTP4 | 正常終了、target82/draft308回全finite、accepted179/rejected129、Swap0、power auto→peak→auto |
 | 2K入力＋256生成×2、batch2/MTP2 | 正常終了、target94/draft180回全finite、両job accepted166/rejected14、Swap0、推論中peak維持 |
 | 32K入力＋256生成、batch1/MTP4 | 正常終了、target82/draft260回全finite、accepted191/rejected69、Swap0。torch peak約27.96/24.57GiB |
+| 候補窓の途中でEOS、MTP4 | 「2」「OK」をそれぞれ返し、EOSを含む2tokenでstop_token終了。各round accepted1/rejected3、全検査forward有限 |
 
 32K初回はEngram RAM事前guardで停止（必要31128MiB＋reserve2048に対しMemAvailable32471MiB）。ZFS ARC約63GiBが別途回収可能な109GiBホストであることを確認し、再試行のprocessだけEXL3_HOST_MEM_RESERVE_MB=0とした。OS/ZFS設定は不変更。後続の比較も同じprocess設定を記録して実施。推論faultやOOMを無視したものではない。
+
+低レベルの`Job` APIで通常の対話を行う際は、`generation_config.json`の`eos_token_id`（このpackでは248046/248044）を`stop_conditions`へ明示する。EOS検証の初回はこの指定漏れによりEOS後も生成してしまったため、スクリプトを訂正して再試験した。モデルは初回からEOSを出しており、MTP本体の不具合ではない。固定256tokenの速度測定は別条件であり、正式AR/MTPの全24出力には途中EOSが含まれていないことも確認した。
 
 ## 2K入力の候補長・confidence比較
 
