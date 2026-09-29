@@ -156,7 +156,9 @@ __device__ inline float block_reduce_sum_broadcast_f(float v, int num_threads)
     {
         v = lane_id < max_warp_id ? shared[lane_id] : 0.0f;
         v = warp_reduce_sum_f(v);
-        shared[0] = v;
+        // warp_reduce_sum_f uses shfl_down, so only lane 0 holds the full sum;
+        // single writer avoids a race on shared[0] from lanes writing partial sums
+        if (lane_id == 0) shared[0] = v;
     }
     __syncthreads();
     v = shared[0];
