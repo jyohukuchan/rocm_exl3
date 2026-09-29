@@ -10,7 +10,7 @@
 - target Cacheは実際のbatch数に合わせたslot数と、候補長上限ぶんのmax_historyを確保する。既定16slotにMTP履歴を追加すると不要なVRAMを消費するため、batch1は1slot、batch2は2slotを使う。
 - 既存のMTP本体・draft/verify/rollback実装で動作したため、推測だけで数式やGPU kernelは変更していない。OpenCodeの読取り監査も実証バグを検出せず。stream_tapの意味は上流でも経験的な説明が残るが、本パックで採用率と実生成を確認。
 - `rocm_tools/rdna2/power_policy.py`をOpenCodeに実装委任しrootレビュー。MTPはtarget verifyより前にdraft計算があるため、その入口前にpeakへ切り替える。ACKのGPU数、初回auto、例外/接続終了、同期時間とRPC時間の分離等を強化。
-- `rocm_tools/rdna2/qwen_mtp_run.py`もOpenCode実装をrootがレビュー。固定入力hash・語彙境界・cache容量、burst-aware進捗計測、warmup区別、配置/Engram RAM監査、正常終了、失敗JSON、power制御を統合。CPU323tests成功、batch2の実GPU finite smokeも成功。AR比較でもMTP重みを常駐させ、同じ履歴容量・配置条件を使う。
+- `rocm_tools/rdna2/qwen_mtp_run.py`もOpenCode実装をrootがレビュー。固定入力hash・語彙境界・cache容量、burst-aware進捗計測、warmup区別、配置/Engram RAM監査、正常終了、失敗JSON、power制御を統合。CPU324tests成功、batch2の実GPU finite smokeも成功。AR比較でもMTP重みを常駐させ、同じ履歴容量・配置条件を使う。
 
 ## 正常動作・状態検証
 
@@ -44,7 +44,24 @@
 
 ## 正式8K比較
 
-再利用CLIで同一の12入力（2課題×warm1＋測定5）をAR/MTPで比較中。candidateは上限4・dynamic・confidence0.6、同一cache slot1/history4、MTP重みは両modeで常駐。結果は完了後に追記。
+再利用CLIで同一の12入力（2課題×warm1＋測定5）をAR/MTPで比較し、両processとも正常exit0。candidateは上限4・dynamic・confidence0.6、同一cache slot1/history4、MTP重みは両modeで常駐。モデルfingerprint・native SHA・cache容量・全入力hashが一致、全cache miss。正式比較は別processでAR→MTPの順に行った。結果は`formal8k-summary.json`。
+
+| 課題 | AR decode tok/s | MTP decode tok/s | AR終了処理込み tok/s | MTP終了処理込み tok/s | AR全体秒 | MTP全体秒 |
+|---|---:|---:|---:|---:|---:|---:|
+| 日本語 | 35.95 | 40.16 | 33.71 | 37.37 | 33.855 | 33.642 |
+| コード | 35.89 | 55.53 | 28.48 | 40.76 | 35.987 | 34.059 |
+
+各5回中央値。decodeは日本語+11.7%、コード+54.7%。終了処理込みの観測decodeでは+10.9%/+43.1%。8K入力＋256生成の全体時間は日本語-0.6%でほぼ同じ、コード-5.4%。MTP用prefillも必要で、prefill時間は日本語26.261→26.777秒、コード27.003→27.641秒となる。**decode向上率をそのまま全体の高速化率とはしない。**
+
+MTPの採用率は日本語54.2%/コード79.8%、平均候補長1.71/3.36。全12jobで`accepted + rejected = 実際に作った候補数`、`検証round数 + accepted = 256生成`を確認。候補と採用数の帳尻を独立集計しており、複数tokenを1回のiterateで返すことを1tokenとして誤計数していない。
+
+## 採用する設定と電力制御の仕上げ
+
+batch1の推奨は**MTP上限4＋動的調整＋confidence0.6**。設定を[JSON](qwen38_v620_mtp_config.json)にも保存した。これは評価CLIが自動読込みするファイルではなく、明示的に渡す設定の記録。batch2は候補長2固定で正常動作を検証済みで、より大きいbatchや最適候補長は別途測定する。
+
+`87b474b`で、batch1の待ち行列にも対応した。次のrequestがpendingの場合は`on_queue_drained`が呼ばれないため、次jobのactivate後・prefill実行前にもautoへ戻す。MTP2・batch1に2jobを同時enqueueし、各2K＋64生成・全検査forward有限・通常終了を確認。実遷移はauto→peak→auto（次prefill前）→peak→auto。batch>1ではこのjob単位切替を行わずpeakを保持する。
+
+本タスクで変更したのは有効化/評価runner・電力制御・実行設定で、MTPの数式やGPU kernelを推測で改変していない。最大4固定での悪化を回避し、入力に応じた候補長調整とMTP/headのGPU1同居を使用する。全実行/補助processは終了し、両GPUをautoへ復元済み。
 
 ## 再現
 
