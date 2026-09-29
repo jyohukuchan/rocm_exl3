@@ -1,5 +1,5 @@
 {
-  "purpose": "Validated Qwen3.8 Flash Next MTP settings; pass explicitly to the runner/API (not auto-loaded).",
+  "purpose": "Validated V620 TP2 + original packed MTP3 settings; pass explicitly to runner/API (not auto-loaded).",
   "model_directory": "/work/models/qwen38-flash-next-exl3-3.05bpw",
   "model_revision": "69e33439ae950f17bcbe95c98f117d80f759ab6d",
   "target_quantization": "EXL3 3.05bpw; head5; ng5",
@@ -51,5 +51,28 @@
     "Speculative verification still uses the unchanged target model; acceptance and speed depend on prompt/sampling.",
     "Default host memory reserve guard stays enabled; ZFS ARC can trigger it despite reclaimable cache. Diagnostic guard overrides are recorded per run.",
     "Use the bare HSA library name in LD_PRELOAD on this container; the absolute .so.1 spelling also loaded the Torch-bundled HSA runtime. Loaded paths are audited by tp_run."
-  ]
+  ],
+  "target_load": {
+    "tensor_p": true,
+    "tp_backend": "nccl",
+    "tp_output_device": "cuda:1",
+    "use_per_device": [
+      28,
+      28
+    ],
+    "max_chunk_size": 2048
+  },
+  "engram": {
+    "mode": "RAM",
+    "physical_copies": 1,
+    "table_bytes": 32640156672,
+    "owner": "selected by TP plan; one rank only"
+  },
+  "cache_dtype": "FP16",
+  "validation": {
+    "batch1": "8K AR repeated jobs and original MTP3; 32K+256 Japanese/code finite with fixed draft4",
+    "batch2": "two 8K+256 jobs together, finite with fixed draft2",
+    "power": "batch1 auto prefill/peak draft+verify+decode/auto idle; batch>1 peak during inference, auto exit",
+    "report": "doc/rdna2_tp2.md"
+  }
 }
