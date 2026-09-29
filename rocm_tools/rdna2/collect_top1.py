@@ -9,6 +9,12 @@ the same literal input sequence and the artifact is a small list of integers
 (top-1 agreement is the Phase 0-2 criterion; full-vocab KLD would need logit rows
 and is intentionally not collected here).
 
+EVIDENCE STATUS: every artifact produced here is CANDIDATE evidence. Bulk-vs-chunk
+agreement (or cross-backend agreement) localizes/absolves kernel-path divergence at
+identical inputs; it does NOT prove independently correct outputs and this file must
+never be labeled ground truth. Ground truth for the Qwen3.8 Flash Next Phase-5 work
+comes from the root orchestrator's independent testing of the actual model.
+
 Backends
 --------
 exl3, execution=bulk (default):
@@ -24,6 +30,47 @@ exl3, execution=chunked --chunk-size C:
     the autoregressive decode route (single-token forward + cached attention),
     C>1 is bulk-style cached prefill in C-token steps. Chunked-vs-bulk disagreement
     localizes prefill-vs-decode kernel divergence at identical inputs.
+
+Hybrid recurrent models (Qwen4Exp / Qwen3.8-Flash-Next: GDN + PLE + QSA)
+------------------------------------------------------------------------
+Supported on BOTH exl3 routes, through the engine's own recurrent machinery
+(no reimplementation, no engine edits):
+
+  * bulk (cache-free): the flash_attn_nc forward carries no cache/batch_shape,
+    so Qwen4ExpModel.prepare_inputs -> recurrent_util.prepare_for_recurrence is
+    a deliberate no-op and the model runs STATELESS over the whole sequence:
+    GDN scans from a zero initial state (gated_delta_net_fn with
+    recurrent_state=None), and PLELayer._history builds the n-gram hashing
+    history as [eos]x(ngram_size-1) + ids for the full literal case -- exactly
+    the EOS-padded sequence start a fresh cleared state carries at position 0.
+
+  * chunked (cached): per case the collector obtains ONE cleared state
+    (Cache.get_new_state -> GDNState(clear=True) zeroes every GDN conv/delta
+    slot and fills the PLE id-history slot with eos), passes that same live
+    state in params["recurrent_states"] for EVERY chunk, and verifies after each
+    forward that advance_recurrent_states moved state.position to exactly the
+    chunk end -- so chunks NEVER silently re-run from zero state. PLE history
+    is the REAL preceding-token context across chunk boundaries: the engine
+    reads the carried window from the state slot and writes
+    id_state[:ctx] = cat(prev_window, chunk_ids)[-ctx:] after every forward;
+    the collector independently re-derives the expected window at every
+    boundary (ple_carry_update vs ple_reference_history, CPU-side) and fails
+    the case on a mismatch. Between independent cases the state slot is
+    released in a finally block (also on exceptions) and the cache's state pool
+    is rebuilt (Cache.reset_states), so no case can inherit another's state.
+    No speculative decoding, MTP, or forced synthetic tokens anywhere in this
+    collector: params NEVER set "recurrent_history", so states advance
+    destructively without history writes and every harvested row conditions on
+    the literal manifest prefix only.
+
+exl3 n-gram table residency (--ngram-ram):
+    Set config.infer_params.ngram_stream_from_disk = False BEFORE model.load()
+    so every NGramEmbedding (PLE) table lands in system RAM instead of being
+    streamed from disk (model_init's --ngram_ram is the engine-side precedent).
+    The ACTUAL post-load mode of every table (trellis_ram/fp16_ram vs
+    trellis_disk/fp16_disk) is recorded in execution.ngram either way; if RAM
+    was requested and any table is not actually RAM-resident, collection
+    refuses to run rather than silently measuring the streamed route.
 
 transformers (unquantized source reference, e.g. the Qwen3-8B BF16 dir):
     model(input_ids, use_cache=False)["logits"]
@@ -68,7 +115,8 @@ incomplete. Per-case exceptions are recorded truthfully, the partial artifact is
 written, and the process exits nonzero. Cleanup (model.unload() for exl3) runs
 in a finally block and its errors are recorded into the artifact as failures --
 never silently swallowed, never via os._exit; models are released through the
-normal path.
+normal path. Recurrent-state teardown (slot release + pool reset) runs in a
+finally block too; a failed release is recorded as an error (fail-closed).
 
 Examples
 --------
@@ -107,6 +155,16 @@ Examples
         --use-per-device 3 4 --cache-tokens 8704 \
         --execution chunked --chunk-size 1 \
         -o /work/phase3/top1_ls_exl3_chunked1.json
+
+    # Phase-5 prerequisite: Qwen3.8-Flash-Next (Qwen4Exp: GDN + PLE), cached
+    # chunked teacher forcing with live recurrent-state carry, PLE n-gram table
+    # pinned to system RAM before load (actual residency recorded; a disk-mode
+    # table under --ngram-ram refuses the run):
+    /opt/venv/bin/python rocm_tools/rdna2/collect_top1.py \
+        --manifest /work/phase5/manifest_qwen38_next.json \
+        --backend exl3 -m /work/models/qwen38-next-exl3 \
+        --execution chunked --chunk-size 1 --ngram-ram \
+        -o /work/phase5/top1_cand_exl3_chunked1.json
 """
 
 from __future__ import annotations
@@ -142,8 +200,8 @@ from rocm_tools.rdna2 import multi_gpu   # stdlib-only at import (CPU-safe)
 
 def check_cli_options(args) -> None:
     """Backend cross-checks that need no GPU/torch: validate budgets once and
-    refuse EXL3-only options (--use-per-device, --cache-tokens) on the
-    transformers backend before anything loads."""
+    refuse EXL3-only options (--use-per-device, --cache-tokens, --ngram-ram) on
+    the transformers backend before anything loads."""
     try:
         budgets = multi_gpu.validate_use_per_device(args.use_per_device)
     except ValueError as e:
@@ -154,6 +212,10 @@ def check_cli_options(args) -> None:
                          "transformers backend runs use_cache=False and never allocates one")
     if getattr(args, "cache_tokens", None) is not None and args.cache_tokens < 1:
         raise SystemExit(f" !! FATAL: --cache-tokens must be >= 1 (got {args.cache_tokens})")
+    if args.backend == "transformers" and getattr(args, "ngram_ram", False):
+        raise SystemExit(" !! FATAL: --ngram-ram is an exl3 option controlling the PLE "
+                         "n-gram table's residency (streamed-from-disk vs RAM); the "
+                         "transformers backend has no EXL3 n-gram table")
 
 
 def compute_cache_tokens(args, max_case_len: int) -> int | None:
@@ -166,7 +228,7 @@ def compute_cache_tokens(args, max_case_len: int) -> int | None:
                default (no --cache-tokens) is exactly the old auto size.
       bulk:    no cache by default (cache-free whole-sequence forward). If
                --cache-tokens IS given, allocate it anyway so the split
-               placement matches an identically-sized bench run; the bulk
+               placement matches an identically sized bench run; the bulk
                forward still ignores the cache (uses_kv_cache stays False,
                the allocation is recorded separately as cache_max_seq_len).
       --cache-tokens below the required capacity is refused, never clamped.
@@ -182,6 +244,232 @@ def compute_cache_tokens(args, max_case_len: int) -> int | None:
     if args.execution == "chunked":
         return round_up_page(required)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Pure, CPU-testable helpers for hybrid recurrent models (no torch needed)
+# ---------------------------------------------------------------------------
+
+def make_bulk_params() -> dict:
+    """
+    Params for the exl3 bulk route. Cache-free BY CONSTRUCTION: with no
+    "cache"/"batch_shape"/"cache_seqlens" and recurrent_states absent, Qwen4's
+    prepare_inputs -> recurrent_util.prepare_for_recurrence takes its no-op
+    branch and every recurrent module runs stateless over the full literal
+    sequence (GDN scans from zero state; PLELayer._history uses the
+    [eos]x(ngram_size-1) + ids padding). Same dict a nonrecurrent bulk run
+    always used.
+    """
+    return {"attn_mode": "flash_attn_nc"}
+
+
+def ple_reference_history(ids, ctx: int, eos_id: int) -> list:
+    """
+    Ground-truth PLE token-history for a full stateless sequence: the exact
+    hashing history PLELayer builds via _history(ids), i.e. the (ngram_size-1)
+    context slots before token 0 filled with the PLE eos token, followed by the
+    literal ids. The window the n-gram hash sees at global position p is
+    ple_reference_history(ids, ctx, eos)[p : p + ctx + 1].
+    """
+    return [eos_id] * ctx + list(ids)
+
+
+def ple_carry_update(carry, chunk_ids, ctx: int, eos_id: int) -> list:
+    """
+    The PLELayer id-history state write (non-speculative branch,
+    id_state[slot, :ctx] = cat(carried_window, chunk)[-ctx:]), in pure Python.
+    carry=None means a fresh cleared slot, whose context PLELayerState.clear()
+    fills with the PLE eos token -- the EOS-padded sequence start. Chaining
+    this across a case's chunks must reproduce ple_reference_history's windows
+    at every position: this is the "real previous-token context across chunk
+    boundaries, never a zero-restarted chunk" property the chunked recurrent
+    route relies on and that the runtime verify_carry check re-derives.
+    """
+    hist = (list(carry) if carry is not None else [eos_id] * ctx) + list(chunk_ids)
+    return hist[-ctx:] if ctx else []
+
+
+def collect_ngram_table_modes(model) -> dict:
+    """
+    Walk the model's module tree after load() and record every NGramEmbedding's
+    ACTUAL storage mode: None = not loaded yet, "*_disk" = streamed from disk,
+    "*_ram" = resident in system RAM (see exllamav3/modules/ngram_embedding.py).
+    Duck-typed by class name so the walk itself is CPU-testable against fakes;
+    cycle-guarded.
+    """
+    modes: dict = {}
+    seen: set = set()
+    stack = list(getattr(model, "modules", []))
+    while stack:
+        m = stack.pop()
+        if id(m) in seen:
+            continue
+        seen.add(id(m))
+        if type(m).__name__ == "NGramEmbedding":
+            modes[str(getattr(m, "key", f"<unnamed_{len(modes)}>"))] = getattr(m, "mode", "<no mode attr>")
+        stack.extend(getattr(m, "modules", []) or [])
+    return modes
+
+
+def ngram_residency_report(table_modes: dict, ram_requested: bool) -> tuple:
+    """
+    Summarize actual n-gram table residency and enforce a --ngram-ram request.
+    Returns (report, error); error is not None exactly when a RAM request was
+    made and the tables as found could not honor it: a disk-streamed table
+    (the default streaming route), a mode we don't recognize, a table whose
+    mode was never set, or NO n-gram table at all (the request would be
+    vacuous -- almost certainly the wrong model directory). Without a request
+    nothing is refused; the observed modes are still recorded (honest label of
+    what actually ran). Never guesses residency from the config: the recorded
+    values are the module attributes set by NGramEmbedding.load().
+    """
+    ram = sorted(k for k, m in table_modes.items() if isinstance(m, str) and m.endswith("_ram"))
+    disk = sorted(k for k, m in table_modes.items() if isinstance(m, str) and m.endswith("_disk"))
+    other = sorted(k for k, m in table_modes.items() if k not in ram and k not in disk)
+    if not table_modes:
+        residency = "none"
+    elif not disk and not other:
+        residency = "ram"
+    elif not ram and not other:
+        residency = "disk"
+    else:
+        residency = "mixed"
+    report = {
+        "ram_requested": bool(ram_requested),
+        "tables": {k: table_modes[k] for k in sorted(table_modes)},
+        "counts": {"total": len(table_modes), "ram": len(ram), "disk": len(disk), "other": len(other)},
+        "residency": residency,
+    }
+    error = None
+    if ram_requested:
+        if not table_modes:
+            error = ("--ngram-ram requested but the loaded model exposes no n-gram "
+                     "(PLE) table: wrong model directory? refusing")
+        elif residency != "ram":
+            offenders = {"disk": disk, "unknown_or_unset_mode": other}
+            error = ("--ngram-ram was requested but actual table residency is "
+                     f"{residency!r}: refusing to collect labeled as RAM while the "
+                     f"table(s) loaded otherwise: {offenders}")
+    return report, error
+
+
+def run_chunked_case(
+    case,
+    chunk: int,
+    recurrent: bool,
+    forward_chunk,
+    rows_of,
+    harvest_row,
+    params_for_chunk,
+    new_state=None,
+    free_state=None,
+    reset_pool=None,
+    verify_carry=None,
+    evidence: dict | None = None,
+):
+    """
+    Teacher-forced chunked pass over ONE manifest case -- the chunked branch of
+    the exl3 collector as a pure orchestration so CPU tests drive the exact
+    same code path against fakes that honour the engine's contract.
+
+    Injected callables:
+      forward_chunk(s, e, params) -> logits for global positions s..e-1
+      params_for_chunk(s, state)  -> the exl3 params dict (state is None when
+                                     recurrent=False; the REAL implementation
+                                     never sets "recurrent_history": no
+                                     speculative/MTP state writes ever happen)
+      rows_of(logits, s, e)       -> [(global_pos, row)] validating row<->position mapping
+      harvest_row(row)            -> (top1, finite)
+      recurrent=True additionally requires:
+      new_state()                 -> Cache.get_new_state(): ONE cleared slot,
+                                     GDN conv/delta state zeroed, PLE id context
+                                     eos-filled (the EOS-padded sequence start)
+      free_state(state)           -> return the slot to the pool
+      reset_pool()                -> Cache.reset_states() barrier so no leaked slot can
+                                     poison a later case even if freeing was botched
+      verify_carry(state, e)      -> optional PLE-history re-derivation at every boundary;
+                                     returns a note (recorded) or raises (case fails)
+
+    State-carry contract (enforced here, mirroring recurrent_util): the same
+    live state object is passed for EVERY chunk of the case, its position
+    equals s before each forward and equals e after it (advance_recurrent_states
+    runs inside model.forward) -- a chunk that silently ran from a zero state
+    trips one of those checks. The state is released in a finally block on the
+    success AND error paths, so independent cases never share dirty state.
+    Returns (top1, nonfinite); exceptions propagate after cleanup.
+    """
+    if recurrent and (new_state is None or free_state is None or reset_pool is None):
+        raise RuntimeError("recurrent chunked collection requires new_state, free_state and reset_pool")
+    ev = evidence if evidence is not None else {}
+    for k, empty in (("chunks", 0), ("states_created", 0), ("states_released", 0),
+                     ("release_failures", []), ("carry_notes", [])):
+        ev.setdefault(k, empty)
+    L = case["len_ids"]
+    positions = case["positions"]
+    want = {p: j for j, p in enumerate(positions)}
+    top1 = [None] * len(positions)
+    nonfinite = []
+    state = None
+    try:
+        if recurrent:
+            state = new_state()
+            ev["states_created"] += 1
+            pos0 = getattr(state, "position", 0)
+            if pos0 != 0:
+                raise RuntimeError(f"newly allocated recurrent state starts at position {pos0}, not 0")
+        for s in range(0, L, chunk):
+            e = min(s + chunk, L)
+            if recurrent:
+                pos = getattr(state, "position", None)
+                if pos != s:
+                    raise RuntimeError(
+                        f"recurrent state position {pos} != past_len {s} before chunk [{s},{e}): "
+                        f"the state was not carried intact from the previous chunk")
+            params = params_for_chunk(s, state)
+            if "recurrent_history" in params:
+                raise RuntimeError("recurrent_history must never be set by this collector "
+                                   "(no speculative decoding / MTP verification)")
+            logits = forward_chunk(s, e, params)
+            if recurrent:
+                pos = getattr(state, "position", None)
+                if pos != e:
+                    raise RuntimeError(
+                        f"recurrent state position {pos} != consumed length {e} after chunk "
+                        f"[{s},{e}) -- the engine did not advance the carried state (a "
+                        f"zero-restarted chunk would quietly diverge from teacher forcing)")
+                if verify_carry is not None:
+                    note = verify_carry(state, e)
+                    if note and note not in ev["carry_notes"]:
+                        ev["carry_notes"].append(note)   # dedup: one note per distinct problem
+            try:
+                for p, row in rows_of(logits, s, e):
+                    j = want.pop(p, None)
+                    if j is None:
+                        continue
+                    top1[j], ok = harvest_row(row)
+                    if not ok:
+                        nonfinite.append(p)
+            finally:
+                del logits
+            del params
+            ev["chunks"] += 1
+        if want:
+            missing = sorted(want)
+            raise RuntimeError(f"chunked run produced no logits for positions "
+                               f"{missing[:8]}{'...' if len(missing) > 8 else ''}")
+    finally:
+        if recurrent:
+            if state is not None:
+                try:
+                    free_state(state)
+                    ev["states_released"] += 1
+                except Exception as fe:
+                    ev["release_failures"].append(f"state.free(): {fe!r}")
+            try:
+                reset_pool()
+            except Exception as re_:
+                ev["release_failures"].append(f"cache.reset_states(): {re_!r}")
+    return top1, nonfinite
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -219,6 +507,13 @@ def build_parser() -> argparse.ArgumentParser:
                            "that auto size. Bulk: no cache by default; giving this flag allocates "
                            "the cache anyway so a split places identically to an identically "
                            "sized bench run -- bulk forward still ignores it (uses_kv_cache=false)")
+    ap.add_argument("--ngram-ram", action = "store_true",
+                    help = "exl3 only: BEFORE model.load(), set config.infer_params."
+                           "ngram_stream_from_disk=False so every PLE n-gram table loads into "
+                           "system RAM instead of streaming from disk. The ACTUAL post-load "
+                           "residency of every table is recorded in execution.ngram; if RAM was "
+                           "requested and any table is not resident there (disk/unknown/no "
+                           "tables), collection refuses to run instead of mislabeling")
     ap.add_argument("--expect-arch", default = "gfx1030",
                     help = "exl3 layer split only: required gcnArchName of EVERY visible GPU")
     ap.add_argument("--dtype", choices = DTYPE_KEYS, default = "auto",
@@ -239,7 +534,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _harvest_row(torch, logits_row, vocab):
-    """Float-upcast, finite-check, argmax over [0, vocab) only."""
+    """Float-upcast, finite-check, argmax over [0, vocab) only. Runs on the row's
+    own device (a vocab-length slice + fp32 upcast, on-device argmax); only the
+    resulting int crosses to CPU, never a full-vocabulary copy."""
     row = logits_row[:vocab].float()
     finite = bool(torch.isfinite(row).all())
     top1 = int(torch.argmax(row).item())
@@ -255,6 +552,7 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
     import torch
     from exllamav3 import Cache, Config, Model, Tokenizer
     from exllamav3.constants import PAGE_SIZE as EXL_PAGE_SIZE
+    from exllamav3.tokenizer.mm_embedding import FIRST_MM_EMBEDDING_INDEX
     from exllamav3.util import device_copy
 
     if not args.device.startswith("cuda"):
@@ -281,6 +579,12 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
     mem_after_load = None
     try:
         config = Config.from_directory(args.model_dir)
+        if getattr(args, "ngram_ram", False):
+            # BEFORE load: NGramEmbedding.load() reads this when the module itself
+            # leaves stream_from_disk=None (the model classes do) -- same as
+            # model_init.py's engine-supported --ngram_ram path. Actual residency is
+            # verified from the loaded modules below, never taken from this flag.
+            config.infer_params.ngram_stream_from_disk = False
         tokenizer = Tokenizer.from_config(config)
         av = int(tokenizer.actual_vocab_size)
         if av != vocab:
@@ -288,9 +592,16 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
                 f" !! tokenizer.actual_vocab_size {av} != manifest valid_vocab_size {vocab}: "
                 f"manifest and model do not share a tokenizer -- refusing (cross-tokenizer misalignment)")
         model = Model.from_config(config)
-        if model.get_recurrent_layers():
-            raise SystemExit(" !! recurrent-state models are not supported by this harness "
-                             "(Phase 0-2 target is Qwen3: dense attention only)")
+
+        # Hybrid recurrent model? (Qwen4Exp: GDN linear-attention states + PLE
+        # n-gram token history). Both exl3 routes support it through the engine's
+        # own preparation (see module docstring); nothing about the collection
+        # protocol changes -- only the state plumbing inside model.forward().
+        rec_layers = list(model.get_recurrent_layers())
+        recurrent = bool(rec_layers)
+        ple_layers = [m for m in rec_layers if getattr(m, "ple_embedding", None) is not None]
+        ngram_ctx = ple_layers[0].ple_embedding.context_len if ple_layers else None
+        ple_eos = ple_layers[0].ple_embedding.eos_token_id if ple_layers else None
 
         execution = args.execution
         chunk = args.chunk_size if execution == "chunked" else None
@@ -301,14 +612,18 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
                 raise SystemExit(f" !! --chunk-size {chunk} exceeds --load-max-chunk-size "
                                  f"{args.load_max_chunk_size}; raise the latter")
 
-        # Cache must exist BEFORE load so cache tensors get allocated with the
-        # layers (in a split: on the devices owning their attention modules).
+        # Cache must exist BEFORE load so cache tensors (incl. the recurrent-state
+        # slot pool: GDN conv/delta state, PLE conv + id-history) get allocated
+        # with the layers (in a split: on the devices owning their modules).
         # Bulk without --cache-tokens stays cache-free exactly as before.
         max_case_len = max(c["len_ids"] for c in cases)
         cache_max_seq_len = compute_cache_tokens(args, max_case_len)
         cache = None
         if cache_max_seq_len is not None:
             cache = Cache(model, max_num_tokens = cache_max_seq_len)
+        if recurrent and execution == "chunked" and cache is None:
+            raise SystemExit(" !! recurrent chunked collection requires a cache (state slots); "
+                             "this is a bug in cache sizing")
 
         if split:
             load_kwargs = {"max_chunk_size": args.load_max_chunk_size}
@@ -334,13 +649,33 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
             model.load(device = args.device, max_chunk_size = args.load_max_chunk_size)
             ids_device = args.device
 
-        def run_case(case):
+        # Where did the n-gram table(s) ACTUALLY land? Recorded either way; a
+        # --ngram-ram request that did not materialize refuses the run here
+        # (before any collection) instead of labeling disk streaming as RAM.
+        ngram_report, ngram_error = ngram_residency_report(
+            collect_ngram_table_modes(model), bool(getattr(args, "ngram_ram", False)))
+        if ngram_error:
+            raise SystemExit(f" !! FATAL: {ngram_error}")
+        if ngram_report["tables"]:
+            print(f" -- n-gram tables: {ngram_report['residency']} "
+                  f"({ngram_report['counts']}, requested_ram={ngram_report['ram_requested']})",
+                  flush = True)
+        if recurrent:
+            print(f" -- recurrent model: {len(rec_layers)} recurrent state layers, "
+                  f"{len(ple_layers)} PLE layers; route = "
+                  f"{'stateless full-sequence' if execution == 'bulk' else 'one cleared state carried per case'}",
+                  flush = True)
+
+        rec_stats = {"chunks": 0, "states_created": 0, "states_released": 0,
+                     "release_failures": [], "carry_notes": []}
+
+        def run_case(case, ev):
             ids_t = torch.tensor([case["ids"]], dtype = torch.long, device = ids_device)
             positions = case["positions"]
             top1 = [None] * len(positions)
             nonfinite = []
             if execution == "bulk":
-                logits = model.forward(ids_t, {"attn_mode": "flash_attn_nc"})
+                logits = model.forward(ids_t, make_bulk_params())
                 if logits.dim() != 3 or logits.shape[1] != case["len_ids"] or logits.shape[2] < vocab:
                     raise RuntimeError(f"unexpected bulk logits shape {tuple(logits.shape)} "
                                        f"(want (1, {case['len_ids']}, >={vocab}))")
@@ -352,38 +687,85 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
                 finally:
                     del logits
             else:
-                want = {p: j for j, p in enumerate(positions)}
-                L = case["len_ids"]
-                for s in range(0, L, chunk):
-                    e = min(s + chunk, L)
-                    params = {
+                def params_for_chunk(s, state):
+                    # Fresh dict per chunk: the Embedding module fills
+                    # params["input_ids"] with THIS chunk's literal ids and
+                    # PLELayer builds its hashing history as
+                    # cat(id_state[slot, :ctx], chunk_ids) -- the carried window
+                    # in the live state IS the real previous-token context
+                    # (eos-padded at sequence start by GDNState's slot clear).
+                    # recurrent_states=None below only when the model has no
+                    # recurrent layers at all (the pre-existing route).
+                    return {
                         "attn_mode": "flash_attn",
                         "cache": cache,
                         "past_len": s,
                         "batch_shape": (1, cache_max_seq_len),
-                        "recurrent_states": None,
+                        "recurrent_states": [state] if state is not None else None,
                     }
-                    logits = model.forward(ids_t[:, s:e], params)
-                    if logits.dim() != 3 or logits.shape[1] != e - s or logits.shape[2] < vocab:
+
+                def forward_chunk(s, e, params):
+                    return model.forward(ids_t[:, s:e], params)
+
+                def rows_of(logits, s, e):
+                    if (logits.dim() != 3 or logits.shape[1] != e - s
+                            or logits.shape[2] < vocab):
                         raise RuntimeError(f"unexpected chunked logits shape "
                                            f"{tuple(logits.shape)} (need (1, {e - s}, >={vocab})); "
                                            f"row-to-position mapping (row i = global s+i) unverified")
-                    try:
-                        for i in range(logits.shape[1]):
-                            p = s + i
-                            j = want.pop(p, None)
-                            if j is None:
-                                continue
-                            top1[j], ok = _harvest_row(torch, logits[0, i, :], vocab)
-                            if not ok:
-                                nonfinite.append(p)
-                    finally:
-                        del logits
-                    del params
-                if want:
-                    missing = sorted(want)
-                    raise RuntimeError(f"chunked run produced no logits for positions "
-                                       f"{missing[:8]}{'...' if len(missing) > 8 else ''}")
+                    return ((s + i, logits[0, i, :]) for i in range(e - s))
+
+                def verify_carry(state, e):
+                    """Re-derive the PLE id-history the NEXT chunk will hash with
+                    (pure ple_carry_update chain over the literal manifest ids)
+                    and compare it to what the state slot ACTUALLY carries. A
+                    mismatch means chunk boundaries lost token context -- hard
+                    case failure; unreadable state internals are a note (no GPU
+                    semantics can be checked from them)."""
+                    if not ple_layers:
+                        return None
+                    notes = []
+                    for pl in ple_layers:
+                        ng = pl.ple_embedding
+                        ctx = int(ng.context_len)
+                        eos_id = int(ng.eos_token_id)
+                        prefix = case["ids"][:e]
+                        mm = getattr(pl, "mm_token_id", None)
+                        if mm is not None:
+                            # PLELayer._prepare_ids substitutes embedding-alias ids
+                            # with the literal placeholder BEFORE the state stores
+                            # the window; the expected value must do the same
+                            prefix = [mm if t >= FIRST_MM_EMBEDDING_INDEX else t
+                                      for t in prefix]
+                        expected = ple_carry_update(None, prefix, ctx, eos_id)
+                        try:
+                            layer_state = state.cache.get_recurrent_layer((pl.layer_idx, 0))
+                            _, id_state = layer_state.get_state_tensors()
+                            carried = [int(t) for t in id_state[state.slot, :ctx].tolist()]
+                        except Exception as e_acc:
+                            notes.append(f"{pl.key}: {e_acc!r}")
+                            continue
+                        if carried != expected:
+                            raise RuntimeError(
+                                f"PLE token history desync at {pl.key} after position {e}: "
+                                f"state carries {carried}, expected {expected} from the "
+                                f"literal manifest prefix (EOS-padded sequence start)")
+                    return ("PLE carry not externally verifiable: "
+                            + "; ".join(notes)) if notes else None
+
+                top1, nonfinite = run_chunked_case(
+                    case, chunk, recurrent,
+                    forward_chunk = forward_chunk,
+                    rows_of = rows_of,
+                    harvest_row = lambda row: _harvest_row(torch, row, vocab),
+                    params_for_chunk = params_for_chunk,
+                    new_state = cache.get_new_state if recurrent else None,
+                    free_state = (lambda st: st.free()) if recurrent else None,
+                    reset_pool = cache.reset_states if recurrent else None,
+                    verify_carry = verify_carry if recurrent else None,
+                    evidence = ev,
+                )
+            del ids_t
             return top1, nonfinite
 
         results = {}
@@ -399,8 +781,9 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
                           + " -- no cases were collected on an unverified split")
         for case in ([] if audit_failed else cases):
             cid = case["case_id"]
+            ev = {}
             try:
-                top1, nonfinite = run_case(case)
+                top1, nonfinite = run_case(case, ev)
                 if nonfinite:
                     errors.append(f"case {cid}: non-finite logit rows at "
                                   f"{len(nonfinite)} position(s)")
@@ -425,12 +808,23 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
                     "traceback_tail": traceback.format_exc().splitlines()[-6:],
                 }
                 errors.append(f"case {cid}: {e!r}")
+            for k in ("chunks", "states_created", "states_released"):
+                rec_stats[k] += ev.get(k, 0)
+            rec_stats["release_failures"] += [f"case {cid}: {f}" for f in ev.get("release_failures", [])]
+            rec_stats["carry_notes"] += [f"case {cid}: {f}" for f in ev.get("carry_notes", [])]
+            if recurrent and results[cid]["status"] == "ok":
+                # one state per case: creation and release counts must stay in balance
+                if ev.get("states_created", 0) != ev.get("states_released", 0):
+                    errors.append(f"case {cid}: recurrent state slot accounting unbalanced "
+                                  f"(created {ev.get('states_created')}, released {ev.get('states_released')})")
             print(f" -- exl3/{execution}: case {cid:20} -> {results[cid]['status']} "
                   f"({results[cid].get('n_positions', 0)} positions)", flush = True)
             try:
                 torch.cuda.empty_cache()
             except Exception:
                 pass
+
+        errors += [f"recurrent-state release failed: {f}" for f in rec_stats["release_failures"]]
 
         execution_info = {
             "mode": execution,
@@ -463,6 +857,32 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
             }),
             "dtype_label": "EXL3 quantized weights; logits upcast per row for argmax",
             "teacher_forcing": "manifest literal IDs only; no generated continuation",
+            "evidence_status": ("candidate teacher-forced top-1 evidence; bulk/chunk agreement "
+                                "localizes kernel divergence but proves neither route "
+                                "independently correct -- NOT ground truth"),
+            "recurrent": ({
+                "model_recurrent": True,
+                "recurrent_state_layers": len(rec_layers),
+                "ple_layers": len(ple_layers),
+                "ple_context_len": ngram_ctx,
+                "ple_eos_token_id": ple_eos,
+                "route": ("stateless_full_sequence" if execution == "bulk"
+                          else "one_cleared_state_carried_per_case"),
+                "state_lifecycle": {
+                    "states_created": rec_stats["states_created"],
+                    "states_released": rec_stats["states_released"],
+                    "release_failures": rec_stats["release_failures"],
+                    "chunks": rec_stats["chunks"],
+                    "slot_pool_reset_between_cases": execution == "chunked",
+                },
+                "ple_history": ("engine_carried_window_verified_per_boundary"
+                                if execution == "chunked" and ple_layers else
+                                "stateless_eos_padded_full_sequence"),
+                "carry_notes": rec_stats["carry_notes"],
+                "speculative_or_mtp": False,
+                "recurrent_history_param_ever_set": False,
+            } if recurrent else None),
+            "ngram": ngram_report,
         }
         return results, errors, collected, execution_info
 
@@ -611,6 +1031,8 @@ def collect_transformers(args, manifest, vocab, cleanup_errors: list):
                                                     if declared_dtype else " (checkpoint declares no dtype)")),
             "transformers_version": transformers.__version__,
             "teacher_forcing": "manifest literal IDs only; use_cache=False; no generated continuation",
+            "evidence_status": ("candidate teacher-forced top-1 evidence; agreement proves no "
+                                "route independently correct -- NOT ground truth"),
         }
         return results, errors, collected, execution_info
 
