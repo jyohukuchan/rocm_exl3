@@ -10,6 +10,7 @@ from .model_tp_shared import SMProducer, SMConsumer
 from ..ext import exllamav3_ext as ext
 from functools import lru_cache
 from .model_tp_backend import TPBackendNCCL, TPBackendNative
+from .model_tp_rccl import TPBackendRCCL
 from ..tokenizer.mm_embedding import recv_embeddings
 from ..util import log_tp, set_t0
 
@@ -37,18 +38,34 @@ def init_pg(device: int, active_devices: list[int], output_device: int, backend_
         "output_device": output_device,
     }
 
-    torch.cuda.set_device(device)
+    # The CPU helper process (device < 0) owns no accelerator; never touch the CUDA/HIP API
+    if device >= 0:
+        torch.cuda.set_device(device)
 
     match backend_args["type"]:
         case "nccl":
-            backend = TPBackendNCCL(
-                device = device,
-                active_devices = active_devices,
-                output_device = output_device,
-                init_method = backend_args["init_method"],
-                master = master,
-                uuid = backend_args["uuid"],
-            )
+            # On HIP builds torch.distributed's "nccl" backend is served by RCCL. Use the
+            # standalone RCCL backend there: the CUDA TPBackendNCCL delegates broadcast and
+            # the gather variants to native pg_* collectives, which are not available on
+            # ROCm. The CUDA path is unchanged.
+            if getattr(torch.version, "hip", None) is not None:
+                backend = TPBackendRCCL(
+                    device = device,
+                    active_devices = active_devices,
+                    output_device = output_device,
+                    init_method = backend_args["init_method"],
+                    master = master,
+                    uuid = backend_args["uuid"],
+                )
+            else:
+                backend = TPBackendNCCL(
+                    device = device,
+                    active_devices = active_devices,
+                    output_device = output_device,
+                    init_method = backend_args["init_method"],
+                    master = master,
+                    uuid = backend_args["uuid"],
+                )
         case "native":
             backend = TPBackendNative(
                 device = device,
@@ -93,7 +110,9 @@ def mp_model_worker(
 
     with torch.inference_mode():
         local_context = init_pg(device, active_devices, output_device, backend_args)
-        local_context["inf_consumer"] = SMConsumer(producer, device = device, pin_memory = True)
+        # Pinned-arena receives only make sense for a rank that owns a device; the CPU
+        # helper never issues cuda copies through this consumer.
+        local_context["inf_consumer"] = SMConsumer(producer, device = device, pin_memory = device >= 0)
 
         # Dispatch loop
         while True:
@@ -104,7 +123,8 @@ def mp_model_worker(
             msg = conn.recv()
             if msg == "quit":
                 log_tp(device, f"Child worker exiting")
-                torch.cuda.synchronize()
+                if device >= 0:
+                    torch.cuda.synchronize()
                 local_context["inf_consumer"].close()
                 local_context["backend"].close()
                 break
