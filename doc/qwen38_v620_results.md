@@ -4,6 +4,8 @@
 
 cached prefill/decodeのtop-1一致率97.75%前後は既知事項として残す。ユーザー指示に従い、明らかな実推論異常がなければ暫定99%閾値だけで進行を止めない。Tensor Parallelは後続Phase6であり、今回の実測はTPではない。
 
+電力の追加集計: 8K時のGPU2枚合計平均はprefill auto259/peak396W、decode auto164/peak379W。[詳細な電力・エネルギー比較](qwen38_v620_power.md)を参照。
+
 ## 固定条件
 
 - モデル: `turboderp/Qwen3.8-Flash-Next-exl3`、branch `3.05bpw_h5_ng5`、revision `69e33439ae950f17bcbe95c98f117d80f759ab6d`。
