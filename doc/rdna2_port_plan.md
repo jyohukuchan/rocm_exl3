@@ -153,7 +153,7 @@ TPはモデル分割と通信backendの二層に分けて実装する。
 ### 6A: 本家差分の取り込み
 
 - 参照commitからQwen3.8のTP関連差分と依存変更を列挙する。`supports_tp=True`の1行だけを移植しない。
-- QSAはwhole-layer配置、PLEはrankごとのmodule複製という本家設計を起点とする。GDN、gated residual、MoE、cache/state export/importまで追う。
+- QSAはwhole-layer配置を起点とする。2026-09-29に取得した本家 `d3739fd3` の実装ではPLEも単一ownerで実行し、他rankはstubで結果を受信する（architectureの「replicated」コメントより実コードを優先）。GDN、gated residual、MoE、cache/state export/importまで追う。
 - 最新本家への無条件の全面rebaseを先に行わず、必要な変更を追跡可能なcommit単位で適用する。
 - D/M/Qのレイヤー分割経路が変わらず動くことを確認する。
 
@@ -172,6 +172,7 @@ TPはモデル分割と通信backendの二層に分けて実装する。
 - Mでexpert配置、router、weighted reductionを確認。
 - Qで本家モデルTPを有効化し、PLE/RAM、GDN/QSA、各rankのcacheを確認。
 - PLE module複製とtableの物理RAM複製を区別し、RSS/PSSで計測する。5bit tableがrankごとに約30.4GiBを占める場合、親processを含むピークを確認し、必要ならread-only shared memory/mmapへ分離する。RAMに載らずswapへ落ちる構成を合格にしない。
+- 本家NGramEmbeddingのTP exportはRAM指定でもdisk modeに変えるため、そのままでは要件を満たさない。TP親processのtable payloadロードを遅延し、PLE ownerだけが既存のRAM loaderで一度ロードする構成を優先する。今回のcontainerの `/dev/shm` は8GiBなので、31GiB表を無条件に `share_memory_()` へ渡さない。
 - 1GPU・2GPUレイヤー分割・TP2を同一D/M条件で比較し、Qはレイヤー分割対TP2で比較する。
 
 合格: TP2で数値・安定性が通ること。速度向上はprefill/decodeそれぞれ測り、両GPUで演算・通信が実行されることをtraceで確認。TP2が遅ければcollective、rank同期、細粒度MoE、QSAの非分割部分を改善する。最終的にどの条件でTP2が有利かを明示し、性能が劣る条件ではレイヤー分割を選べる状態を維持する。
