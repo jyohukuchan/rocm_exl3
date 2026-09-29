@@ -32,7 +32,24 @@ RCCL kernelの時間にはpeer待ちが含まれる。両GPUのkernelを実行�
 
 固定AR continuation256tokenをJA/codeで与え、各48位置・計96位置の全語彙logitsを保存した。元実装のrouter記録はrank1の48層・1152サンプル、rank0はrouterなし。候補では同じ継続tokenでlogitsを比較し、両rankのexpert選択/重みも照合する。これは速度測定ではない。
 
-未完: 詳細task/phase分解、router複製候補の実機数値/速度比較、QSA等の片側処理をさらに2GPUへ分ける妥当性の評価、最終設定・回帰検証。改善を確認したとの主張はまだ行わない。
+### Router複製の実機結果（2026-09-30）
+
+`EXL3_TP_REPLICATE_ROUTER=1`をPython起動前に設定すると、std routerをrouted expertを持つ各rankへ複製し、expert選択indices/重みのbroadcastを省く。expertの分担と最後の集約は維持。既定は無効で、対象外routerは理由を表示して既存経路を使う。必要なrouterとdecode用transposeをVRAM計画へ計上し、routed shardが空のrankには不要なrouterをロードしない。
+
+固定続きの96位置で全語彙logitsはbit単位まで一致し、1152件のrouterサンプルも元実装・両rank間で一致した。MTPでは2/3/4/5行および255/1792/2048行prefillのrouter結果が両rankで一致し、finite/RAM/cleanup検査も合格。最初の試験はMTPでも1行処理が出るとの誤った必須条件で終了コード1になったが、1行はAR試験で確認済み。条件を修正した再試験は正常終了した。
+
+同じ最終コード・同じ入力で、無効化したARを再測定して比較した。各言語5回中央値。
+
+| AR | 無効 decode | 有効 decode | 変化 | 無効 prefill | 有効 prefill |
+|---|---:|---:|---:|---:|---:|
+| 日本語 | 31.31 | 34.48 | +10.1% | 465.35 | 464.17 |
+| コード | 31.32 | 34.54 | +10.3% | 460.39 | 459.02 |
+
+decodeはengine基準、単位tok/s。生成途中の配送レートでも+10.4%/+10.1%、終了処理込みでは+10.2%/+8.9%。測定対象10件の出力token列はすべて一致し、前の基準とwarmupを含む12件でも一致。推論後の各workerのTorch allocatedを比較すると、増分はGPU0約238.27MiB、GPU1約1.78MiB、合計約240MiB。親プロセスだけのCUDA0=0という値をrank0のVRAMと取り違えない。
+
+QSA head分割も単体で検討した。K5/V4、Q24/KV2から各GPU Q12/KV1へ分けた結果は、1行でbit一致、3/5行でrelative L2約0.00035。GPU kernel中央値は1行144.8→134.0µs、3行225.9→150.9µs、5行352.8→191.3µs（右は遅い方のhalf）。indexer/projection/TP集約を除く値で、単一host threadから両GPUを起動した実時間は約204µs/呼出しだった。通常1行decodeの利得は小さく、MTP検証には余地があるが、実モデルへのhead分割は現時点で採用していない。
+
+未完: 詳細task/phase分解、MTPでの速度比較、最終設定・長文/batch回帰検証。ARの改善と数値一致は上記の範囲で確認済み。
 
 artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp-decode-opt`。
 基準は`q-tp-ar-kv54-baseline`, `q-tp-mtp-kv54-baseline`, `q-ls-mtp-kv54-baseline`と各`-detailed-summary.json`。数値参照は`q-tp-kv54-teacher-baseline.json` / `.logits.pt`。固定sourceとmanifest、実行command、電力helperの復帰記録を同じdirectoryに保存している。
