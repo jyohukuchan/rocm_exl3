@@ -4,6 +4,8 @@
   "model_revision": "69e33439ae950f17bcbe95c98f117d80f759ab6d",
   "target_quantization": "EXL3 3.05bpw; head5; ng5",
   "mtp_bits": 3,
+  "mtp_source": "target-checkpoint (original distributed pack)",
+  "mtp_model_override": null,
   "ngram_stream_from_disk": false,
   "draft_component": "mtp",
   "draft_device": "cuda:1",
