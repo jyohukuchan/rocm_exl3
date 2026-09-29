@@ -5,8 +5,8 @@ DIAGNOSTIC TOOL: numbers inside the trace window are PROFILED throughput
 (profiler/record_function overhead), marked profiled_diagnostic in the
 manifest -- never clean benchmark figures. The tp_run report is untouched.
 
-The harness (--execution tp --mode ar: frozen prompts, power policy, RAM
-audits, cleanup) runs UNMODIFIED: this wrapper parses its own args, then
+The harness (--execution tp; frozen prompts, power policy, RAM audits,
+cleanup) runs UNMODIFIED: this wrapper parses its own args, then
 verbatim tp_run args after '--', and hooks Generator.iterate boundaries.
 Warmup group(s) run unprofiled; at the first iterate of the FIRST TIMED
 group a dispatch starts torch.profiler (CPU + CUDA->HIP activities) INSIDE
@@ -20,14 +20,37 @@ or on error): profilers export compressed Chrome traces named per
 rank/device/pid, forward wrappers are restored, and a manifest with
 rank/device/PID, window, files and captured-kernel count lands in
 --trace-dir; tp_run continues unprofiled to its own audits and normal
-unload. Model load/warmup/MTP never enter the window (first version AR-only;
-no per-token syncs beyond the two boundary syncs; no Magpie).
+unload. Model load/warmup never enter the window (no per-token syncs
+beyond the two boundary syncs; Job.new_tokens is host-side metadata; no
+Magpie).
+
+DECODE-ONLY WINDOW (--decode-start-tokens N, the default --trace-iterations
+cap does NOT apply): --mode mtp is admitted (capture is coarse by design in
+this milestone: target module wrappers exist, draft kernels are NOT yet
+separately labelled). On the first timed group the wrapper watches the
+single ACTIVE job's new_tokens (batch1 enforced) and starts at the first
+iterate whose PRE-iterate count is already >= N -- so prefill/first-token
+and warmup groups are structurally excluded -- then collects until the count
+reaches actual_start + --decode-window-tokens (default 64). MTP acceptance
+bursts may overshoot; the ACTUAL start/end counts, iterates and overshoot
+land in the manifest's window.decode section. --new-tokens is validated to
+fit start+window+2*draft_bursts+1 so the window always ends before the
+final (EOS) iterate; a group that drains first is reported as truncated
+(error, fail-closed).
+
+--trace-backend none is the observer-overhead control: the SAME window
+detection and per-rank boundary device syncs run, but NO profiler, NO ROCtx
+pause/resume/markers and NO wrappers are installed, and the manifest records
+per-rank monotonic elapsed time for the window.
 
 Usage (same externally selected PYTHONPATH/native stack as tp_run):
     python3 -m rocm_tools.rdna2.tp_trace_run --trace-dir RUN/q-trace \
-        --trace-iterations 8 [--trace-backend torch|roctx] -- \
-        -m MODEL --prompts-json q-prompts.json --execution tp --mode ar \
-        --new-tokens 32 --power-socket SOCK --output RUN/q-tp-traced.json
+        [--trace-backend torch|roctx|none] [--decode-start-tokens 64 \
+        --decode-window-tokens 64] -- \
+        -m MODEL --prompts-json q-prompts.json --execution tp --mode mtp \
+        --new-tokens 256 --power-socket SOCK --output RUN/q-tp-traced.json
+Legacy mixed window (AR-only): pass --trace-iterations N and NO
+--decode-start-tokens.
 
 --trace-backend torch (default) uses torch.profiler per rank. PROVEN CAVEAT
 (container probe, torch-profile-probe.json): requesting CPU+CUDA on this
@@ -152,6 +175,10 @@ class WindowState:
     """iterate-boundary bookkeeping: a new group is exactly a 0 -> positive
     step of num_remaining_jobs(); trace at most one window."""
 
+    def read_tokens(self, gen):
+        """legacy mixed window has no token gating (host metadata only)."""
+        return None
+
     def __init__(self, window_group, max_iterates):
         self.window_group = window_group
         self.max_iterates = max_iterates
@@ -170,7 +197,7 @@ class WindowState:
         self.records = {}
         self.spec = {}
 
-    def pre_iterate(self, rem_before):
+    def pre_iterate(self, rem_before, tokens=None):        # tokens: legacy mode ignores
         self.calls += 1
         if rem_before > 0 and self.rem_after == 0:
             self.group += 1
@@ -178,13 +205,91 @@ class WindowState:
                     and self.group == self.window_group):
                 self.want_start = True
 
-    def post_iterate(self, rem_after):
+    def post_iterate(self, rem_after, tokens=None):
         self.rem_after = rem_after
         if self.active:
             self.window_calls.append(self.calls)
             self.window_iterates += 1
             if rem_after == 0 or self.window_iterates >= self.max_iterates:
                 self.want_stop = True
+
+
+class DecodeWindowState:
+    """DECODE-ONLY window on the first timed group (root's batch1 run):
+    STARTS only at the first iterate whose PRE-iterate Job.new_tokens is
+    already >= start_tokens -- prefill and its first token are never inside
+    -- and STOPS after the first iterate whose token count reaches
+    start_actual + window_tokens. The legacy --trace-iterations cap does NOT
+    apply here. MTP acceptance bursts may overshoot either bound; the ACTUAL
+    start/end counts are recorded, never the requested ones. Job selection
+    is exact: >1 simultaneously active job is ambiguous and refused, never
+    guessed. Tokens are host-side job metadata (Job.new_tokens ints): no
+    per-iterate RPC and no device sync here."""
+
+    def __init__(self, window_group, start_tokens, window_tokens):
+        self.window_group = window_group
+        self.start_tokens = start_tokens
+        self.window_tokens = window_tokens
+        self.group = -1
+        self.rem_after = 0
+        self.calls = 0
+        self.armed = False
+        self.active = False
+        self.done = False
+        self.want_start = False
+        self.want_stop = False
+        self.window_iterates = 0
+        self.window_calls = []          # [call_index, ...] inside the window
+        self.errors = []
+        self.gen = None                 # bound by the hook on first iterate
+        self.orig = None                # the class function being wrapped
+        self.records = {}
+        self.spec = {}
+        self.start_actual = None        # tokens generated BEFORE first traced iterate
+        self.end_actual = None          # tokens generated AFTER the last traced iterate
+        self.truncated = False          # group drained before the window completed
+
+    def read_tokens(self, gen):
+        """min over the group's active jobs (batch1: the single job). None
+        while the group is prefilling (job still pending)."""
+        jobs = list(getattr(gen, "active_jobs", ()) or ())
+        if not jobs:
+            return None
+        if len(jobs) > 1:
+            if not self.done:
+                self.errors.append(
+                    f"decode window: {len(jobs)} active jobs - ambiguous "
+                    "job selection; requires --batch-size 1. Refusing")
+                self.done = True
+            return None
+        return int(jobs[0].new_tokens)
+
+    def pre_iterate(self, rem_before, tokens=None):
+        self.calls += 1
+        if rem_before > 0 and self.rem_after == 0:
+            self.group += 1
+            if (not self.armed and not self.done
+                    and self.group == self.window_group):
+                self.armed = True
+        if (self.armed and not self.active and not self.done
+                and not self.want_start
+                and tokens is not None and tokens >= self.start_tokens):
+            self.want_start = True
+            self.start_actual = tokens
+
+    def post_iterate(self, rem_after, tokens=None):
+        self.rem_after = rem_after
+        if not self.active:
+            return
+        self.window_calls.append(self.calls)
+        self.window_iterates += 1
+        if tokens is not None:
+            self.end_actual = tokens
+        if tokens is not None and tokens >= self.start_actual + self.window_tokens:
+            self.want_stop = True                       # window complete (>= requested)
+        elif rem_after == 0:
+            self.truncated = True                       # drained mid-window (unsafe config)
+            self.want_stop = True
 
 
 def build_parser():
@@ -195,13 +300,30 @@ def build_parser():
     ap.add_argument("--trace-dir", required=True,
                     help="output dir for per-rank Chrome traces (.json.gz) + manifest")
     ap.add_argument("--trace-iterations", type=int, default=8,
-                    help="max Generator.iterate calls inside the window")
-    ap.add_argument("--trace-backend", choices=("torch", "roctx"), default="torch",
+                    help="LEGACY mixed window: max Generator.iterate calls "
+                         "inside the window, starting at the timed group's "
+                         "FIRST iterate (prefill included). Ignored when "
+                         "--decode-start-tokens is set")
+    ap.add_argument("--decode-start-tokens", type=int, default=None,
+                    help="DECODE-ONLY window: tokens the selected (batch1) "
+                         "job must ALREADY have generated before the window's "
+                         "first iterate (root uses 64). Unset keeps the legacy "
+                         "first-iterate mixed window")
+    ap.add_argument("--decode-window-tokens", type=int, default=64,
+                    help="DECODE-ONLY window: additional tokens to trace; the "
+                         "stop fires at the first iterate whose count reaches "
+                         "actual_start + N (MTP bursts may overshoot; the "
+                         "ACTUAL counts are recorded)")
+    ap.add_argument("--trace-backend", choices=("torch", "roctx", "none"),
+                    default="torch",
                     help="torch = per-rank torch.profiler Chrome traces (manifest "
                          "verdicts cpu_only when 0 device kernels are seen, as the "
                          "container probe did); roctx = NO torch.profiler: "
                          "profile_stages.RoctxControls gating + markers for an "
-                         "EXTERNAL rocprofv3 GPU collection (root launches it)")
+                         "EXTERNAL rocprofv3 GPU collection (root launches it); "
+                         "none = observer-overhead control: the same window "
+                         "detection and per-rank boundary synchronize ONLY - no "
+                         "profiler, no ROCtx calls, no wrappers installed")
     return ap
 
 
@@ -403,8 +525,45 @@ def tp_trace_roctx_stop_worker(local_context):
     return out
 
 
+def tp_trace_none_start_worker(local_context, spec):
+    """Observer-overhead control, SAME boundary as the traced modes: sync
+    this rank's own device and open the bookkeeping window - NO profiler,
+    NO ROCtx pause/resume/markers, NO module wrappers (nothing is installed,
+    so nothing needs restoring either). Elapsed uses the monotonic clock."""
+    idx = _device_index(local_context)
+    out = {"device": idx, "pid": os.getpid(), "backend": "none",
+           "started_unix": time.time()}
+    try:
+        _sync_device(idx)                              # boundary sync only
+        out["synced"] = True
+        _ACTIVE.update(idx=idx, t0=time.monotonic(), spec=spec)
+    except Exception as e:
+        _ACTIVE.clear()
+        out["error"] = repr(e)
+    return out
+
+
+def tp_trace_none_stop_worker(local_context):
+    idx = _device_index(local_context)
+    out = {"device": idx, "pid": os.getpid(), "backend": "none"}
+    st = dict(_ACTIVE)
+    if "t0" not in st:
+        out["error"] = "no active none-control window on this rank (start failed there)"
+        _ACTIVE.clear()
+        return out
+    try:
+        _sync_device(idx)                              # boundary sync only
+        out["monotonic_elapsed_s"] = round(time.monotonic() - st["t0"], 6)
+    except Exception as e:
+        out["error"] = repr(e)
+    finally:
+        _ACTIVE.clear()
+    return out
+
+
 _WORKERS = {"torch": (tp_trace_start_worker, tp_trace_stop_worker),
-            "roctx": (tp_trace_roctx_start_worker, tp_trace_roctx_stop_worker)}
+            "roctx": (tp_trace_roctx_start_worker, tp_trace_roctx_stop_worker),
+            "none": (tp_trace_none_start_worker, tp_trace_none_stop_worker)}
 
 
 # parent orchestration: iterate hook + dispatch of the rank workers
@@ -413,7 +572,8 @@ def make_iterate_hook(state, on_start, on_stop):
     def iterate(self, *a, **kw):
         state.gen = self
         try:
-            state.pre_iterate(self.num_remaining_jobs())
+            state.pre_iterate(self.num_remaining_jobs(),
+                              state.read_tokens(self))
             if state.want_start:
                 state.want_start = False
                 if on_start() is not False:
@@ -436,7 +596,7 @@ def make_iterate_hook(state, on_start, on_stop):
                 state.active = False
                 state.done = True
             raise
-        state.post_iterate(self.num_remaining_jobs())
+        state.post_iterate(self.num_remaining_jobs(), state.read_tokens(self))
         if state.want_stop:
             state.want_stop = False
             state.active = False
@@ -503,6 +663,8 @@ def _gpu_execution_verdict(backend, stop_records):
     external rocprofv3 CSV parse is the only kernel evidence."""
     if backend == "roctx":
         return "external_rocprofv3_csv_required"
+    if backend == "none":
+        return "none_control_no_observation_by_design"
     ks = [r.get("captured_device_kernels") for r in stop_records or []
           if r and "error" not in r]
     if any(isinstance(k, int) and k > 0 for k in ks):
@@ -519,9 +681,33 @@ def run(argv=None):
     tp_run.validate_args(args)
     if args.execution != "tp":
         raise ValueError("tp_trace_run traces --execution tp only")
-    if args.mode != "ar":
-        raise ValueError("first version is AR-only (--mode ar): the parent-"
-                         "process profiler would mix MTP drafts into the window")
+    decode_mode = wap.decode_start_tokens is not None
+    if not decode_mode and args.mode != "ar":
+        raise ValueError("legacy mixed window (--decode-start-tokens unset) is "
+                         "AR-only: its first-iterate window includes prefill. "
+                         "Use --decode-start-tokens for the decode-only window, "
+                         "which admits --mode mtp (coarse capture: draft kernels "
+                         "are not yet separately labelled)")
+    if decode_mode:
+        if wap.decode_start_tokens < 1 or wap.decode_window_tokens < 1:
+            raise ValueError("--decode-start-tokens/--decode-window-tokens must be positive")
+        if args.batch_size != 1:
+            raise ValueError("decode-only window requires --batch-size 1 "
+                             "(single Job.new_tokens drives start/stop)")
+        # window must COMPLETE strictly before the final (EOS) iterate: allow
+        # for MTP acceptance bursts (up to draft_tokens+1 tokens per iterate)
+        # at BOTH the start crossing and the stop crossing, plus 1 token of
+        # slack so the eos/queue-drain housekeeping iterate is outside the window
+        burst = args.draft_tokens if args.mode == "mtp" else 0
+        required = (wap.decode_start_tokens + wap.decode_window_tokens
+                    + 2 * burst + 1)
+        if args.new_tokens < required:
+            raise ValueError(
+                f"--new-tokens {args.new_tokens} leaves no room for the decode "
+                f"window: need >= start({wap.decode_start_tokens}) + "
+                f"window({wap.decode_window_tokens}) + 2*draft_burst"
+                f"({2 * burst}) + 1 = {required} so the window ends before the "
+                "EOS iterate")
     if wap.trace_backend == "roctx":
         # BEFORE any import that can touch CUDA and long before Model.load:
         # the env flag makes every spawn child gate itself at __mp_main__
@@ -540,13 +726,24 @@ def run(argv=None):
     trace_dir = Path(wap.trace_dir)
     trace_dir.mkdir(parents=True, exist_ok=True)
 
-    state = WindowState(first_timed_group(prompts, args.batch_size),
-                        wap.trace_iterations)
+    if decode_mode:
+        state = DecodeWindowState(first_timed_group(prompts, args.batch_size),
+                                  wap.decode_start_tokens,
+                                  wap.decode_window_tokens)
+        rng = (f"tp_decode_window group{state.window_group} "
+               f"start{wap.decode_start_tokens}+window{wap.decode_window_tokens}")
+    else:
+        state = WindowState(first_timed_group(prompts, args.batch_size),
+                            wap.trace_iterations)
+        rng = (f"tp_trace_window group{state.window_group} "
+               f"first{wap.trace_iterations}iterates")
     state.spec = {"trace_dir": str(trace_dir),
                   "trace_iterations": wap.trace_iterations,
                   "backend": wap.trace_backend,
-                  "range": f"tp_trace_window group{state.window_group} "
-                           f"first{wap.trace_iterations}iterates"}
+                  "window_mode": "decode" if decode_mode else "mixed",
+                  "decode_start_tokens": wap.decode_start_tokens if decode_mode else None,
+                  "decode_window_tokens": wap.decode_window_tokens if decode_mode else None,
+                  "range": rng}
     state.orig = exllamav3.Generator.iterate
     exllamav3.Generator.iterate = make_iterate_hook(state,
                                                     lambda: _start_cb(state),
@@ -568,7 +765,7 @@ def run(argv=None):
                          "hip": str(getattr(torch.version, "hip", None))}
             except Exception as e:
                 pinfo = {"unavailable": repr(e)}
-        else:
+        elif wap.trace_backend == "roctx":
             pinfo = {"backend": "roctx", "no_torch_profiler": True,
                      "shim_pause_env": ROCTX_PAUSE_ENV,
                      "parent_gate": _ROCTX["status"],
@@ -578,6 +775,13 @@ def run(argv=None):
                      "kernel_observation": "none claimed by this tool: parse the "
                                            "external rocprofv3 CSV against the "
                                            "window/marker records for GPU evidence"}
+        else:
+            pinfo = {"backend": "none", "control": "observer overhead",
+                     "no_torch_profiler": True, "no_roctx": True,
+                     "boundary": "window detection + per-rank device sync only; "
+                                 "no wrappers/profilers/markers installed",
+                     "elapsed_clock": "per-rank time.monotonic "
+                                      "(monotonic_elapsed_s in rank records)"}
         stop_records = state.records.get("stop") or []
         both = {r.get("device") for r in stop_records if r.get("pid") and "error" not in r}
         for stage in ("start", "stop"):
@@ -587,6 +791,10 @@ def run(argv=None):
                         state.errors.append(f"{stage} rank {record.get('device')}: {key}: {record[key]}")
         if not state.window_calls or len(stop_records) != 2 or both != {0, 1}:
             state.errors.append("a bounded window on both TP ranks was not captured")
+        if decode_mode and state.truncated:
+            state.errors.append("decode window truncated at group end: the job "
+                                "never reached the requested additional tokens "
+                                "inside the timed group (room check violated?)")
         mp = trace_dir / "tp-trace-manifest.json"
         try:
             report_path = Path(args.output)
@@ -597,6 +805,22 @@ def run(argv=None):
         except Exception as e:
             state.errors.append(f"marking profiled report: {e!r}")
         rc = rc or (1 if state.errors else 0)
+        window_info = {"group": state.window_group,
+                       "mode": "decode" if decode_mode else "mixed",
+                       "iterate_calls": state.window_calls,
+                       "iterates_traced": len(state.window_calls)}
+        if decode_mode:
+            addl = (state.end_actual - state.start_actual
+                    if None not in (state.end_actual, state.start_actual) else None)
+            window_info["decode"] = {
+                "requested_start_tokens": wap.decode_start_tokens,
+                "requested_window_tokens": wap.decode_window_tokens,
+                "actual_start_tokens": state.start_actual,
+                "actual_end_tokens": state.end_actual,
+                "actual_additional_tokens": addl,
+                "overshoot_tokens": (max(0, addl - wap.decode_window_tokens)
+                                     if addl is not None else None),
+                "truncated_at_group_end": state.truncated}
         manifest = {
             "profiled_diagnostic": True,
             "complete": rc == 0,
@@ -609,9 +833,7 @@ def run(argv=None):
                         "execution": args.execution, "mode": args.mode,
                         "batch_size": args.batch_size, "new_tokens": args.new_tokens},
             "trace_iterations": wap.trace_iterations,
-            "window": {"group": state.window_group,
-                       "iterate_calls": state.window_calls,
-                       "iterates_traced": len(state.window_calls)},
+            "window": window_info,
             "gpu_execution": _gpu_execution_verdict(wap.trace_backend,
                                                     state.records.get("stop")),
             "profiler": pinfo,

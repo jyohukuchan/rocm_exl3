@@ -106,6 +106,131 @@ class WindowStateTests(unittest.TestCase):
         self.assertTrue(st2.want_stop)                       # group ended early
 
 
+class FakeJob:
+    def __init__(self, new_tokens=0):
+        self.new_tokens = new_tokens
+
+
+class FakeDecodeGen:
+    """num_remaining_jobs() pops alternately (before, after) like FakeGen;
+    active_jobs reflects what decode-window read_tokens() must see."""
+
+    def __init__(self, rems, model=None, jobs=()):
+        self.rems = list(rems)
+        self.model = model if model is not None else FakeModel()
+        self.active_jobs = list(jobs)
+
+    def num_remaining_jobs(self):
+        return self.rems.pop(0) if self.rems else 0
+
+
+def decode_orig(seq):
+    """state.orig: every call applies the next scripted token state. None
+    drains the job list (finished/removed); a fresh job activates on first
+    non-None value (mirrors prefill completing and producing token 1)."""
+    def orig(self, *a, **kw):
+        t = seq.pop(0)
+        if t is None:
+            self.active_jobs = []
+        elif not self.active_jobs:
+            self.active_jobs = [FakeJob(t)]
+        else:
+            self.active_jobs[0].new_tokens = t
+        return "items"
+    return orig
+
+
+class DecodeWindowStateTests(unittest.TestCase):
+    def test_ar_exact_bounds_prefill_excluded(self):
+        # warmup group (never armed), gap, then timed group: tokens step 1
+        # (AR); start fires when PRE-iterate count already >= 3.
+        rems = [1,0, 0,0, 1,1, 1,1, 1,1, 1,1, 1,1, 1,1, 1,0]
+        seq = [10, None, 1, 2, 3, 4, 5, 6]
+        gen = FakeDecodeGen(rems)
+        st = tr.DecodeWindowState(1, 3, 3)
+        st.orig = decode_orig(seq)
+        starts, stops = [], []
+        def on_start():
+            starts.append(1); st.active = True; return True
+        def on_stop():
+            stops.append(1)
+        hook = tr.make_iterate_hook(st, on_start, on_stop)
+        def no_sync(idx):
+            raise AssertionError("no per-iterate/per-token sync is allowed here")
+        with mock.patch.object(tr, "_sync_device", no_sync):
+            for _ in range(8):
+                hook(gen)
+        self.assertEqual((starts, stops), ([1], [1]))
+        self.assertEqual(st.window_calls, [6, 7, 8])   # calls 1-5 are warmup/gap/prefill decodes
+        self.assertEqual(st.start_actual, 3)
+        self.assertEqual(st.end_actual, 6)
+        self.assertEqual(st.window_iterates, 3)
+        self.assertFalse(st.truncated)
+        self.assertEqual(st.errors, [])
+
+    def test_mtp_burst_overshoot_records_actual(self):
+        # window_group 0; bursts: 1->2, 2->5 (start ACTUAL 5 > requested 3),
+        # 5->7, 7->10: additional 5 >= window 4, end ACTUAL 10 (overshoot 1)
+        rems = [1,1, 1,1, 1,1, 1,1, 1,1, 1,0]
+        seq = [2, 5, 7, 10]
+        gen = FakeDecodeGen(rems)
+        st = tr.DecodeWindowState(0, 3, 4)
+        st.orig = decode_orig(seq)
+        starts, stops = [], []
+        def on_start():
+            starts.append(1); return True
+        def on_stop():
+            stops.append(1)
+        hook = tr.make_iterate_hook(st, on_start, on_stop)
+        for _ in range(4):
+            hook(gen)
+        self.assertEqual((starts, stops), ([1], [1]))
+        self.assertEqual(st.start_actual, 5)           # recorded actual, not requested
+        self.assertEqual(st.end_actual, 10)
+        self.assertEqual(st.window_iterates, 2)        # iterates 3 and 4
+        self.assertFalse(st.truncated)
+
+    def test_legacy_trace_iterations_do_not_stop_decode_window(self):
+        st = tr.DecodeWindowState(0, 1, 10)
+        self.assertFalse(hasattr(st, "max_iterates"))
+        st.armed = True
+        st.active = True
+        st.start_actual = 1
+        for t in range(2, 11):                         # 9 iterates, additional 9 < 10
+            st.post_iterate(1, t)
+            self.assertFalse(st.want_stop)
+        st.post_iterate(1, 11)                         # additional 10: stop
+        self.assertTrue(st.want_stop)
+
+    def test_group_end_truncation_flagged(self):
+        st = tr.DecodeWindowState(0, 3, 4)
+        st.armed = True
+        st.active = True
+        st.start_actual = 3
+        st.post_iterate(0, 5)                          # drained at additional 2 < 4
+        self.assertTrue(st.truncated)
+        self.assertTrue(st.want_stop)
+
+    def test_ambiguous_job_selection_refused(self):
+        gen = FakeDecodeGen([1,1], jobs=[FakeJob(5), FakeJob(7)])
+        st = tr.DecodeWindowState(0, 1, 4)
+        st.orig = decode_orig([])
+        self.assertIsNone(st.read_tokens(gen))
+        self.assertTrue(st.done)
+        self.assertTrue(any("ambiguous" in e for e in st.errors))
+        st.pre_iterate(1, None)
+        self.assertFalse(st.want_start)                # refuses, never guesses
+
+    def test_warmup_group_high_tokens_never_arms(self):
+        st = tr.DecodeWindowState(1, 3, 3)
+        st.gen = FakeDecodeGen([])
+        st.pre_iterate(1, None)                        # group 0 (warmup) begins
+        st.post_iterate(0, 100)                        # warmup drains far past start
+        st.pre_iterate(0, None)
+        self.assertFalse(st.want_start)
+        self.assertEqual(st.group, 0)
+
+
 class HookTests(unittest.TestCase):
     def _hook(self, state, starts, stops, start_ok=True):
         def on_start():
@@ -410,7 +535,9 @@ class DispatchSelectionTests(unittest.TestCase):
         for backend, sname, tname in (("torch", "tp_trace_start_worker",
                                        "tp_trace_stop_worker"),
                                       ("roctx", "tp_trace_roctx_start_worker",
-                                       "tp_trace_roctx_stop_worker")):
+                                       "tp_trace_roctx_stop_worker"),
+                                      ("none", "tp_trace_none_start_worker",
+                                       "tp_trace_none_stop_worker")):
             with self.subTest(backend = backend):
                 st = tr.WindowState(0, 4)
                 st.spec = {"backend": backend}
@@ -456,6 +583,8 @@ class VerdictTests(unittest.TestCase):
         self.assertEqual(tr._gpu_execution_verdict("torch", []), "unverified")
         self.assertEqual(tr._gpu_execution_verdict("roctx", []),
                          "external_rocprofv3_csv_required")
+        self.assertEqual(tr._gpu_execution_verdict("none", []),
+                         "none_control_no_observation_by_design")
 
 
 class HookRoctxTests(unittest.TestCase):
@@ -475,6 +604,123 @@ class HookRoctxTests(unittest.TestCase):
             for _ in range(3):
                 hook(gen)
         self.assertEqual((starts, stops), ([1], [1]))
+
+
+class HookNoneTests(unittest.TestCase):
+    def test_none_window_never_touches_torch_profiler(self):
+        gen = FakeGen([3,2, 2,1, 1,0])
+        st = tr.WindowState(0, 8)
+        st.spec = {"backend": "none"}
+        st.orig = fake_orig([])
+        starts, stops = [], []
+        def on_start():
+            starts.append(1); return True
+        def on_stop():
+            stops.append(1)
+        hook = tr.make_iterate_hook(st, on_start, on_stop)
+        with mock.patch("torch.profiler.record_function",
+                        side_effect=AssertionError("torch.profiler used in none mode")):
+            for _ in range(3):
+                hook(gen)
+        self.assertEqual((starts, stops), ([1], [1]))
+
+
+class NoneWorkerTests(unittest.TestCase):
+    class Mod:
+        def __init__(self, key):
+            self.key = key
+        def forward(self, x, params=None):
+            return 42
+
+    def test_none_workers_sync_only_and_install_nothing(self):
+        m = self.Mod("k")
+        syncs = []
+        saved = dict(tr._ACTIVE)
+        try:
+            with mock.patch.object(tr, "_sync_device", lambda idx: syncs.append(idx)):
+                out = tr.tp_trace_none_start_worker(
+                    {"device": 0, "modules": [m], "output_device": 1}, {"range": "W"})
+                self.assertNotIn("error", out)
+                self.assertEqual(out.get("synced"), True)
+                self.assertNotIn("forward", m.__dict__)      # NO wrapper installed
+                stop = tr.tp_trace_none_stop_worker({"device": 0})
+                self.assertNotIn("error", stop)
+                self.assertGreaterEqual(stop["monotonic_elapsed_s"], 0.0)
+                self.assertEqual(tr._ACTIVE, {})             # window fully closed
+            self.assertEqual(syncs, [0, 0])                  # exactly the 2 boundary syncs
+            out2 = tr.tp_trace_none_stop_worker({"device": 0})
+            self.assertIn("error", out2)                     # stop without start: fail-closed
+        finally:
+            tr._ACTIVE.clear()
+            tr._ACTIVE.update(saved)
+
+    def test_none_start_failure_leaves_no_state(self):
+        def boom(idx):
+            raise RuntimeError("no hip")
+        with mock.patch.object(tr, "_sync_device", boom):
+            out = tr.tp_trace_none_start_worker({"device": 1}, {})
+        self.assertIn("error", out)
+        self.assertEqual(tr._ACTIVE, {})                     # nothing leaked to restore
+
+
+class DecodeAdmissionTests(unittest.TestCase):
+    """run() validates decode-window admission BEFORE touching the filesystem
+    or the native stack."""
+
+    def _hargs(self, mode="mtp", new_tokens="256", batch="1"):
+        return ["--", "--model", "M", "--prompts-json", "no-such.json",
+                "--execution", "tp", "--mode", mode,
+                "--new-tokens", new_tokens, "--batch-size", batch,
+                "--power-socket", "s", "--output", "o.json"]
+
+    def test_mtp_admitted_in_decode_mode(self):
+        # passes every check (room: 64+64+2*4+1=137 <= 256): fails later only
+        # on the missing prompt file, proving no ValueError was raised
+        with self.assertRaises((FileNotFoundError, OSError)):
+            tr.run(["--trace-dir", "/tmp/tp-trace-admission", "--trace-backend", "none",
+                    "--decode-start-tokens", "64"] + self._hargs())
+
+    def test_mixed_window_stays_ar_only(self):
+        with self.assertRaisesRegex(ValueError, "mixed"):
+            tr.run(["--trace-dir", "/tmp/tp-trace-admission"] + self._hargs())
+
+    def test_batch_gt1_rejected_in_decode_mode(self):
+        with self.assertRaisesRegex(ValueError, "batch-size 1"):
+            tr.run(["--trace-dir", "/tmp/tp-trace-admission", "--trace-backend", "none",
+                    "--decode-start-tokens", "64"] + self._hargs(batch="2"))
+
+    def test_room_uses_mtp_burst_allowance(self):
+        # AR needs only start+window+1=129; MTP needs 137
+        with self.assertRaisesRegex(ValueError, "new-tokens"):
+            tr.run(["--trace-dir", "/tmp/tp-trace-admission", "--trace-backend", "none",
+                    "--decode-start-tokens", "64", "--decode-window-tokens", "64"]
+                   + self._hargs(mode="mtp", new_tokens="136"))
+        with self.assertRaisesRegex(ValueError, "new-tokens"):
+            tr.run(["--trace-dir", "/tmp/tp-trace-admission", "--trace-backend", "none",
+                    "--decode-start-tokens", "64", "--decode-window-tokens", "64"]
+                   + self._hargs(mode="ar", new_tokens="128"))
+        with self.assertRaises((FileNotFoundError, OSError)):   # 129 AR: admitted
+            tr.run(["--trace-dir", "/tmp/tp-trace-admission", "--trace-backend", "none",
+                    "--decode-start-tokens", "64", "--decode-window-tokens", "64"]
+                   + self._hargs(mode="ar", new_tokens="129"))
+
+    def test_nonpositive_decode_args_rejected(self):
+        with self.assertRaisesRegex(ValueError, "positive"):
+            tr.run(["--trace-dir", "/tmp/tp-trace-admission",
+                    "--decode-start-tokens", "0"] + self._hargs())
+
+
+class ParserTests(unittest.TestCase):
+    def test_decode_defaults_and_none_choice(self):
+        wap = tr.build_parser().parse_args(["--trace-dir", "d"])
+        self.assertIsNone(wap.decode_start_tokens)      # unset => legacy mixed window
+        self.assertEqual(wap.decode_window_tokens, 64)
+        self.assertEqual(wap.trace_iterations, 8)
+        wap = tr.build_parser().parse_args(
+            ["--trace-dir", "d", "--trace-backend", "none",
+             "--decode-start-tokens", "64"])
+        self.assertEqual(wap.trace_backend, "none")
+        self.assertEqual(wap.decode_start_tokens, 64)
 
 
 class TraceReportIntegrationTests(unittest.TestCase):
@@ -514,6 +760,66 @@ class TraceReportIntegrationTests(unittest.TestCase):
                 self.assertEqual(manifest["complete"], not fail)
                 self.assertTrue(manifest["profiler"]["no_torch_profiler"])
                 self.assertTrue(json.loads(output.read_text())["profiled_diagnostic"])
+
+    def test_run_decode_window_none_backend_manifest(self):
+        import tempfile
+        import types
+        with tempfile.TemporaryDirectory() as td, \
+             mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop(tr.ROCTX_PAUSE_ENV, None)     # none must NOT gate ROCtx
+            base = Path(td)
+            prompt = base / "prompts.json"
+            prompt.write_text(json.dumps({"prompts": [{
+                "ids": [[1, 2]], "sha": tr.tp_run.prompt_sha256([1, 2]),
+                "language": "ja", "repeat": 1, "timed": True}]}))
+            output = base / "run.json"
+            # window actually observed: started at 64 pre-iterate tokens (AR would
+            # be exact; here an MTP burst made end 131 => additional 67, overshoot 3)
+            state = tr.DecodeWindowState(0, 64, 64)
+            state.window_calls = [67, 68]
+            state.window_iterates = 2
+            state.start_actual = 64
+            state.end_actual = 131
+            state.records = {"start": [], "stop": [
+                {"device": 0, "pid": 101, "backend": "none", "synced": True,
+                 "monotonic_elapsed_s": 0.5},
+                {"device": 1, "pid": 102, "backend": "none", "synced": True,
+                 "monotonic_elapsed_s": 0.5}]}
+            fake_exl = types.SimpleNamespace(Generator=type("Generator", (), {
+                "iterate": lambda self: []}))
+            def fake_run(args, prompts):
+                output.write_text(json.dumps({"complete": True}))
+                return 0
+            with mock.patch.dict(sys.modules, {"exllamav3": fake_exl}), \
+                 mock.patch.object(tr, "DecodeWindowState", return_value=state), \
+                 mock.patch.object(tr.tp_run, "run", side_effect=fake_run):
+                code = tr.run(["--trace-dir", str(base / "trace"),
+                               "--trace-backend", "none",
+                               "--decode-start-tokens", "64",
+                               "--decode-window-tokens", "64", "--",
+                               "--model", "fake", "--prompts-json", str(prompt),
+                               "--execution", "tp", "--mode", "mtp",
+                               "--power-socket", "fake", "--output", str(output)])
+            self.assertIsNone(os.environ.get(tr.ROCTX_PAUSE_ENV))
+            manifest = json.loads((base / "trace/tp-trace-manifest.json").read_text())
+            self.assertEqual(code, 0, manifest["errors"])
+            self.assertEqual(manifest["complete"], True)
+            self.assertEqual(manifest["backend"], "none")
+            self.assertEqual(manifest["harness"]["mode"], "mtp")    # admitted now
+            win = manifest["window"]
+            self.assertEqual(win["mode"], "decode")
+            dec = win["decode"]
+            self.assertEqual(dec["requested_start_tokens"], 64)
+            self.assertEqual(dec["actual_start_tokens"], 64)
+            self.assertEqual(dec["actual_end_tokens"], 131)
+            self.assertEqual(dec["actual_additional_tokens"], 67)
+            self.assertEqual(dec["overshoot_tokens"], 3)
+            self.assertEqual(dec["truncated_at_group_end"], False)
+            self.assertTrue(manifest["profiler"]["no_torch_profiler"])
+            self.assertTrue(manifest["profiler"]["no_roctx"])
+            self.assertEqual(manifest["gpu_execution"],
+                             "none_control_no_observation_by_design")
+            self.assertTrue(json.loads(output.read_text())["profiled_diagnostic"])
 
 
 if __name__ == "__main__":
