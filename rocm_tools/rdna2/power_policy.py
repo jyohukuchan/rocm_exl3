@@ -137,7 +137,8 @@ class PowerPolicyAdapter:
         return "iterate_gen"
 
     def _install_hooks(self):
-        targets = [(self._first_compute_attr(), self._before_compute),
+        targets = [("iterate_start_jobs", self._before_prefill),
+                   (self._first_compute_attr(), self._before_compute),
                    ("on_queue_drained", self._before_drained)]
         for name, hook in targets:
             orig = getattr(self.gen, name, None)
@@ -147,6 +148,16 @@ class PowerPolicyAdapter:
             had_own = name in self.gen.__dict__   # pre-existing instance override? keep it on restore
             setattr(self.gen, name, (lambda o, h: lambda *a, **k: h(o, *a, **k))(orig, hook))
             self._saved.append((self.gen, name, orig, had_own))
+
+    def _before_prefill(self, orig, *args, **kwargs):
+        result = orig(*args, **kwargs)
+        # A batch-1 generator may have queued requests even when one job ends.
+        # on_queue_drained is not called between them; reset before the next
+        # newly activated job actually runs prefill.
+        if self._in_decode and any(not j.is_prefill_done() for j in self.gen.active_jobs):
+            self.switch("auto", "before-next-prefill")
+            self._in_decode = False
+        return result
 
     def _before_compute(self, orig, *args, **kwargs):
         jobs = getattr(self.gen, "active_jobs", ())

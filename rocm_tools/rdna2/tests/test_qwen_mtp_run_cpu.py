@@ -198,8 +198,11 @@ class _FakeGenerator:
     def iterate_gen(self, results): return results
     def on_queue_drained(self): return None
 
-    def iterate(self):
+    def iterate_start_jobs(self, results):
         while self._queued: self.active_jobs.append(self._queued.pop(0))
+
+    def iterate(self):
+        self.iterate_start_jobs([])
         if not self._prefilled:
             self._prefilled = True
             for j in self.active_jobs: j.prefilled = True

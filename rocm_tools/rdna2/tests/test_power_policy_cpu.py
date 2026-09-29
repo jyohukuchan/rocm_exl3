@@ -92,6 +92,7 @@ class FakeGenerator:
             self.calls.append((name, self.probe()))
         return hook
 
+    def iterate_start_jobs(self, results=None): self._m("iterate_start_jobs")(results)
     def iterate_gen(self, results=None, draft_tokens=None): self._m("iterate_gen")(results)
     def iterate_draftmodel_gen(self, results=None): self._m("iterate_draftmodel_gen")(results)
     def iterate_draftmodel_mtp_gen(self, results=None): self._m("iterate_draftmodel_mtp_gen")(results)
@@ -155,6 +156,23 @@ class PowerPolicyTests(unittest.TestCase):
                 gen = FakeGenerator(**kw)
                 with power_policy.attach(gen, FakeTorch(), 1, [0, 1], self.sock) as pol:
                     self.assertIn(attr, [entry[1] for entry in pol._saved])
+
+    def test_pending_batch1_request_returns_to_auto_before_prefill(self):
+        gen = FakeGenerator(draft_model=object(), mtp_draft=True)
+        with power_policy.attach(gen, FakeTorch(), 1, [0, 1], self.sock) as pol:
+            for _ in range(2):
+                job = FakeJob(False)
+                gen.active_jobs = [job]
+                gen.iterate_start_jobs([])
+                self.assertEqual(pol.applied, "auto")
+                job.done = True
+                gen.iterate_draftmodel_mtp_gen([])
+                self.assertEqual(pol.applied, "profile_peak")
+                # First job finishes with another request pending: no queue-drained callback.
+            gen.on_queue_drained()
+        self.assertEqual([r["label"] for r in pol.records], [
+            "attach-batch1", "before-first-decode", "before-next-prefill",
+            "before-first-decode", "after-final-decode"])
 
     # ---- batch > 1: hold profile_peak, no toggling ---------------------------
     def test_batch_gt1_holds_peak_on_attach_and_restores_on_exit(self):
