@@ -1,0 +1,50 @@
+{
+  "purpose": "Validated Qwen3.8 Flash Next MTP settings; pass explicitly to the runner/API (not auto-loaded).",
+  "model_directory": "/work/models/qwen38-flash-next-exl3-3.05bpw",
+  "model_revision": "69e33439ae950f17bcbe95c98f117d80f759ab6d",
+  "target_quantization": "EXL3 3.05bpw; head5; ng5",
+  "mtp_bits": 3,
+  "ngram_stream_from_disk": false,
+  "draft_component": "mtp",
+  "draft_device": "cuda:1",
+  "target_load_use_per_device_GiB": [
+    28,
+    28
+  ],
+  "native_directory": "/work/lib-qwen38-reduction",
+  "native_sha256": "12859e31a1bd03b61ef5a1ba6725d020dca3557e3c206dcd10f791662ae4767a",
+  "rlimit_nofile_soft": 65536,
+  "runtime_env": {
+    "HSA_ENABLE_SDMA": "0",
+    "PYTHONPATH": "/work/lib-qwen38-reduction:/src"
+  },
+  "batch1": {
+    "draft_tokens": 4,
+    "dynamic_draft_tokens": true,
+    "draft_confidence": 0.6,
+    "cache_slots": 1,
+    "max_history": 4,
+    "power": {
+      "prefill": "auto",
+      "draft_and_verify_and_decode": "profile_peak",
+      "idle": "auto"
+    },
+    "evidence": "2K tuning and 8K paired 5-repeat greedy comparison; 32K+256 finite validation with fixed4."
+  },
+  "batch_gt1": {
+    "draft_tokens": 2,
+    "dynamic_draft_tokens": false,
+    "cache_slots": "match configured batch size",
+    "max_history": 2,
+    "power_during_inference": "profile_peak",
+    "power_after_exit": "auto",
+    "evidence": "batch2, 2K+256 each, finite validation; performance optimum for larger batches not established."
+  },
+  "cache_tokens_example_batch1_8k": 8704,
+  "max_chunk_size": 2048,
+  "energy_policy": "User-selected energy saving; not a response to cooling or 400W capability limits.",
+  "caveats": [
+    "Speculative verification still uses the unchanged target model; acceptance and speed depend on prompt/sampling.",
+    "Default host memory reserve guard stays enabled; ZFS ARC can trigger it despite reclaimable cache. Diagnostic guard overrides are recorded per run."
+  ]
+}
