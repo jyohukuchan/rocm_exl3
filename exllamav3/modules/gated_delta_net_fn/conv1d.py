@@ -5,12 +5,37 @@ from ...ext import exllamav3_ext as ext
 
 # Above this length the triton kernel splits into separate output/state kernels and its launch
 # overhead is amortized anyway; the CUDA kernel keeps the conv window in registers per thread
-# so it only makes sense for short sequences (decode and SD verification steps)
+# so it only makes sense for short sequences (decode and SD verification steps).
+# That is a PERFORMANCE rule for hardware that can compile the triton path, not a native-kernel
+# limit: conv1d_update_kernel (gdn.cu) loops over any seqlen and TORCH_CHECKs only K, dtypes,
+# shapes and contiguity. gfx103x (RDNA2) cannot compile the triton conv at prefill-sized blocks
+# -- the bf16 elementwise accumulate lowers to llvm.amdgcn.fdot2.bf16.bf16, whose selection
+# fails in LLVM and ABORTS the process (exit 134; root-verified on the V620 at T=33,
+# runs/qwen38/conv33-repro.log). On those parts only, eligible native geometry (bf16, K <=
+# MAX_CUDA_K) therefore takes the native kernel at EVERY length instead; other hardware keeps
+# the 32 threshold unchanged, and non-eligible dtypes/shapes keep falling back to triton.
+# The native kernel is pre-compiled (no Triton JIT at a new shape) and numerically identical
+# to the length it already serves at <= 32.
 MAX_CUDA_SEQLEN = 32
 MAX_CUDA_K = 16
 
 import triton
 import triton.language as tl
+
+
+def _device_lacks_bf16_dot(device: torch.device) -> bool:
+    """
+    Indirection for the vendor probe (exllamav3.vendor.fla.utils.device_lacks_bf16_dot): a
+    host-side gcnArchName read memoized per device index, queried for the TENSOR'S OWN device
+    -- never the current device or device 0 when the input lives elsewhere -- and False on
+    non-AMD parts before any per-device work. The import stays function-local so the vendor
+    package's Triton driver queries happen on first use, not at library import; this seam is
+    also what the CPU dispatch tests (tests/test_conv_rdna2_dispatch.py) replace. It is only
+    ever evaluated for native-eligible geometry with seqlen > MAX_CUDA_SEQLEN, so the ordinary
+    decode / short-prefill hot path neither imports the vendor package nor probes any device.
+    """
+    from ...vendor.fla.utils import device_lacks_bf16_dot
+    return device_lacks_bf16_dot(device)
 
 
 @triton.jit
@@ -382,14 +407,23 @@ def causal_conv1d_update(
     else:
         dummy_slots = False
 
+    # Native eligibility (geometry/dtype) is decided first; the length rule then picks:
+    #   seqlen <= MAX_CUDA_SEQLEN      -> native, exactly as before, on every device, and the
+    #                                      arch probe is never evaluated (short-circuit keeps
+    #                                      the decode hot path import- and probe-free)
+    #   seqlen >  MAX_CUDA_SEQLEN      -> native only where the triton path cannot compile at
+    #                                      prefill sizes (gfx103x); everywhere else the probe
+    #                                      answers False and the legacy threshold stands
+    # Anything not native-eligible (fp16/fp32 tensors, K > 16, CPU) falls back to the triton
+    # path unchanged, so no working configuration changes behavior.
     if (
         mixed_qkv.is_cuda and
-        seqlen <= MAX_CUDA_SEQLEN and
         conv1d_weight.shape[-1] <= MAX_CUDA_K and
         mixed_qkv.dtype == torch.bfloat16 and
         conv_state.dtype == torch.bfloat16 and
         conv1d_weight.dtype == torch.bfloat16 and
-        (conv1d_bias is None or conv1d_bias.dtype == torch.bfloat16)
+        (conv1d_bias is None or conv1d_bias.dtype == torch.bfloat16) and
+        (seqlen <= MAX_CUDA_SEQLEN or _device_lacks_bf16_dot(mixed_qkv.device))
     ):
         out = torch.empty((bsz, seqlen, dim), dtype = torch.bfloat16, device = mixed_qkv.device)
         ext.cuda_causal_conv1d_update(
