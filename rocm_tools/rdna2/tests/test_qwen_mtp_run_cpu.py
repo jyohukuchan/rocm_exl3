@@ -4,7 +4,13 @@
 No torch, no exllamav3, no GPU: they prove frozen-prompt hashing (little-endian
 int64), duplicate/cache-hit rejection, truncation detection, batch coverage and
 timed-flag homogeneity, the multi-token delivery-rate formula, CLI defaults and
-argument validation, and that the module keeps native imports lazy.
+argument validation, and that the module keeps native imports lazy. The
+--mtp-model (standalone independently quantized MTP head) path is covered at
+three levels: safetensors-header/strong-fingerprint inspection of real temp-dir
+files, mocked config-compatibility checks (fail clearly before GPU weight load;
+quant bits differences must NOT fail), and fake-stack runs proving the default
+path is unchanged, a custom directory feeds only the draft component, and an
+incompatible directory aborts before any model construction or load.
 
 Run from the repo root:
     python3 -m unittest rocm_tools.rdna2.tests.test_qwen_mtp_run_cpu
@@ -21,6 +27,7 @@ import struct
 import sys
 import tempfile
 import threading
+import types
 import unittest
 from pathlib import Path
 
@@ -34,6 +41,18 @@ def entry(ids, sha=None, **meta):
          "sha": sha if sha is not None else qmr.prompt_sha256(ids)}
     p.update(meta)
     return p
+
+
+def safetensors_blob(keys, metadata=None, row_bytes=4):
+    """Minimal well-formed .safetensors bytes: u64 header length + JSON header + data."""
+    header, off = {}, 0
+    for k in keys:
+        header[k] = {"dtype": "F16", "shape": [2], "data_offsets": [off, off + row_bytes]}
+        off += row_bytes
+    if metadata:
+        header["__metadata__"] = dict(metadata)
+    blob = json.dumps(header).encode("utf-8")
+    return struct.pack("<Q", len(blob)) + blob + bytes(off)
 
 
 class PromptValidationTests(unittest.TestCase):
@@ -157,6 +176,19 @@ class CliTests(unittest.TestCase):
     def _patched(args, **kwargs):
         return argparse.Namespace(**(vars(args) | kwargs))
 
+    def test_mtp_model_defaults_to_none_and_parses(self):
+        a = qmr.build_parser().parse_args(self.REQUIRED)
+        self.assertIsNone(a.mtp_model)
+        qmr.validate_args(a)  # old behavior stays valid
+        b = qmr.build_parser().parse_args(self.REQUIRED + ["--mtp-model", "/models/mtp_q3"])
+        self.assertEqual(b.mtp_model, "/models/mtp_q3")
+        qmr.validate_args(b)
+
+    def test_mtp_model_blank_rejected(self):
+        b = qmr.build_parser().parse_args(self.REQUIRED + ["--mtp-model", "  "])
+        with self.assertRaisesRegex(ValueError, "mtp-model"):
+            qmr.validate_args(b)
+
     def test_lazy_native_imports(self):
         # Module-level source must not import torch/exllamav3 (CPU import safety).
         tree = ast.parse(Path(qmr.__file__).read_text(encoding="utf-8"))
@@ -168,6 +200,137 @@ class CliTests(unittest.TestCase):
                 top.add(node.module.split(".")[0])
         self.assertFalse(top & {"torch", "exllamav3", "exllamav3_ext"},
                          f"module-level native imports: {top}")
+
+
+class MtpDirectoryTests(unittest.TestCase):
+    """inspect_mtp_directory / read_safetensors_header: stdlib-only, real temp-dir files."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.addCleanup(self._td.cleanup)
+        self.root = Path(self._td.name)
+
+    def _mtp_dir(self, name="mtp_q3", with_config=True):
+        d = self.root / name
+        d.mkdir()
+        if with_config:
+            (d / "config.json").write_text(
+                '{"architectures": ["Qwen4ExpForConditionalGeneration"]}', encoding="utf-8")
+        return d
+
+    def test_hashes_contents_and_collects_source_metadata(self):
+        d = self._mtp_dir()
+        blob = safetensors_blob(["mtp.fc_hidden.q_weight", "mtp.layers.0.mlp.gate.q_weight",
+                                 "model.embed_tokens.weight"],
+                                metadata={"converted_by": "util/convert_mtp.py", "mtp_bits": "3"})
+        (d / "mtp.safetensors").write_bytes(blob)
+        insp = qmr.inspect_mtp_directory(d)
+        self.assertEqual(insp["directory"], str(d.resolve()))
+        self.assertEqual(insp["mtp_tensor_count"], 2)
+        self.assertEqual(insp["non_mtp_tensor_count"], 1)
+        self.assertEqual(insp["total_bytes"], len(blob))
+        self.assertTrue(insp["content_hashed"])
+        self.assertEqual(insp["files"],
+                         [{"name": "mtp.safetensors", "bytes": len(blob),
+                           "sha256": hashlib.sha256(blob).hexdigest()}])
+        self.assertEqual(insp["source_metadata"],
+                         {"mtp.safetensors": {"converted_by": "util/convert_mtp.py", "mtp_bits": "3"}})
+        self.assertEqual(insp["combined_sha256"], hashlib.sha256(
+            f"mtp.safetensors|{len(blob)}|{insp['files'][0]['sha256']}".encode("utf-8")).hexdigest())
+        self.assertIn("SHA256 over the full bytes", insp["coverage"])
+
+    def test_files_sorted_by_name(self):
+        d = self._mtp_dir("mtp_sorted")
+        (d / "b.safetensors").write_bytes(safetensors_blob(["mtp.fc_hidden.weight"]))
+        (d / "a.safetensors").write_bytes(safetensors_blob(["mtp.layers.0.mlp.gate.weight"]))
+        insp = qmr.inspect_mtp_directory(d)
+        self.assertEqual([f["name"] for f in insp["files"]], ["a.safetensors", "b.safetensors"])
+
+    def test_missing_directory_fails_clearly(self):
+        with self.assertRaisesRegex(ValueError, "directory not found"):
+            qmr.inspect_mtp_directory(self.root / "absent")
+
+    def test_no_safetensors_points_at_the_converter(self):
+        d = self._mtp_dir("mtp_empty")
+        with self.assertRaisesRegex(ValueError, r"no \*\.safetensors.*util/convert_mtp\.py"):
+            qmr.inspect_mtp_directory(d)
+
+    def test_directory_without_mtp_tensors_rejected(self):
+        d = self._mtp_dir("not_mtp")
+        (d / "model-00001.safetensors").write_bytes(
+            safetensors_blob(["model.layers.0.mlp.gate_proj.weight", "lm_head.weight"]))
+        with self.assertRaisesRegex(ValueError, "not.*exported.*MTP head"):
+            qmr.inspect_mtp_directory(d)
+
+    def test_malformed_safetensors_header_rejected(self):
+        for label, raw in (("garbage", b"junkjunkjunkjunk"), ("truncated header", b"\x10\x00" + b"{")):
+            d = self._mtp_dir(f"bad_{label.split()[0]}")
+            (d / "mtp.safetensors").write_bytes(raw)
+            with self.subTest(label), self.assertRaisesRegex(ValueError, r"mtp\.safetensors"):
+                qmr.inspect_mtp_directory(d)
+
+    def test_over_cap_degrades_to_listing_only(self):
+        from unittest.mock import patch
+        d = self._mtp_dir("mtp_big")
+        blob = safetensors_blob(["mtp.fc_hidden.weight"])
+        (d / "mtp.safetensors").write_bytes(blob)
+        with patch.object(qmr, "MTP_STRONG_HASH_MAX_BYTES", len(blob) - 1):
+            insp = qmr.inspect_mtp_directory(d)
+        self.assertFalse(insp["content_hashed"])
+        self.assertIsNone(insp["files"][0]["sha256"])
+        self.assertEqual(insp["combined_sha256"], hashlib.sha256(
+            f"mtp.safetensors|{len(blob)}|-".encode("utf-8")).hexdigest())
+        self.assertIn("NOT rehashed", insp["coverage"])
+
+
+def _compat_cfg(**over):
+    base = dict(architecture="Qwen4ExpForConditionalGeneration", hidden_size=4096,
+                vocab_size=248077, hc_mult=4, mtp_num_hidden_layers=1,
+                model_classes={"text": object(), "mtp": object()})
+    base.update(over)
+    return types.SimpleNamespace(**base)
+
+
+class MtpCompatibilityTests(unittest.TestCase):
+    """check_mtp_config_compatibility: mocked configs, no exllamav3, no GPU."""
+
+    def test_matching_passes_and_reports_compared_values(self):
+        vals = qmr.check_mtp_config_compatibility(_compat_cfg(), _compat_cfg())
+        self.assertEqual(vals["hidden_size"], {"target": 4096, "mtp": 4096})
+        self.assertEqual(set(vals), set(qmr.MTP_COMPAT_FIELDS))
+
+    def test_attachment_field_mismatches_fail_clearly(self):
+        cases = {"architecture": "Qwen3_5MoeForConditionalGeneration",
+                 "hidden_size": 2048,
+                 "vocab_size": 151936,
+                 "hc_mult": 2,
+                 "mtp_num_hidden_layers": 2}
+        for field, bad in cases.items():
+            with self.subTest(field=field):
+                with self.assertRaises(ValueError) as cm:
+                    qmr.check_mtp_config_compatibility(_compat_cfg(), _compat_cfg(**{field: bad}))
+                msg = str(cm.exception)
+                self.assertIn("--mtp-model is not attachable", msg)
+                self.assertIn(f"{field}: target=", msg)
+
+    def test_zero_mtp_layers_and_unregistered_component_fail(self):
+        with self.assertRaisesRegex(ValueError, "mtp_num_hidden_layers"):
+            qmr.check_mtp_config_compatibility(_compat_cfg(), _compat_cfg(mtp_num_hidden_layers=0))
+        with self.assertRaisesRegex(ValueError, "model_classes"):
+            qmr.check_mtp_config_compatibility(
+                _compat_cfg(), _compat_cfg(model_classes={"text": object()}))
+
+    def test_missing_field_reported_as_none(self):
+        mtp = _compat_cfg()
+        del mtp.hc_mult
+        with self.assertRaisesRegex(ValueError, "hc_mult"):
+            qmr.check_mtp_config_compatibility(_compat_cfg(), mtp)
+
+    def test_quantization_differences_are_NOT_compared(self):
+        t = _compat_cfg(bits=3.05, head_bits=5, mtp_bits=3, qmap={"block": 3.05})
+        m = _compat_cfg(bits=None, head_bits=None, mtp_bits=2, qmap={"block.mtp.fc": 2})
+        self.assertEqual(qmr.check_mtp_config_compatibility(t, m)["mtp_num_hidden_layers"],
+                         {"target": 1, "mtp": 1})
 
 
 class _FakeTensor:
@@ -265,15 +428,23 @@ def _install_fake_stack(log):
             self.forward = lambda *a, **k: _FakeTensor([0.0])
         @classmethod
         def from_config(cls, cfg, component="text"):
-            log.append(("from_config", component, cfg.infer_params.ngram_stream_from_disk))
+            log.append(("from_config", component, cfg.infer_params.ngram_stream_from_disk, cfg.path))
             return cls(component)
         def load(self, **kw): log.append(("load", self.component, dict(kw)))
         def unload(self): log.append(("unload", self.component))
     class FakeConfig:
+        # Test hook: str(directory) -> config fields to replace (mocks an incompatible
+        # standalone MTP config.json without touching real exllamav3). Fresh dict per install.
+        OVERRIDES = {}
         @staticmethod
         def from_directory(path):
-            return types.SimpleNamespace(path=path,
-                                         infer_params=types.SimpleNamespace(ngram_stream_from_disk=True))
+            fields = dict(architecture="Qwen4ExpForConditionalGeneration", hidden_size=4096,
+                          vocab_size=248077, hc_mult=4, mtp_num_hidden_layers=1,
+                          model_classes={"text": FakeModel, "mtp": FakeModel})
+            fields.update(FakeConfig.OVERRIDES.get(str(path), {}))
+            return types.SimpleNamespace(path=str(path),
+                                         infer_params=types.SimpleNamespace(ngram_stream_from_disk=True),
+                                         **fields)
     class FakeCache:
         def __init__(self, model, max_num_tokens=0, max_batch_size=1, max_history=0):
             self.model, self.max_num_tokens = model, max_num_tokens
@@ -337,18 +508,30 @@ class FakeHelper(threading.Thread):
 class RunIntegrationTests(unittest.TestCase):
     ARGS = ["-m", "/models/qwen38", "--cache-tokens", "1024", "--new-tokens", "9"]
 
-    def _case(self, mode, sock, out):
+    def _case(self, mode, sock, out, extra_args=(), mtp_config_overrides=None):
         log = []
         saved, saved_attr, pkg = _install_fake_stack(log)
         try:
+            if mtp_config_overrides:
+                sys.modules["exllamav3"].Config.OVERRIDES.update(mtp_config_overrides)
             args = qmr.build_parser().parse_args(
                 self.ARGS + ["--mode", mode, "--power-socket", sock, "--output", out,
-                             "--prompts-json", "/unused"])
+                             "--prompts-json", "/unused"] + list(extra_args))
             prompts = qmr.validate_prompts(
                 {"prompts": [entry(list(range(1, 6)), language="code", repeat=1)]}, 1)
             return qmr.run(args, prompts), json.loads(Path(out).read_text()), log
         finally:
             _uninstall(saved, saved_attr, pkg)
+
+    def _mtp_shard_dir(self, td, name="mtp_q3"):
+        d = Path(td) / name
+        d.mkdir()
+        (d / "config.json").write_text('{"architectures": ["Qwen4ExpForConditionalGeneration"]}',
+                                       encoding="utf-8")
+        blob = safetensors_blob(["mtp.fc_hidden.q_weight", "mtp.layers.0.mlp.gate.q_weight"],
+                                metadata={"converted_by": "util/convert_mtp.py", "mtp_bits": "3"})
+        (d / "mtp.safetensors").write_bytes(blob)
+        return d, blob
 
     def test_mtp_and_ar_happy_paths(self):
         with tempfile.TemporaryDirectory() as td:
@@ -362,8 +545,12 @@ class RunIntegrationTests(unittest.TestCase):
                         self.assertTrue(rep["complete"])
                         # main built first, MTP second, ngram-from-disk off BEFORE either;
                         # MTP head resident on cuda:1 loaded before the target in BOTH modes.
+                        # Default (--mtp-model omitted): both components build from the --model dir.
                         self.assertEqual([e for e in log if e[0] == "from_config"],
-                                         [("from_config", "text", False), ("from_config", "mtp", False)])
+                                         [("from_config", "text", False, "/models/qwen38"),
+                                          ("from_config", "mtp", False, "/models/qwen38")])
+                        self.assertEqual(rep["mtp_model"],
+                                         {"source": "target-checkpoint", "directory": "/models/qwen38"})
                         self.assertEqual([e for e in log if e[0] == "load"],
                                          [("load", "mtp", {"device": "cuda:1", "max_chunk_size": 2048,
                                                            "progressbar": False}),
@@ -401,6 +588,74 @@ class RunIntegrationTests(unittest.TestCase):
                         self.assertEqual(rep["groups"][0]["total_new_tokens"], 9)
             finally:
                 helper.stop()
+
+    def test_custom_mtp_directory_feeds_draft_only_and_is_fingerprinted(self):
+        with tempfile.TemporaryDirectory() as td:
+            helper = FakeHelper(Path(td) / "power.sock"); helper.start()
+            mtp, blob = self._mtp_shard_dir(td)
+            out = str(Path(td) / "custom.json")
+            try:
+                code, rep, log = self._case("mtp", str(Path(td) / "power.sock"), out,
+                                            extra_args=["--mtp-model", str(mtp)])
+                self.assertEqual(code, 0, rep.get("error"))
+                self.assertTrue(rep["complete"])
+                # Only the draft component is built from the standalone directory; the target
+                # (and hence embed/lm_head/tokenizer/Engram) still come from --model.
+                self.assertEqual([e for e in log if e[0] == "from_config"],
+                                 [("from_config", "text", False, "/models/qwen38"),
+                                  ("from_config", "mtp", False, str(mtp.resolve()))])
+                self.assertEqual([e for e in log if e[0] == "load"],
+                                 [("load", "mtp", {"device": "cuda:1", "max_chunk_size": 2048,
+                                                   "progressbar": False}),
+                                  ("load", "text", {"use_per_device": [28, 28],
+                                                    "max_chunk_size": 2048, "progressbar": False})])
+                blk = rep["mtp_model"]
+                self.assertEqual(blk["source"], "custom-directory")
+                self.assertEqual(blk["directory"], str(mtp.resolve()))
+                self.assertEqual(blk["model_fingerprint"]["name"], "mtp_q3")
+                self.assertTrue(blk["model_fingerprint"]["exists"])
+                wf = blk["weights_fingerprint"]
+                self.assertTrue(wf["content_hashed"])
+                self.assertEqual(wf["mtp_tensor_count"], 2)
+                self.assertEqual(wf["files"], [{"name": "mtp.safetensors", "bytes": len(blob),
+                                                "sha256": hashlib.sha256(blob).hexdigest()}])
+                self.assertEqual(blk["source_metadata"],
+                                 {"mtp.safetensors": {"converted_by": "util/convert_mtp.py",
+                                                      "mtp_bits": "3"}})
+                self.assertEqual(blk["config_compatibility"]["hidden_size"],
+                                 {"target": 4096, "mtp": 4096})
+                # The target fingerprint keeps its original meaning: --model and nothing else.
+                self.assertEqual(rep["model_fingerprint"]["dir"], "/models/qwen38")
+                self.assertEqual(rep["cli"]["mtp_model"], str(mtp))
+            finally:
+                helper.stop()
+
+    def test_incompatible_mtp_config_fails_before_construction_or_load(self):
+        with tempfile.TemporaryDirectory() as td:
+            mtp, _ = self._mtp_shard_dir(td)
+            out = str(Path(td) / "bad.json")
+            code, rep, log = self._case(
+                "mtp", str(Path(td) / "power.sock"), out, extra_args=["--mtp-model", str(mtp)],
+                mtp_config_overrides={str(mtp.resolve()): {"hidden_size": 2048}})
+            self.assertEqual(code, 1)
+            self.assertFalse(rep["complete"])
+            self.assertIn("--mtp-model is not attachable", rep["error"])
+            self.assertIn("hidden_size: target=4096 mtp-directory=2048", rep["error"])
+            # Failed before any model construction and long before any GPU weight load.
+            self.assertEqual([e for e in log if e[0] in ("from_config", "load")], [])
+            self.assertEqual(rep["mtp_model"], {"source": "custom-directory",
+                                                "directory": str(mtp.resolve())})
+
+    def test_mtp_model_directory_without_shards_fails_clearly(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td) / "no_shards"; d.mkdir()
+            (d / "config.json").write_text("{}", encoding="utf-8")
+            out = str(Path(td) / "noshard.json")
+            code, rep, log = self._case("mtp", str(Path(td) / "power.sock"), out,
+                                        extra_args=["--mtp-model", str(d)])
+            self.assertEqual(code, 1)
+            self.assertIn("util/convert_mtp.py", rep["error"])
+            self.assertEqual([e for e in log if e[0] in ("from_config", "load")], [])
 
     def test_progress_recorded_when_text_emission_is_delayed(self):
         from unittest.mock import patch
