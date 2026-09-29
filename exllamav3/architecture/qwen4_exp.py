@@ -305,7 +305,10 @@ class Qwen4ExpModel(Model):
 
         self.calibration_all_experts = True
         self.caps.update({
-            "supports_tp": False,
+            # QSA attention layers run whole on one device (per-token block selection shared by
+            # all heads); PLE layers run whole on one rank, which broadcasts their output (and,
+            # with the Engram held in RAM, loads the n-gram table once on that rank only)
+            "supports_tp": True,
             "recurrent_states": True,
             "default_recurrent_checkpoint_interval": 2048,
             "linear_attn": True,

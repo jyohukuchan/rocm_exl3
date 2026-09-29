@@ -119,6 +119,10 @@ class NGramEmbedding(Module):
         self._executor = None
         self.prefetch_stats = {"hit": 0, "miss": 0, "retired": 0}
         self._row_dtype = None      # stored row dtype of the unquantized table
+        self._table_keys = None     # table tensor keys, recorded by load(); tp_export reads
+                                    # their file locations from the collection's metadata
+        self._tp_deferred = False   # True on a TP parent's placeholder (payload owned by the
+                                    # PLE-layer rank, never by this module)
 
         self.caps.update({"prefer_cpu": True})
 
@@ -209,6 +213,7 @@ class NGramEmbedding(Module):
             assert all(s[1] == ROW_DIM for s in shapes)
 
         quantized = trellis_keys != []
+        self._table_keys = keys      # for tp_export: the payload owner reads these by location
         stream_from_disk = self.stream_from_disk
         if stream_from_disk is None:
             infer_params = getattr(self.config, "infer_params", None)
@@ -239,40 +244,82 @@ class NGramEmbedding(Module):
                     stc.release_file(h)
         else:
             self.mode = "trellis_ram" if quantized else "fp16_ram"
-            if len(keys) == 1:
-                self.tables = [stc.get_tensor(keys[0], "cpu", allow_bf16 = not quantized, no_defer = True)]
+            if kwargs.get("tp_parent_defer"):
+                # TP parent: the table payload is NOT materialized here. The rank that imports
+                # this module (the PLE-layer owner; see tp_import) reads it once from the file
+                # locations recorded by tp_export. Cloning tens of GB into the parent just to
+                # hand them to one worker - or worse, to move them through shared memory -
+                # is exactly what the Engram-in-RAM design must avoid. Metadata only; the
+                # guards in _require_payload keep this placeholder from running inference.
+                self._tp_deferred = True
+                if not quantized:
+                    self._row_dtype = stc.get_tensor_handle(keys[0]).dtype
             else:
-                # Sharded table: one contiguous slab, each shard copied into its slice as it loads
-                slab = None
-                for s_i, k in enumerate(keys):
-                    t = stc.get_tensor(k, "cpu", allow_bf16 = not quantized, no_defer = True)
-                    if slab is None:
-                        from ..util.memory import check_host_memory
-                        check_host_memory(self.num_rows * t[0].numel() * t.element_size(),
-                                          f"n-gram table {self.key} held in RAM (--ngram_ram)")
-                        slab = torch.empty((self.num_rows, *t.shape[1:]), dtype = t.dtype)
-                    r0 = s_i * self.rows_per_shard
-                    slab[r0 : r0 + t.shape[0]].copy_(t)
-                    del t
-                self.tables = [slab]
-                self.rows_per_shard = self.num_rows
-            if not quantized:
-                self._row_dtype = self.tables[0].dtype
+                self._load_ram_tables(
+                    lambda i, k: stc.get_tensor(k, "cpu", allow_bf16 = not quantized, no_defer = True))
+
+    def _load_ram_tables(self, load_shard):
+        """
+        Materialize the table in host RAM (the --ngram_ram path). load_shard(i, key) returns
+        the CPU tensor for shard i: the regular loader supplies stc.get_tensor, while the TP
+        owner rank reads the shard out of its safetensors file (see tp_import). Both go
+        through the same host-memory guard and the same slab layout, so an owner-imported
+        table is byte-for-byte what a single-process RAM load would have produced.
+        """
+        keys = self._table_keys
+        assert keys, "NGramEmbedding._load_ram_tables before load() recorded the table keys"
+        if len(keys) == 1:
+            self.tables = [load_shard(0, keys[0])]
+        else:
+            # Sharded table: one contiguous slab, each shard copied into its slice as it loads
+            slab = None
+            for s_i, k in enumerate(keys):
+                t = load_shard(s_i, k)
+                if slab is None:
+                    from ..util.memory import check_host_memory
+                    check_host_memory(self.num_rows * t[0].numel() * t.element_size(),
+                                      f"n-gram table {self.key} held in RAM (--ngram_ram)")
+                    slab = torch.empty((self.num_rows, *t.shape[1:]), dtype = t.dtype)
+                r0 = s_i * self.rows_per_shard
+                slab[r0 : r0 + t.shape[0]].copy_(t)
+                del t
+            self.tables = [slab]
+            self.rows_per_shard = self.num_rows
+        if not self.mode.startswith("trellis"):
+            self._row_dtype = self.tables[0].dtype
 
     @override
     def unload(self):
         self._drain_prefetch()      # queued workers still read the table; first
+        # Streaming handles cache an open fd per shard and DiskTensorHandle has no
+        # destructor: close them here (idempotent, so the parent's stc.close() may
+        # still close the very same objects afterwards). The TP owner's disk-mode
+        # module otherwise leaks its fds until process exit.
+        if self.handles is not None:
+            for h in self.handles:
+                h.close()
         self.device = None
         self.mode = None
         self.tables = None
         self.handles = None
         self._pins = []
         self._row_dtype = None
+        self._table_keys = None
+        self._tp_deferred = False
         self.head_bias = None
         self.head_offsets = None
         self.head_vocab_sizes = None
         self.layer_multipliers = None
         self.codebook = None
+
+    def _require_payload(self, what: str):
+        # Fail closed on a module that only holds TP export metadata: the table lives (once)
+        # on the rank that imported it, nowhere near this placeholder.
+        if self.tables is None and self.handles is None:
+            raise RuntimeError(
+                f"NGramEmbedding {self.key}: no table payload resident "
+                f"{'(deferred for TP export)' if self._tp_deferred else ''}; cannot {what}. "
+                "The PLE-layer owner rank loads the table itself during tp_import.")
 
     @override
     def get_tensors(self):
@@ -284,9 +331,119 @@ class NGramEmbedding(Module):
     def weights_numel(self):
         return self.num_rows * ROW_DIM
 
+    def tp_export(self, plan, producer):
+        """
+        Tensor-parallel: the table itself never travels through the parent. The export carries
+        the table's file locations (safetensors keys + byte spans) plus the small hashing and
+        dequant parameters, and records the EXACTLY requested mode. PLELayer places this module
+        whole on one rank (allocation max_devices = 1), so a single worker imports it: an
+        Engram held in RAM (--ngram_ram) is read once into that rank's host RAM by the guarded
+        loader below - never silently downgraded to disk streaming, never cloned per rank and
+        never passed through the shared-memory producer (the arena and /dev/shm are far too
+        small, and one copy on the owner is all the design needs). A table requested in disk
+        mode keeps streaming, from the importer's own handles.
+        """
+        assert self.mode is not None, "Cannot export module for TP before loading."
+        assert self._table_keys, "Cannot export NGramEmbedding before load() enumerated the table"
+        stc = self.config.stc
+        handles = [stc.get_tensor_handle(k) for k in self._table_keys]
+        return {
+            "cls": NGramEmbedding,
+            "kwargs": {
+                "key": self.key,
+                "ngram_size": self.ngram_size,
+                "heads_per_ngram": self.heads_per_ngram,
+                "ple_embed_dim": self.ple_embed_dim,
+                "eos_token_id": self.eos_token_id,
+                "out_dtype": self.out_dtype,
+            },
+            "mode": self.mode,   # trellis_ram | fp16_ram | trellis_disk | fp16_disk, as loaded
+            "K": self.K,
+            "num_rows": self.num_rows,
+            "rows_per_shard": handles[0].shape[0],
+            "handles": [(h.key, h.filename, h.abs_offset, list(h.shape), str(h.dtype)) for h in handles],
+            "row_dtype": str(self._row_dtype) if self._row_dtype is not None else None,
+            "head_offsets": producer.send(self.head_offsets),
+            "head_vocab_sizes": producer.send(self.head_vocab_sizes),
+            "layer_multipliers": producer.send(self.layer_multipliers),
+            "head_bias": producer.send(self.head_bias) if self.head_bias is not None else None,
+            "device": self.device,
+        }
+
+    @staticmethod
+    def tp_import(local_context, exported, plan):
+        """
+        Rebuild the module on the importing rank. Only the PLE-layer owner calls this
+        (PLELayer.tp_import stubs every other rank before any submodule import), and the plan
+        is re-checked here so a future replication can never multiply the table: the import
+        fails closed rather than importing a second copy.
+        """
+        consumer = local_context["consumer"]
+        device = local_context["device"]
+        mode = exported["mode"]
+        assert mode in ("trellis_disk", "trellis_ram", "fp16_disk", "fp16_ram"), \
+            f"NGramEmbedding.tp_import: invalid exported mode {mode!r}"
+        key = exported["kwargs"]["key"]
+        if key.endswith(".ple_embedding.ngram_embedding"):
+            ple_key = key[: -len(".ple_embedding.ngram_embedding")]
+            if ple_key in plan:
+                first, last, _ = plan[ple_key]
+                assert last > first, \
+                    f"NGramEmbedding.tp_import on a rank that does not own {ple_key}"
+        def dt(s):
+            return getattr(torch, s.split(".")[1]) if s is not None else None
+        module = NGramEmbedding(config = None, **exported["kwargs"],
+                                stream_from_disk = mode.endswith("_disk"))
+        module.device = device
+        module.mode = mode
+        module.K = exported["K"]
+        module.num_rows = exported["num_rows"]
+        module.rows_per_shard = exported["rows_per_shard"]
+        handles = [
+            DiskTensorHandle(key = k, filename = fn, abs_offset = off, shape = shape, dtype = dt(d))
+            for k, fn, off, shape, d in exported["handles"]
+        ]
+        assert handles, f"NGramEmbedding.tp_import: no table sources exported for {key}"
+        module._table_keys = [h.key for h in handles]
+        if mode.endswith("_ram"):
+            # Owner-only RAM. Guard BEFORE reading, from the exported metadata alone: the
+            # host-memory check the single-process --ngram_ram path performs via its loader
+            # (sharded tables) has no single-shard equivalent there, and here the payload is
+            # read straight out of the file, so the total is computed from the byte spans.
+            from ..util.memory import check_host_memory
+            check_host_memory(
+                sum(h.num_rows * h.row_bytes for h in handles),
+                f"n-gram table {key} held in RAM (--ngram_ram, TP owner rank)")
+            # Independent of the parent's collection: the exported byte spans are plain
+            # data, so nothing goes stale when the loader closes the parent's files or the
+            # producer's arena after loading. DiskTensorHandle has no destructor and
+            # read_range caches an open fd per handle, so every handle this import opened
+            # is closed on both the success and the failure path; the imported table is
+            # pure host memory and the module keeps no streaming state.
+            try:
+                module._load_ram_tables(
+                    lambda i, k: handles[i].read_range(0, handles[i].num_rows))
+            finally:
+                for h in handles:
+                    h.close()
+        else:
+            module.handles = handles
+            if not mode.startswith("trellis"):
+                module._row_dtype = handles[0].dtype
+        module.head_offsets = consumer.recv(exported["head_offsets"], cuda = False).long().contiguous()
+        module.head_vocab_sizes = consumer.recv(exported["head_vocab_sizes"], cuda = False).long().contiguous()
+        module.layer_multipliers = consumer.recv(exported["layer_multipliers"], cuda = False).long().contiguous()
+        module.head_bias = consumer.recv(exported["head_bias"], cuda = True) if exported.get("head_bias") is not None else None
+        assert module.head_offsets.shape[0] == module.num_heads, \
+            f"NGramEmbedding.tp_import: head_offsets mismatch for {key}"
+        if mode.startswith("trellis"):
+            module.codebook = mul1_codebook(device)
+        return module
+
     def _fetch_packed(self, uids_cpu: torch.Tensor) -> torch.Tensor:
         """Gather rows of the backing store (packed int16 or raw fp16/bf16) to CPU, routing
         global row indices to the individual shard tensors/handles."""
+        self._require_payload("gather rows")
         ram = self.tables is not None
         store = self.tables if ram else self.handles
 
@@ -486,6 +643,7 @@ class NGramEmbedding(Module):
         """
         if not PREFETCH_ENABLED or self.mode is None or history.dim() != 2:
             return
+        self._require_payload("prefetch")
         bsz, out_len = history.shape[0], history.shape[1] - self.context_len
         if out_len <= 0 or bsz * out_len < PREFETCH_MIN_TOKENS:
             return
@@ -518,6 +676,8 @@ class NGramEmbedding(Module):
         x: (bsz, context + seq_len) token history (CPU in the hot path); returns embeddings for
         the last seq_len = x.shape[1] - context_len positions, on the module's device.
         """
+        assert self.mode is not None, "NGramEmbedding.forward on an unloaded module"
+        self._require_payload("run a forward pass")
         out_len = x.shape[1] - self.context_len
         ids = x.to("cpu", torch.int64).contiguous()
         bsz = ids.shape[0]

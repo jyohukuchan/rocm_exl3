@@ -73,11 +73,48 @@ class TPExportAttentionTest(unittest.TestCase):
                 Attention.tp_import({"device": DEVICE, "consumer": None}, exported, {m.key: (2, 4, "heads")})
             self.assertEqual(seen["split"], expect, f"g_proj split wrong for full_gate={full_gate}")
 
-    def test_attention_with_qsa_indexer_refuses_export(self):
+    def test_attention_with_qsa_indexer_is_placed_whole(self):
+        # QSA layers run whole on one rank: single-channel allocation with a module-enforced
+        # device cap, the indexer travels with the export, and the owner rank gets it back
+        class FakeIndexer(FakeChild):
+            head_dim = 32; compress_ratio = 4
+            def storage_size(self): return 0
+            def tp_export(self, plan, producer): return {"cls": FakeIndexer, "key": self.key}
+            @staticmethod
+            def tp_import(local_context, exported, plan): return FakeIndexer(exported["key"])
         m = _bare(Attention)
-        m.qsa_indexer = object()
-        with self.assertRaises((AssertionError, NotImplementedError)):
-            m.tp_export(plan = {}, producer = None)
+        m.qsa_indexer = FakeIndexer("idx")
+        exported = m.tp_export(plan = {}, producer = None)
+        self.assertIsNotNone(exported.get("qsa_indexer"))
+        plan = {m.key: (0, KV_HEADS, "heads")}
+        with patch.object(Attention, "load_local", lambda self, device, **kw: None), patch("torch.cuda.synchronize", lambda: None):
+            owner = Attention.tp_import({"device": DEVICE, "consumer": None}, exported, plan)
+            stub = Attention.tp_import({"device": DEVICE, "consumer": None}, exported, {m.key: (KV_HEADS, KV_HEADS, "heads")})
+        self.assertEqual(owner.qsa_indexer.key, "idx")
+        self.assertIsNone(stub.qsa_indexer)
+        with self.assertRaises(AssertionError):
+            Attention.tp_import({"device": DEVICE, "consumer": None}, exported, {m.key: (0, KV_HEADS // 2, "heads")})
+
+    def test_attention_qsa_allocation_is_single_device(self):
+        # The allocator contract behind 'whole on one rank': one channel of width
+        # num_kv_heads, a module-enforced max_devices = 1, and the indexer storage riding
+        # along with the layer
+        class FakeIndexer:
+            def storage_size(self): return 4096
+        m = _bare(Attention)
+        for attr in ("q_proj", "k_proj", "v_proj", "o_proj"):
+            getattr(m, attr).storage_size = lambda: 0
+            getattr(m, attr).recons_size = lambda: 0
+        m.head_dim = HEAD_DIM
+        m.qsa_indexer = FakeIndexer()
+        tpa, = m.make_tp_allocation({})
+        self.assertEqual(tpa.channels_to_split, 1)
+        self.assertEqual(tpa.channel_width, KV_HEADS)
+        self.assertEqual(tpa.max_devices, 1)
+        self.assertGreaterEqual(tpa.storage_to_split, 4096)
+        m.qsa_indexer = None
+        tpa, = m.make_tp_allocation({})
+        self.assertIsNone(tpa.max_devices)   # plain attention keeps splitting across ranks
 
 
 if __name__ == "__main__":
