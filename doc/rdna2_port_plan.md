@@ -146,6 +146,8 @@ Mを主対象とし、Dも回帰確認に使う。
 
 MTPは既存3.05bpw checkpointに含まれる3bit MTP重みを起点に、短文実生成→採用率・巻戻し/状態確認→同一条件AR baselineとのdraft長別速度比較→必要な修正の順で進める。Engram RAMと本体EXL3約3bpwの条件は維持する。
 
+MTP前置段階の結果（2026-09-29）: 有効化、2Kで64jobの候補長/confidence調整、8KでAR/MTP各warmup1＋測定5×2課題、32K+256、batch2、batch1の待ち行列を検証済み。batch1推奨は上限4・dynamic・confidence0.6。8K decodeは日本語35.95→40.16tok/s、コード35.89→55.53tok/s。prefill・終了処理込みでは日本語ほぼ同じ、コード約5.4%短縮。結果/再現方法は`doc/qwen38_v620_mtp.md`、設定は`doc/qwen38_v620_mtp_config.json`。電力制御は再利用module化済み。後続はTP2であり、今回TP対応済みとはしない。
+
 TPはモデル分割と通信backendの二層に分けて実装する。
 
 ### 6A: 本家差分の取り込み

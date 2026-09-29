@@ -1,5 +1,16 @@
 # rocm_tools/rdna2 — V620 measurement harness (Phase 0-2 single card; Phase 3 audited dual-card layer split)
 
+Qwen3.8 Flash Next MTP support and the user-selected power policy are evaluated
+with `qwen_mtp_run.py` and `power_policy.py`. The existing `bench.py` remains an
+explicit non-speculative baseline. See
+[MTP results and reproduction](../../doc/qwen38_v620_mtp.md) and
+[validated settings](../../doc/qwen38_v620_mtp_config.json).
+The MTP runner requires a separately started local power helper; batch 1 switches
+auto/peak at stage boundaries (including queued requests), while configured
+batch sizes above 1 hold peak during inference. Each completed `iterate()` records
+one cumulative progress sample per job, including iterations whose text output is
+temporarily buffered. MTP bursts are not duplicated into artificial token intervals.
+
 Small, reusable toolset for measuring exllamav3 on one RDNA2 card (gfx1030,
 "V620"): a frozen token manifest, teacher-forced top-1 collection for the
 exl3 and transformers backends, a strict comparison gate, and a smoke/bench
