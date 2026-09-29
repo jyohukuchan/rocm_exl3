@@ -33,7 +33,7 @@
       "draft_and_verify_and_decode": "profile_peak",
       "idle": "auto"
     },
-    "evidence": "2K tuning and 8K paired 5-repeat greedy comparison; 32K+256 finite validation with fixed4."
+    "evidence": "TP2: 8K+256 repeated AR/MTP jobs; 32K+256 Japanese/code finite validation with fixed4."
   },
   "batch_gt1": {
     "draft_tokens": 2,
@@ -42,7 +42,7 @@
     "max_history": 2,
     "power_during_inference": "profile_peak",
     "power_after_exit": "auto",
-    "evidence": "batch2, 2K+256 each, finite validation; performance optimum for larger batches not established."
+    "evidence": "TP2: batch2, two 8K+256 jobs simultaneously, fixed2 finite validation; performance optimum for larger batches not established."
   },
   "cache_tokens_example_batch1_8k": 8704,
   "max_chunk_size": 2048,
@@ -74,5 +74,6 @@
     "batch2": "two 8K+256 jobs together, finite with fixed draft2",
     "power": "batch1 auto prefill/peak draft+verify+decode/auto idle; batch>1 peak during inference, auto exit",
     "report": "doc/rdna2_tp2.md"
-  }
+  },
+  "container": "rocm-exl3-v620-pair"
 }

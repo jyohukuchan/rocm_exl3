@@ -265,6 +265,15 @@ TPはモデル分割と通信backendの二層に分けて実装する。
 - [結果・再現手順](v620_pair_results.md)、[固定設定](v620_pair_config.json)。各stageのmanifest/metrics/correctness/summaryは `/home/homelab1/datapool/rocm-exl3-rdna2/runs/two-gpu/phase3` と `phase4` に保存。
 - 次はPhase5。大型モデルの開始予算は1枚28GiB程度とし、新しいcache/scratch/native割当は別途検証する。Phase5/6の完了を意味しない。
 
+## Phase 6 実装・検証記録（2026-09-29）
+
+- 本家TPのQwen関連処理を移植し、HIPではpure Torch/RCCLでcollectiveを完結。V620×2でD/M/Qの生成と同一重みLSとの数値比較を確認した。
+- Qは既存パックのMTP3へ戻し、Engram約30.4GiBを単一rankのRAMに保持。全ページ常駐をmincoreで推論前後に確認した。
+- Qの8K+256×12 AR連続実行、8K MTPの最終LS/TP各warm1+timed5×2課題、32K+256、batch2各8K+256、worker異常検出・再ロード、両rankのGPU kernel/演算overlapを検証した。
+- GDN sigmoid設定のTP受け渡し漏れと、idle defragの非同期H2D指示を共有arena再利用で壊す競合を修正した。後者は旧コードで実GPU再現→最小修正で解消→同じ12job完走を確認。CPU591 tests＋53 subtests合格。
+- Q MTPの最終結果はprefill約1.54–1.56倍、観測decodeは約0.99–1.04倍、8K+256全体時間は26.5–30.6%短縮。D/Mの2KではTPでdecodeが低下するため層分割を残す。D/Mの新しい自然入力セットでの1GPU再測定は含まず、1GPU基準はPhase1/2の記録を保持する。
+- [詳細・再現手順](rdna2_tp2.md)、[TP2固定設定](qwen38_v620_tp_config.json)。artifactは `/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp2`。
+
 ## 参照
 
 - [D: Qwen3-8B 4.0bpw](https://huggingface.co/turboderp/Qwen3-8B-exl3/tree/4.0bpw)

@@ -17,9 +17,9 @@ Dense 8B、MoE 30B、Qwen3.8でTP2の自然な日本語生成を確認。Qwen3.8
 
 Qの初回TPで出力が破綻した原因は、GatedRMSNormのTP export/importが`gate_activation`を落とし、sigmoidを既定SiLUに変えていたこと。本家の該当依存修正を取り込み、同じ入力の通常生成とMTP生成は自然な同一出力へ復旧した。比較したteacher-forced全vocab logitsはD/M各58位置、Q 27位置でtop-1一致、全値finite。Qのlogits relative L2は0.0201。これは全入力での完全一致を保証する試験ではない。
 
-## 性能（暫定）
+## 性能
 
-V620×2、batch=1、D/Mは2048入力、Qは8192入力、それぞれ256生成。自然な日本語/コードの固定token IDs、各課題warmup1+測定5。中央値。プロファイラなし。nativeは`lib-qwen38-reduction`（SHA256 `12859e31a1bd03b61ef5a1ba6725d020dca3557e3c206dcd10f791662ae4767a`）。
+V620×2、batch=1、D/Mは2048入力、Qは8192入力、それぞれ256生成。自然な日本語/コードの固定token IDs、各課題warmup1+測定5。中央値。Qは最終コード・単一HSAでのpaired比較、D/Mは初回の2K LS/TP比較。Qの両run間にはdocs変更だけで推論コード差分はない。プロファイラなし。nativeは`lib-qwen38-reduction`（SHA256 `12859e31a1bd03b61ef5a1ba6725d020dca3557e3c206dcd10f791662ae4767a`）。
 
 | モデル/課題 | LS prefill tok/s | TP prefill tok/s | LS decode tok/s | TP decode tok/s |
 |---|---:|---:|---:|---:|
@@ -27,10 +27,10 @@ V620×2、batch=1、D/Mは2048入力、Qは8192入力、それぞれ256生成。
 | Qwen3-8B 4bpw コード | 1130.0 | 1985.5 | 57.42 | 49.04 |
 | Qwen3-30B-A3B 3bpw 日本語 | 907.9 | 1587.0 | 68.23 | 39.48 |
 | Qwen3-30B-A3B 3bpw コード | 924.6 | 1613.1 | 67.97 | 39.25 |
-| Qwen3.8 + MTP3 / 8K 日本語 | 305.5 | 473.0 | 36.59 | 36.81 |
-| Qwen3.8 + MTP3 / 8K コード | 296.4 | 463.2 | 40.81 | 42.56 |
+| Qwen3.8 + MTP3 / 8K 日本語 | 304.7 | 469.6 | 37.38 | 36.90 |
+| Qwen3.8 + MTP3 / 8K コード | 297.6 | 465.6 | 40.87 | 42.55 |
 
-prefillはengineの入力処理時間、decodeは最初のtoken配送後の観測レートを使う。単発の遅い反復も除外していない（D TP日本語33.52 tok/s、LSコード43.95 tok/sの反復あり）。Q 8Kの入力処理から256生成終了までの中央値は日本語33.95→25.08秒、コード34.15→23.71秒。prefill改善が全体の短縮に効いている。engineの`time_generate`だけを使う従来decode指標ではQ日本語39.24→38.57、コード55.38→58.53 tok/sであり、配送・最終処理も含む上表と混同しない。MTP採用率中央値はLS/TPで日本語54.6%/52.6%、コード78.7%/83.5%。生成経路の分岐により出力や採用率が変わるため、実測の速度差をすべて通信・演算だけの差とは解釈しない。
+prefillはengineの入力処理時間、decodeは最初のtoken配送後の観測レートを使う。単発の遅い反復も除外していない（D TP日本語33.52 tok/s、LSコード43.95 tok/sの反復あり）。Q 8Kの入力処理から256生成終了までの中央値は日本語33.75→24.82秒（26.5%短縮）、コード33.98→23.56秒（30.6%短縮）。prefillは日本語1.54倍、コード1.56倍。decodeは日本語-1.3%、コード+4.1%で、prefill改善が全体の短縮に効いている。engineの`time_generate`だけを使う従来decode指標ではQ日本語40.18→38.65、コード55.56→59.30 tok/sであり、配送・最終処理も含む上表と混同しない。MTP採用率中央値はLS/TPで日本語54.6%/52.6%、コード78.7%/83.5%。生成経路の分岐により出力や採用率が変わるため、実測の速度差をすべて通信・演算だけの差とは解釈しない。
 
 Q 8K+64の別検証ではtarget57回/draft154回、rank0/1で3175/3431回の有限値チェックに合格。8K+256の全反復前後もEngram 7,968,789ページすべてのRAM常駐を`mincore`で確認。プロセス全体VmSwapだけで表の退避を推測しない。
 
@@ -43,7 +43,11 @@ artifact: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp2`。
 - `rccl-backend-rank{0,1}.json`: 実RCCL、strided FP32/非参加NaN/順序変更/uneven subset gather。
 - `d-logits-initial.json`, `m-logits-initial.json`, `q-logits-gatefix.json`: 同じ量子化重みのLS/TP比較。
 - `q-tp-smoke-gatefix.json`, `q-tp-mtp-smoke-gatefix.json`: 修正後の生成確認。
-- `d-{ls,tp}-2k-r1.json`: 固定入力の速度比較。
+- `d-{ls,tp}-2k-r1.json`, `m-{ls,tp}-2k-r1.json`: 固定入力の速度比較。
+- `q-{ls,tp}-mtp-8k-final.json`: 最終Q比較。入力hash/native SHA一致、双方の正常終了・電力復帰・RAM全ページ検査合格。
+- `q-tp-ar-8k-defragfix.json`: 同期修正だけを加えた12jobのAR再現試験。
+- `q-tp-mtp-batch2-final.json`, `q-tp-mtp-32k-final.json`: 最終機能検証。
+- `d-tp-trace-r4-summary.json`, `tp-lifecycle-probe.json`: 両GPUの並列実行とworker障害回収/再ロード。
 - 初回Q破綻結果、入力special-token設定を誤った初回D結果は合格データに使用していない。
 
 ## 長時間実行・後始末
