@@ -127,3 +127,21 @@ docker exec -e PYTHONPATH=/work/lib-qwen38-reduction:/src \
 ```
 
 `--ngram-ram`はEngramのCPU RAM常駐指定。投機デコーディング用のngram matchingとは別機能で、本harnessはdraft model無し・ngram matching無効を実体で検査する。32K検証はcache33280を使用。上の8704は512/2K/8K測定専用。
+
+### 修正後の正式性能測定
+
+`formal-auto-36.json` / `formal-peak-36.json`: 各36連続job、各条件warmup1+測定5、失敗0、全prefix cache miss、通常exit0。2 runの全入力token hash・モデルfingerprintが一致。batch1、EXL3 3.05bpw（head/ngram 5bpw）、Engram RAM、生成256token、投機生成なし、max_chunk2048、cache8704、予算[28,28]GiB。最後にGPU policyを両autoへ復元済み。集計は`formal-summary.json`。
+
+| 入力token | prefill auto / peak (tok/s) | decode auto / peak (tok/s) | 終了処理込みdecode auto / peak (tok/s) |
+|---|---:|---:|---:|
+| 512 | 259.26 / 261.22 | 24.88 / 36.41 | 22.92 / 32.27 |
+| 2048 | 413.81 / 398.23 | 24.80 / 36.10 | 22.84 / 31.54 |
+| 8192 | 388.66 / 374.87 | 24.59 / 36.14 | 23.57 / 34.32 |
+
+全て5回の中央値。decodeはgeneratorのtime_generateによる従来値、右列は最初のtoken受取から最後のtoken受取までの実測値で、最終iterate内の終了処理を含む。autoの最終token受取は0.4〜1.4秒かかり、この差を無視しない。8Kの実TTFT中央値はauto21.716秒/peak22.473秒。decode ITL p50/p95はauto40.38/40.96ms、peak27.50/27.81ms（各1275間隔）。
+
+profile_peakで8K decodeは約47%向上、終了処理込みでも約46%向上。8K prefillは約3.5%低下。生成重視ではprofile_peakが有利だが、設定を恒久変更せず測定後autoへ戻した。2K auto prefillはspread5.1%、2K decode jobのTTFTは18.4%と揺れがあり、その値から小さい改善差を論じない。8K prefillのspreadはauto0.71%/peak0.63%程度、decodeはauto2.28%/peak0.3%程度。
+
+両policyでboard VRAM sampled peakはGPU0約28.853GiB/GPU1約24.655GiB、torch peak約27.976/23.625GiB。終了時host RSSはauto38.37GiB/peak38.40GiB、推論区間major fault0。Engram表は30.40GiB、再帰checkpoint cacheの既定上限は別途4GiB。VRAM使用量はjobごとのsnapshotを保存し、増加はcontext/cacheと一時割当に対応する。
+
+gpu_metricsのGPU1 activityはauto run全体で99%固定だったため、この値だけでGPU稼働割合を推定しない。clock/power/VRAMは変動しており生値を保存。測定中の他GPUコンテナはsleepのみ（`formal-process-inventory.json`）。終了時の待ち時間はキャッシュ整理/RAM返却の計測で切り分ける。
