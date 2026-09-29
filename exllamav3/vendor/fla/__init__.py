@@ -12,6 +12,7 @@ from __future__ import annotations
 import torch
 
 from .utils import input_guard
+from .utils import device_lacks_bf16_dot
 from .l2norm import l2norm_fwd
 from .cumsum import chunk_local_cumsum
 from .gdn_chunk_fwd import chunk_gated_delta_rule_fwd_intra
@@ -23,6 +24,37 @@ from .gla_chunk import chunk_gla_fwd_o_gk
 
 # 1 / ln(2) as fla defines it (best fp32 approximation); gates are pre-scaled so the kernels use exp2
 RCP_LN2 = 1.4426950216
+
+
+def _promote_bf16_operands(q, k, v, beta, promote: bool) -> tuple:
+    """
+    gfx103x (RDNA2) compatibility step for chunk_gated_delta_rule: RDNA2 has no BF16 dot
+    instruction, so a Triton tl.dot on BF16 operands lowers to %llvm.amdgcn.fdot2.bf16.bf16,
+    fails LLVM selection and aborts the whole process (exit 134) while compiling the chunk
+    kernels below. On those parts the BF16 operands are run in FP32 instead: cast exactly the
+    tensors that are BF16 (a FP32 beta is already the target dtype), never FP16 -- downcasting
+    BF16 through FP16 would cut dynamic range. The casts are exact, and the internal tensors
+    (A, w, u, h, v_new) all inherit their dtype from these operands, so the whole chunk path
+    compiles as FP32. Nothing else is an operand here: the cumsum of the gates outputs FP32 by
+    contract whatever comes in, and the recurrent state is allocated FP32 in chunk_delta_h, so
+    gates and state keep their original FP32 semantics untouched.
+
+    Returns (q, k, v, beta, out_dtype) with out_dtype the ORIGINAL input dtype, which the caller
+    casts the result back to so callers always see what they passed in. `promote` is the cached
+    per-device probe's answer, taken as an argument to keep this a pure, testable cast step:
+    promote=False returns the inputs unchanged (the no-op every other platform and every FP16 /
+    FP32 call sees).
+    """
+    out_dtype = q.dtype
+    if not promote:
+        return q, k, v, beta, out_dtype
+    return (
+        q.float() if q.dtype == torch.bfloat16 else q,
+        k.float() if k.dtype == torch.bfloat16 else k,
+        v.float() if v.dtype == torch.bfloat16 else v,
+        beta.float() if beta.dtype == torch.bfloat16 else beta,
+        out_dtype,
+    )
 
 
 @input_guard
@@ -43,7 +75,9 @@ def chunk_gated_delta_rule(
 
     q, k: [B, T, H, K]; v: [B, T, HV, V] (HV a multiple of H); g: [B, T, HV] log-space decay;
     beta: [B, T, HV] post-sigmoid; initial_state: [B, HV, K, V] fp32 or None.
-    Returns (o [B, T, HV, V] in q's dtype, final_state [B, HV, K, V] fp32 or None).
+    Returns (o [B, T, HV, V] in the original input dtype, final_state [B, HV, K, V] fp32 or None).
+    On AMD RDNA2 (gfx103x), which cannot compile BF16 tl.dot, BF16 operands run the chunk path in
+    FP32 and the output is cast back; everywhere else the dtypes pass through unchanged.
     """
     H, HV = q.shape[2], v.shape[2]
     assert q.shape[2] == k.shape[2], "q and k must have the same number of heads"
@@ -51,6 +85,10 @@ def chunk_gated_delta_rule(
     assert chunk_size in (16, 32, 64), f"chunk_size must be 16, 32 or 64, got {chunk_size}"
     if scale is None:
         scale = k.shape[-1] ** -0.5
+    # see _promote_bf16_operands: narrow RDNA2-only workaround, probe cached per device index
+    q, k, v, beta, out_dtype = _promote_bf16_operands(
+        q, k, v, beta, q.dtype == torch.bfloat16 and device_lacks_bf16_dot(q.device)
+    )
     if use_qk_l2norm_in_kernel:
         q, _ = l2norm_fwd(q)
         k, _ = l2norm_fwd(k)
@@ -64,7 +102,7 @@ def chunk_gated_delta_rule(
         chunk_size = chunk_size,
     )
     o = chunk_fwd_o(q = q, k = k, v = v_new, h = h, g = g, scale = scale, chunk_size = chunk_size)
-    return o.to(q.dtype), final_state
+    return o.to(out_dtype), final_state
 
 
 @input_guard

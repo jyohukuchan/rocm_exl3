@@ -7,6 +7,7 @@ import contextlib
 import functools
 import inspect
 import os
+import re
 from collections import deque
 
 import torch
@@ -102,6 +103,42 @@ def check_shared_mem(arch: str = "none", tensor_idx: int = 0) -> bool:
     has to fit)"""
     try:
         return min(get_all_max_shared_mem()) >= _SHARED_MEM.get(arch, 102400)
+    except Exception:
+        return False
+
+
+# gfx103x (RDNA2) has no BF16 dot instruction: a Triton tl.dot on BF16 operands lowers to
+# llvm.amdgcn.fdot2.bf16.bf16, whose selection fails in LLVM and aborts the process (exit 134)
+# during kernel compilation. Callers use this to run such dots in FP32 on those parts only.
+_RDNA2_ARCH = re.compile(r"gfx103[0-9a-f]", re.IGNORECASE)
+
+
+def is_amd_rdna2_arch(gcn_arch_name: str) -> bool:
+    """True if a gcnArchName string identifies an RDNA2 (gfx103x) part. Matches on substring so
+    the feature / vendor suffixes ROCm builds append are tolerated
+    ("gfx1030", "gfx1030:sramecc+:xnack-", "gfx1030 (RADV NAVI21)")"""
+    return _RDNA2_ARCH.search(gcn_arch_name or "") is not None
+
+
+def device_lacks_bf16_dot(device: torch.device) -> bool:
+    """Whether `device` (the device of the tensors about to be processed, queried per its own
+    index -- not the current device and not device 0) cannot compile BF16 tl.dot: AMD RDNA2
+    (gfx103x) only. False everywhere else, so NVIDIA and RDNA3+ take no extra step. The
+    properties read is host-only (no launch, no sync, no CUDA-context work beyond lazy device
+    enumeration) and memoized per device index, so this costs a dict lookup per forward after
+    the first call"""
+    if not IS_AMD or device.type != "cuda":
+        return False
+    index = device.index
+    if index is None:
+        index = torch.cuda.current_device()
+    return _arch_lacks_bf16_dot(index)
+
+
+@functools.lru_cache(maxsize = 32)
+def _arch_lacks_bf16_dot(device_index: int) -> bool:
+    try:
+        return is_amd_rdna2_arch(torch.cuda.get_device_properties(device_index).gcnArchName)
     except Exception:
         return False
 
