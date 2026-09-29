@@ -669,6 +669,17 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
         rec_stats = {"chunks": 0, "states_created": 0, "states_released": 0,
                      "release_failures": [], "carry_notes": []}
 
+        def release_recurrent_state(state):
+            # The final input row need not be selected for harvesting. In that
+            # case there is no final .item() synchronization, so GPU work may
+            # still use this case's tensors when the next case clears its slot.
+            # Synchronize only at the case boundary, before releasing the state.
+            if split:
+                multi_gpu.sync_devices(torch, expect_idx)
+            else:
+                torch.cuda.synchronize(args.device)
+            state.free()
+
         def run_case(case, ev):
             ids_t = torch.tensor([case["ids"]], dtype = torch.long, device = ids_device)
             positions = case["positions"]
@@ -760,7 +771,7 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
                     harvest_row = lambda row: _harvest_row(torch, row, vocab),
                     params_for_chunk = params_for_chunk,
                     new_state = cache.get_new_state if recurrent else None,
-                    free_state = (lambda st: st.free()) if recurrent else None,
+                    free_state = release_recurrent_state if recurrent else None,
                     reset_pool = cache.reset_states if recurrent else None,
                     verify_carry = verify_carry if recurrent else None,
                     evidence = ev,

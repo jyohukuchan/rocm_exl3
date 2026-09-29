@@ -32,9 +32,11 @@ NLL_FORMAT = "rdna2-fullcorpus-nll/1"
 
 
 def nll_row(torch, logits_row, vocab, target):
-    """Stable FP64 NLL of one row; torch is passed in (never imported here), the
-    slice stays on the row's device, only the scalar crosses to Python."""
-    row = logits_row[:vocab].to(dtype = torch.float64)
+    """Stable FP64 NLL on CPU; keep diagnostic reductions off the inference GPU.
+
+    One vocabulary row is transiently copied, never accumulated or dumped.
+    """
+    row = logits_row[:vocab].to(device = "cpu").to(dtype = torch.float64)
     return float(torch.logsumexp(row, 0).item() - row[target].item())
 
 
@@ -220,6 +222,7 @@ def run(args) -> int:
         "created_utc": now_utc(), "repo_git_commit": a.get("repo_git_commit"),
         "semantics": "NLL at p = fp64 logsumexp(logits[p][:valid_vocab]) - logits[p][ids[p+1]]; "
                      "every position 0..len(ids)-2 per case, final unlabeled token excluded",
+        "diagnostic_arithmetic": "FP64 on CPU, one transient vocabulary row at a time",
         "evidence_status": "candidate full-corpus NLL/PPL for this execution identity only; "
                            "reference-vs-candidate judgement out of scope -- NOT ground truth",
         "source_manifest": {"path": src_path, "sha256": src["manifest_sha256"],
