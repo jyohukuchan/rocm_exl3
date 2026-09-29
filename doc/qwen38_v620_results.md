@@ -27,3 +27,19 @@
 - 既存GDNテストの小規模参照一致2件・ビット再現性3件が実V620で成功（5 passed、19 deselected）。Qwen3.8全体の正確性は未証明。
 - 重みの取得と専用検証harnessを準備中。現行top1 collectorは再帰モデルを拒否していたため、GDN状態とPLE履歴を正しく引き継ぐ検証経路が必要。
 - artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/qwen38`。取得metadataは`model-source.json`、GPU小規模検証は`gdn-existing.log`。
+
+### GDN prefillのRDNA2問題と候補比較
+
+Qwen実形状（batch1、key/value heads16/48、head_dim128）のBF16 vendored FLA prefillは、LLVMの`Cannot select: intrinsic llvm.amdgcn.fdot2.bf16.bf16`でprocess abort（exit134）。native recurrent kernelの実行後に発生し、ログは`gdn-shape-probe.log`。
+
+入力q/k/v/betaをFP32へ昇格したFLA経路は65tokenで成功。独立の逐次PyTorch参照に対して出力最大絶対誤差5.95e-5、状態1.94e-7。初回JIT約157.6秒はsteady推論時間とは分ける。
+
+さらにnative recurrentとFP32 chunkを65/512/2048tokenで比較し、全て出力・状態の`atol=0.003, rtol=0.02`判定に合格。2048tokenでの最大絶対差は出力1.22e-4、状態9.54e-7。両GPUのpolicyをprofile_peakへ揃えた単体予備測定（7回、allocation/conversion/hostsync込み）は以下。
+
+| tokens | native recurrent（中央値ms） | FP32 chunk（中央値ms） |
+|---|---:|---:|
+| 65 | 0.556 | 2.881 |
+| 512 | 4.052 | 9.219 |
+| 2048 | 16.206 | 36.133 |
+
+`gdn-backend-compare-peak.json`にraw samples、`gdn-peak-process.json`にexit0と元policy（両auto）への復元結果を保存。native経路をRDNA2 prefillにも使用する案は有望だが、これはモデル全体の速度改善・品質合格の証拠ではない。FP32互換経路と専用検証harnessの実装はOpenCodeへ委任中、diffレビューと実機再試験は未完了。
