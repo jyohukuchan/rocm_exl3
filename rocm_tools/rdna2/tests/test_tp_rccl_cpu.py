@@ -158,6 +158,9 @@ class FakeDist:
     def is_initialized(self):
         return self.initialized
 
+    def get_backend(self, group = None):
+        return self.init_kwargs["backend"] if self.init_kwargs else None
+
     def get_world_size(self, group = None):
         return self.state.world_size
 
@@ -543,6 +546,30 @@ class TestRCCLFakeCollectives(unittest.TestCase):
         self.assertEqual(len(st.sends), 1)          # one send/recv pair, no per-rank storm
         self.assertEqual(len(st.recvs), 1)
 
+    def test_gather_prevalidation_blocks_broadcast_traps_and_bad_lists(self):
+        active = [1, 0]
+        bes, fds, st, tl = make_split(self.rccl, active, out_dev = 0)
+        with use_dist(self.rccl, tl):
+            tl.set(fds[0])
+            with self.assertRaises(AssertionError):        # negative ldim
+                bes[0].gather(torch.zeros((1, 1, 1)), torch.zeros((1, 1, 1)), [1, 0], 0, [2, -1])
+            with self.assertRaises(AssertionError):        # duplicate participants
+                bes[0].gather(torch.zeros((1, 1, 1)), torch.zeros((1, 1, 2)), [0, 0], 0, [1, 1])
+            with self.assertRaises(ValueError):            # device outside the split
+                bes[0].gather(torch.zeros((1, 1, 1)), torch.zeros((1, 1, 1)), [8], 0, [1])
+            with self.assertRaises(ValueError):            # out_device outside the split
+                bes[0].gather(torch.zeros((1, 1, 1)), torch.zeros((1, 1, 1)), [0], 8, [1])
+            # Leading-shape mismatch on the output rank must fail, NOT implicitly
+            # broadcast the 1-row contribution across all 3 rows of the output.
+            with self.assertRaises(AssertionError):
+                bes[0].gather(torch.zeros((1, 1, 1)), torch.zeros((1, 3, 2)), [1, 0], 0, [1, 1])
+            # dtype mismatch vs the output buffer likewise fails locally
+            with self.assertRaises(AssertionError):
+                bes[0].gather(torch.zeros((1, 3, 1), dtype = torch.float64),
+                              torch.zeros((1, 3, 2)), [1, 0], 0, [1, 1])
+        self.assertEqual(st.sends, [], "prevalidation rejects leave no wire traffic")
+        self.assertEqual(st.recvs, [])
+
     def test_nonparticipant_and_bad_inputs_raise(self):
         active = [1, 9]                             # out dev 1 -> rank 0; dev 9 -> rank 1
         bes, fds, st, tl = make_split(self.rccl, active, out_dev = 1)
@@ -571,42 +598,32 @@ class TestRCCLFakeCollectives(unittest.TestCase):
                                  1: lambda be: be.fwd_barrier()})
         self.assertEqual(st.barriers.count(None), 2)
 
-    def test_close_bounded_idempotent_and_blocks_later_ops(self):
+    def test_close_destroys_owned_group_idempotent_and_blocks_later_ops(self):
         active = [0, 1]
         bes, fds, st, tl = make_split(self.rccl, active, out_dev = 1)
         self._run(bes, fds, tl, {0: lambda be: be.close(),
                                  1: lambda be: be.close()})
         bes[0].close()                              # repeat close is a no-op
-        self.assertEqual(st.destroy_count, 2)
-        close_tmos = [t for t in st.barriers if t is not None]
-        self.assertEqual(len(close_tmos), 2)        # one bounded drain barrier per rank
-        self.assertTrue(all(isinstance(t, timedelta) and t.total_seconds() <= 5.0
-                            for t in close_tmos))
+        self.assertEqual(st.destroy_count, 2)       # exactly one destroy per owned rank
+        self.assertEqual(st.barriers, [])           # no collective issued at teardown
         with use_dist(self.rccl, tl):
             tl.set(fds[0])
             with self.assertRaises(AssertionError):
                 bes[0].broadcast(torch.zeros(1), 0)
 
-    def test_close_survives_barrier_error(self):
+    def test_close_destroy_error_is_visible(self):
         bes, fds, st, tl = make_split(self.rccl, [0], out_dev = 0)
-        def boom(*a, **kw):
-            raise RuntimeError("simulated: peer already gone")
+        def boom_destroy(*a, **kw):
+            raise RuntimeError("simulated destroy failure")
         with use_dist(self.rccl, tl):
             tl.set(fds[0])
-            fds[0].barrier = boom
-            bes[0].close()
-        self.assertEqual(st.destroy_count, 1)       # teardown proceeds past a failing barrier
-
-    def test_close_survives_no_per_op_timeout_support(self):
-        bes, fds, st, tl = make_split(self.rccl, [0], out_dev = 0)
-        def legacy_barrier(*a, **kw):
-            if "timeout" in kw:
-                raise TypeError("barrier() got an unexpected keyword argument 'timeout'")
-        with use_dist(self.rccl, tl):
-            tl.set(fds[0])
-            fds[0].barrier = legacy_barrier
-            bes[0].close()
-        self.assertEqual(st.destroy_count, 1)       # legacy torch: skip barrier, still destroy
+            fds[0].destroy_process_group = boom_destroy
+            with self.assertRaises(RuntimeError):
+                bes[0].close()
+        # the failure was surfaced (not swallowed), and ownership flags moved so no
+        # second destroy attempt can fire behind the caller's back
+        self.assertTrue(bes[0].closed and not bes[0].pg_active)
+        bes[0].close()                              # repeat close: no-op
 
     def test_partial_init_failure_creates_no_group(self):
         rccl = self.rccl
@@ -623,32 +640,150 @@ class TestRCCLFakeCollectives(unittest.TestCase):
         self.assertFalse(fd.initialized)
         self.assertEqual(st.destroy_count, 0)
 
-    def test_warmup_failure_still_closes_cleanly(self):
+    def test_warmup_failure_destroys_owned_group_without_object_access(self):
         rccl = self.rccl
-        leaked = []
 
-        class Leak(rccl.TPBackendRCCL):
+        class FailWarmup(rccl.TPBackendRCCL):
             def mp_warmup_rccl(self):
-                leaked.append(self)
                 raise RuntimeError("simulated RCCL comm init failure")
 
         st = _GroupState()
         fd = FakeDist(st)
-        tl = ThreadLocalDist()
-        tl.set(fd)
-        with use_dist(rccl, tl):
+        with use_dist(rccl, fd):
             with self.assertRaises(RuntimeError):
-                Leak(device = 0, active_devices = [0], output_device = 0,
-                     init_method = "tcp://127.0.0.1:1", master = False, uuid = "u",
-                     timeout_s = 5.0, close_barrier_timeout_s = 2.0)
-        be = leaked[0]
-        self.assertTrue(fd.initialized)             # group exists despite ctor raising
-        self.assertTrue(be.pg_active and not be.closed)
-        with use_dist(rccl, tl):
-            be.close()
-            be.close()
-        self.assertEqual(st.destroy_count, 1)       # exactly one teardown
+                FailWarmup(device = 0, active_devices = [0], output_device = 0,
+                           init_method = "tcp://127.0.0.1:1", master = False, uuid = "u",
+                           timeout_s = 5.0)
+        # Real callers cannot reach the half-constructed object: cleanup must be
+        # automatic. Owned group destroyed, no leaked PG.
         self.assertFalse(fd.initialized)
+        self.assertEqual(st.destroy_count, 1)
+        # The next construction in this process succeeds and closes normally.
+        bes, fds, st2, tl = make_split(rccl, [0], out_dev = 0)
+        with use_dist(rccl, tl):
+            tl.set(fds[0])
+            bes[0].close()
+        self.assertEqual(st2.destroy_count, 1)
+
+    def test_warmup_failure_cleanup_error_does_not_mask_original(self):
+        rccl = self.rccl
+
+        class FailWarmup(rccl.TPBackendRCCL):
+            def mp_warmup_rccl(self):
+                raise RuntimeError("simulated RCCL comm init failure")
+
+        st = _GroupState()
+        fd = FakeDist(st)
+        def boom_destroy(*a, **kw):
+            raise RuntimeError("simulated destroy failure")
+        fd.destroy_process_group = boom_destroy
+        with use_dist(rccl, fd):
+            with self.assertRaises(RuntimeError) as cm:
+                FailWarmup(device = 0, active_devices = [0], output_device = 0,
+                           init_method = "tcp://127.0.0.1:1", master = False, uuid = "u",
+                           timeout_s = 5.0)
+        self.assertIn("comm init failure", str(cm.exception))   # original error survives
+
+    def test_foreign_matching_group_adopted_and_never_destroyed(self):
+        rccl = self.rccl
+        st = _GroupState()
+        fd = FakeDist(st)
+        fd.init_process_group("nccl", rank = 0, world_size = 1,
+                              init_method = "tcp://127.0.0.1:1", timeout = timedelta(seconds = 9))
+        with use_dist(rccl, fd):
+            be = rccl.TPBackendRCCL(device = 0, active_devices = [0], output_device = 0,
+                                    init_method = "tcp://127.0.0.1:1", master = False,
+                                    uuid = "u", timeout_s = 5.0)
+            self.assertFalse(be.pg_active)          # adopted, not owned
+            t = torch.tensor([FP32_PROBE])
+            be.broadcast(t, src_device = 0)         # usable over the adopted group
+            be.close()
+        self.assertTrue(fd.initialized)             # foreign group survived close
+        self.assertEqual(st.destroy_count, 0)
+        self.assertEqual(fd.init_kwargs["timeout"], timedelta(seconds = 9))  # untouched
+
+    def test_compound_backend_string_adoption(self):
+        rccl = self.rccl
+        st = _GroupState()
+        fd = FakeDist(st)
+        fd.init_process_group("cpu:gloo,cuda:nccl", rank = 0, world_size = 1,
+                              init_method = "tcp://127.0.0.1:1", timeout = timedelta(seconds = 9))
+        with use_dist(rccl, fd):
+            be = rccl.TPBackendRCCL(device = 0, active_devices = [0], output_device = 0,
+                                    init_method = "tcp://127.0.0.1:1", master = False,
+                                    uuid = "u", timeout_s = 5.0)   # wants "nccl"
+            self.assertFalse(be.pg_active)
+            be.close()
+        self.assertEqual(st.destroy_count, 0)
+        # ...but a "gloo"-requesting split is rejected against a cuda:nccl-only compound
+        st2 = _GroupState()
+        fd2 = FakeDist(st2)
+        fd2.init_process_group("cuda:nccl", rank = 0, world_size = 1,
+                               init_method = "tcp://127.0.0.1:1", timeout = timedelta(seconds = 9))
+        with use_dist(rccl, fd2):
+            with self.assertRaises(RuntimeError):
+                rccl.TPBackendRCCL(device = 0, active_devices = [0], output_device = 0,
+                                   init_method = "tcp://127.0.0.1:1", master = False,
+                                   uuid = "u", timeout_s = 5.0, dist_backend = "gloo")
+        self.assertTrue(fd2.initialized)
+        self.assertEqual(st2.destroy_count, 0)
+
+    def test_foreign_group_mismatch_rejected_intact(self):
+        rccl = self.rccl
+        # backend mismatch (foreign gloo vs required nccl)
+        st = _GroupState()
+        fd = FakeDist(st)
+        fd.init_process_group("gloo", rank = 0, world_size = 1,
+                              init_method = "tcp://127.0.0.1:1", timeout = timedelta(seconds = 9))
+        with use_dist(rccl, fd):
+            with self.assertRaises(RuntimeError):
+                rccl.TPBackendRCCL(device = 0, active_devices = [0], output_device = 0,
+                                   init_method = "tcp://127.0.0.1:1", master = False,
+                                   uuid = "u", timeout_s = 5.0)
+        self.assertTrue(fd.initialized)
+        self.assertEqual(st.destroy_count, 0)
+        # rank/world mismatch on a matching backend
+        st2 = _GroupState()
+        fd2 = FakeDist(st2)
+        fd2.init_process_group("nccl", rank = 1, world_size = 2,
+                               init_method = "tcp://127.0.0.1:1", timeout = timedelta(seconds = 9))
+        with use_dist(rccl, fd2):
+            with self.assertRaises(RuntimeError):
+                rccl.TPBackendRCCL(device = 0, active_devices = [0], output_device = 0,
+                                   init_method = "tcp://127.0.0.1:1", master = False,
+                                   uuid = "u", timeout_s = 5.0)
+        self.assertTrue(fd2.initialized)
+        self.assertEqual(st2.destroy_count, 0)
+
+    def test_timeout_default_env_and_explicit(self):
+        rccl = self.rccl
+
+        def constructed_timeout(**kw):
+            fd = FakeDist(_GroupState())
+            with use_dist(rccl, fd):
+                rccl.TPBackendRCCL(device = 0, active_devices = [0], output_device = 0,
+                                   init_method = "tcp://127.0.0.1:1", master = False,
+                                   uuid = "u", **kw)
+            return fd.init_kwargs["timeout"].total_seconds()
+
+        old = os.environ.pop("EXL3_TP_TIMEOUT_S", None)
+        try:
+            self.assertEqual(constructed_timeout(), 180.0)        # bounded cold-JIT default
+            self.assertEqual(constructed_timeout(timeout_s = 33.0), 33.0)  # explicit wins
+            os.environ["EXL3_TP_TIMEOUT_S"] = "45"
+            self.assertEqual(constructed_timeout(), 45.0)
+            for bad in ("abc", "0", "-5", "inf", "nan", ""):
+                os.environ["EXL3_TP_TIMEOUT_S"] = bad
+                self.assertEqual(constructed_timeout(), 180.0,
+                                 f"EXL3_TP_TIMEOUT_S={bad!r} must fall back to the default")
+            with self.assertRaises(AssertionError):               # explicit garbage rejected
+                constructed_timeout(timeout_s = float("nan"))
+            with self.assertRaises(AssertionError):
+                constructed_timeout(timeout_s = -1.0)
+        finally:
+            os.environ.pop("EXL3_TP_TIMEOUT_S", None)
+            if old is not None:
+                os.environ["EXL3_TP_TIMEOUT_S"] = old
 
 
 # ---------------------------------------------------------------------------
