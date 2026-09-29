@@ -1,5 +1,5 @@
 {
-  "purpose": "Validated Qwen3.8 Flash Next MTP settings; pass explicitly to the runner/API (not auto-loaded).",
+  "purpose": "Qwen3.8 Flash Next MTP settings with K5/V4 KV cache selected; pass explicitly to the runner/API (not auto-loaded). K5/V4 selected per user; new measurements pending.",
   "model_directory": "/work/models/qwen38-flash-next-exl3-3.05bpw",
   "model_revision": "69e33439ae950f17bcbe95c98f117d80f759ab6d",
   "target_quantization": "EXL3 3.05bpw; head5; ng5",
@@ -46,10 +46,22 @@
   },
   "cache_tokens_example_batch1_8k": 8704,
   "max_chunk_size": 2048,
+  "cache_kv": {
+    "layer_type": "CacheLayer_quant",
+    "k_bits": 5,
+    "v_bits": 4,
+    "applies_to": "target AND draft (same kwargs)",
+    "qsa_auto_map": "QSA attention auto-maps to CacheLayer_qsa_quant; raw_k/pooled indexer planes remain FP16",
+    "gdn_state": "GDN recurrent state is not KV; stays FP32/BF16",
+    "diagnostic_override": "--cache-fp16 only; never the default",
+    "evidence": "TP batch1: actual target 12 QSA quant layers + draft 1 layer, all K5/V4, 8K+64 JA/code finite; AR 8K+256 x12 complete. Other new measurements pending.",
+    "evidence_directory": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp-decode-opt"
+  },
   "energy_policy": "User-selected energy saving; not a response to cooling or 400W capability limits.",
   "caveats": [
     "Speculative verification still uses the unchanged target model; acceptance and speed depend on prompt/sampling.",
     "Default host memory reserve guard stays enabled; ZFS ARC can trigger it despite reclaimable cache. Diagnostic guard overrides are recorded per run.",
     "Use the bare HSA library name in LD_PRELOAD on this container; the absolute .so.1 spelling also loaded the Torch-bundled HSA runtime. Loaded paths are audited by tp_run."
-  ]
+  ],
+  "historical_validation_cache": "FP16: earlier MTP/TP reports, including 32K and batch2 checks, predate the K5/V4 selection; they are not K5/V4 evidence."
 }

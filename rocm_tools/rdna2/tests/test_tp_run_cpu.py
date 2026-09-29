@@ -4,13 +4,19 @@
 No torch, no exllamav3, no GPU. Frozen-prompt validation, id hashing and
 burst-aware delivery math are SHARED objects with the reviewed qwen_mtp_run
 helpers (asserted here, not re-duplicated); this file adds the TP-specific
-surface: parser/validation, plan-summary and cache-capacity math, the worker
-audit function driven against fake local_context dicts (picklable output,
-actual device/plan/expert/ngram/geometry capture), the parent aggregator
+surface: parser/validation, plan-summary and cache-capacity math, the KV
+cache selection surface (K5/V4 quant defaults, 2..8 range, explicit
+--cache-fp16 diagnostic, requested-vs-OBSERVED cache audit over the worker
+records -- silent FP16 fallback, wrong bits, undemonstrated target KV and
+class-less metadata all fail closed, while a zero-KV GDN draft is recorded),
+the worker audit function driven against fake local_context dicts (picklable
+output, actual device/plan/expert/ngram/geometry capture incl. cache-layer
+class/k_bits/v_bits and named qk/qv/sk/sv tensors), the parent aggregator
 (stub-exclusion, wrong-device, duplicate-RAM-table and disk-offload
 rejection, tableless no-op, per-PID memory handled once, pseudo output rank
 == parent PID), and TP-vs-LS load dispatch plus no-MTP model behavior on the
-fake engine stack built by test_qwen_mtp_run_cpu (load kwargs, dispatch
+fake engine stack built by test_qwen_mtp_run_cpu (load kwargs, Cache kwargs
+for target+draft, dispatch
 sequence, finite-hook install/collect ordering, fail-closed audits, partial
 init worker drain, cache-hit/short-output rejection, power-context restore).
 
@@ -109,6 +115,33 @@ class FModule:
 class FCacheLayer:
     def __init__(self, k, v, device):
         self.k, self.v, self.device = k, v, device
+
+
+class CacheLayer_qsa_quant:
+    """NAMED EXACTLY LIKE the engine's quantized QSA cache layer (the audit
+    reads type(cl).__name__); a test-local fake, never installed into any
+    package namespace. Packed int32 qk/qv, fp16 group scales sk/sv, FP16
+    QSA planes, and the k_bits/v_bits the audit must observe."""
+
+    def __init__(self, device="cuda:0", k_bits=5, v_bits=4):
+        self.qk = FT(values=(1,) * 8, device=device, dtype="torch.int32", esize=4)
+        self.qv = FT(values=(1,) * 8, device=device, dtype="torch.int32", esize=4)
+        self.sk = FT(values=(1,) * 8, device=device)
+        self.sv = FT(values=(1,) * 8, device=device)
+        self.raw_k = FT(values=(1,), device=device)
+        self.pooled = FT(values=(1,), device=device)
+        self.k_bits, self.v_bits = k_bits, v_bits
+        self.device = device
+
+
+class CacheLayer_fp16:
+    """NAMED EXACTLY LIKE the engine's fp16 cache layer for the diagnostic
+    baseline; plain k/v tensors, no bits attributes."""
+
+    def __init__(self, device="cuda:0"):
+        self.k = FT(device=device)
+        self.v = FT(device=device)
+        self.device = device
 
 
 class FState:
@@ -229,7 +262,39 @@ class ReuseAndParserTests(unittest.TestCase):
         self.assertFalse(a.dynamic_draft)
         self.assertFalse(a.validate_finite)
         self.assertEqual(a.draft_confidence, 0.4)
+        # K5/V4 quant KV is the DEFAULT selected policy; FP16 is never a default.
+        self.assertEqual((a.cache_k_bits, a.cache_v_bits), (5, 4))
+        self.assertFalse(a.cache_fp16)
+        req = tr.requested_cache(a)
+        self.assertEqual(req["policy"], "quant")
+        self.assertEqual(req["layer_type"], "CacheLayer_quant")
         tr.validate_args(a)
+
+    def test_cache_bits_range_validation(self):
+        base = tr.build_parser().parse_args(self.REQUIRED)
+        for over in ({"cache_k_bits": 1}, {"cache_k_bits": 9}, {"cache_v_bits": 0},
+                     {"cache_v_bits": -3}, {"cache_k_bits": 12}):
+            patched = argparse.Namespace(**(vars(base) | over))
+            with self.subTest(**over), self.assertRaisesRegex(ValueError, "2\\.\\.8"):
+                tr.validate_args(patched)
+        for over in ({"cache_k_bits": 2, "cache_v_bits": 2},
+                     {"cache_k_bits": 8, "cache_v_bits": 8},
+                     {"cache_k_bits": 5, "cache_v_bits": 4}):
+            tr.validate_args(argparse.Namespace(**(vars(base) | over)))
+
+    def test_cache_fp16_override_is_valid_but_takes_no_bit_overrides(self):
+        base = tr.build_parser().parse_args(self.REQUIRED + ["--cache-fp16"])
+        self.assertTrue(base.cache_fp16)
+        tr.validate_args(base)
+        req = tr.requested_cache(base)
+        self.assertEqual(req["policy"], "fp16-diagnostic")
+        self.assertEqual(req["layer_type"], "CacheLayer_fp16")
+        self.assertIsNone(req["k_bits"])
+        # explicit bits alongside --cache-fp16 are a contradiction, never ignored
+        for over in ({"cache_k_bits": 4}, {"cache_v_bits": 8}):
+            patched = argparse.Namespace(**(vars(base) | over))
+            with self.subTest(**over), self.assertRaisesRegex(ValueError, "diagnostic"):
+                tr.validate_args(patched)
 
     def test_execution_and_mode_required(self):
         for drop in (["--execution", "tp"], ["--mode", "mtp"]):
@@ -350,6 +415,37 @@ class WorkerAuditTests(unittest.TestCase):
         self.assertEqual(rec["modules"][0]["device_index"], 5)
         audit = tr.aggregate_tp_audit([rec], [0, 1], 1, os.getpid())
         self.assertIn("model.layers.9", " ".join(audit["problems"]))
+
+    def test_worker_audit_captures_quant_cache_cls_bits_and_named_tensors(self):
+        # A REAL quantized-QSA fake layer must surface its actual class, bits and
+        # packed qk/qv/sk/sv tensors (not anonymous t0..t3 from get_tensors()).
+        q = CacheLayer_qsa_quant(device="cuda:1", k_bits=5, v_bits=4)
+        attn = FModule("model.layers.1", 1, caps={"kv_cache": True}, cache_layers=[q])
+        with fake_worker_torch():
+            rec = tr.tp_audit_rank(audit_ctx(1, [attn]))
+        g = rec["modules"][0]["cache_layers"]
+        self.assertEqual(g["layers_total"], 1)
+        self.assertEqual(g["cls_counts"], {"CacheLayer_qsa_quant": 1})
+        self.assertEqual(g["bits_variants"], {"CacheLayer_qsa_quant": [[5, 4]]})
+        s = g["sample"][0]
+        self.assertEqual((s["cls"], s["k_bits"], s["v_bits"]), ("CacheLayer_qsa_quant", 5, 4))
+        t = s["tensors"]
+        self.assertEqual(sorted(t), ["pooled", "qk", "qv", "raw_k", "sk", "sv"])
+        self.assertEqual(t["qk"]["bytes"], 8 * 4)                    # int32 packed keys
+        self.assertEqual(t["qv"]["shape"], [8])
+        self.assertEqual(t["sk"]["bytes"], 8 * 2)                    # fp16 group scales
+        self.assertEqual(t["raw_k"]["dtype"], "torch.float16")       # QSA planes stay FP16
+        self.assertEqual(g["bytes_total"], 8 * 4 * 2 + 8 * 2 * 2 + 2 + 2)
+        json.dumps(rec)
+
+    def test_fp16_style_layer_keeps_multi_gpu_resolver(self):
+        cl = FCacheLayer(FT(device="cuda:0"), FT(device="cuda:0"), device="cuda:0")
+        self.assertEqual(sorted(tr._cache_layer_audit_tensors(cl)), ["k", "v"])
+        g = tr._layer_geometry([cl], tr._cache_layer_audit_tensors)
+        self.assertEqual(g["cls_counts"], {"FCacheLayer": 1})
+        self.assertEqual(g["bits_variants"], {"FCacheLayer": [[None, None]]})
+        q = tr._layer_geometry([CacheLayer_qsa_quant()], tr._cache_layer_audit_tensors)
+        self.assertEqual(q["cls_counts"], {"CacheLayer_qsa_quant": 1})
 
     def test_finite_hook_installer_checks_only_returned_tensors(self):
         class Counter:
@@ -537,6 +633,142 @@ class MincoreResidencyTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Requested-vs-observed KV cache policy (pure data over real geometry dicts)
+# ---------------------------------------------------------------------------
+
+def req_quant(k=5, v=4):
+    return tr.requested_cache(types.SimpleNamespace(cache_fp16=False,
+                                                    cache_k_bits=k, cache_v_bits=v))
+
+
+def req_fp16():
+    return tr.requested_cache(types.SimpleNamespace(cache_fp16=True,
+                                                    cache_k_bits=5, cache_v_bits=4))
+
+
+def quant_geos(**kw):
+    return [tr._layer_geometry([CacheLayer_qsa_quant(**kw)], tr._cache_layer_audit_tensors)]
+
+
+def fp16_geos():
+    return [tr._layer_geometry([CacheLayer_fp16()], tr._cache_layer_audit_tensors)]
+
+
+class CacheAlignmentTests(unittest.TestCase):
+    def test_empty_modules_do_not_hide_known_cache_bytes(self):
+        quant = quant_geos()
+        empty = tr._layer_geometry([], tr._cache_layer_audit_tensors)
+        observed = tr._merge_cache_geometries([empty, *quant, empty])
+        self.assertEqual(observed["layers_total"], 1)
+        self.assertEqual(observed["bytes_total"], quant[0]["bytes_total"])
+        self.assertEqual(len(observed["representative_layers"]), 1)
+
+    def test_matching_k5_v4_quant_passes(self):
+        probs, notes, obs = tr.validate_cache_alignment(
+            quant_geos(device="cuda:0", k_bits=5, v_bits=4), req_quant(),
+            label="target full-attention KV", require_kv=True)
+        self.assertEqual(probs, [])
+        self.assertEqual(notes, [])
+        self.assertEqual(obs["layers_total"], 1)
+        self.assertEqual(obs["cls_counts"], {"CacheLayer_qsa_quant": 1})
+        self.assertEqual(obs["bits_variants"], {"CacheLayer_qsa_quant": [[5, 4]]})
+        self.assertGreater(obs["bytes_total"], 0)
+        rep0 = obs["representative_layers"][0]              # actual qk/qv/sk/sv geometry
+        self.assertEqual((rep0["tensors"]["qk"]["bytes"], rep0["tensors"]["qk"]["dtype"]),
+                         (32, "torch.int32"))
+        self.assertEqual(rep0["tensors"]["qv"]["shape"], [8])
+        self.assertEqual(rep0["tensors"]["sv"]["bytes"], 16)
+        self.assertEqual(rep0["tensors"]["raw_k"]["bytes"], 2)   # FP16 planes retained
+
+    def test_fp16_layers_under_quant_request_are_a_silent_fallback(self):
+        probs, _, obs = tr.validate_cache_alignment(fp16_geos(), req_quant(),
+                                                    label="target full-attention KV",
+                                                    require_kv=True)
+        self.assertTrue(probs)
+        self.assertIn("silent fallback", probs[0])
+        self.assertIn("CacheLayer_fp16", probs[0])
+        self.assertEqual(obs["request"]["k_bits"], 5)
+
+    def test_unknown_class_under_quant_request_fails(self):
+        g = quant_geos()[0]
+        g["cls_counts"] = {"CacheLayer_exotic": 1}
+        g["bits_variants"] = {"CacheLayer_exotic": [[5, 4]]}
+        probs, _, _ = tr.validate_cache_alignment([g], req_quant(),
+                                                  label="target", require_kv=True)
+        self.assertIn("CacheLayer_exotic", " ".join(probs))
+        self.assertIn("silent fallback", " ".join(probs))
+
+    def test_bit_width_mismatch_fails(self):
+        probs, _, _ = tr.validate_cache_alignment(
+            quant_geos(k_bits=8, v_bits=4), req_quant(5, 4),
+            label="target", require_kv=True)
+        self.assertIn("k_bits=8 v_bits=4, requested 5/4", " ".join(probs))
+
+    def test_quant_class_without_bits_evidence_fails(self):
+        g = quant_geos()[0]
+        g["bits_variants"] = {}
+        probs, _, _ = tr.validate_cache_alignment([g], req_quant(),
+                                                  label="target", require_kv=True)
+        self.assertIn("no k_bits/v_bits evidence", " ".join(probs))
+        g["bits_variants"] = {"CacheLayer_qsa_quant": [[5, None]]}
+        probs, _, _ = tr.validate_cache_alignment([g], req_quant(),
+                                                  label="target", require_kv=True)
+        self.assertIn("without k_bits/v_bits evidence", " ".join(probs))
+
+    def test_layers_without_any_class_metadata_fail(self):
+        probs, _, _ = tr.validate_cache_alignment(
+            [{"layers_total": 3, "bytes_total": None, "cls_counts": {},
+              "bits_variants": {}, "sample": []}], req_quant(),
+            label="target", require_kv=True)
+        self.assertIn("class/bits metadata", " ".join(probs))
+
+    def test_zero_kv_target_must_be_demonstrated_but_draft_may_be_empty(self):
+        empty = [{"layers_total": 0, "bytes_total": None, "cls_counts": {},
+                  "bits_variants": {}, "sample": []}]
+        probs, notes, _ = tr.validate_cache_alignment(empty, req_quant(),
+                                                      label="target", require_kv=True)
+        self.assertIn("must be demonstrated", " ".join(probs))
+        probs, notes, _ = tr.validate_cache_alignment([], req_quant(),
+                                                     label="draft", require_kv=False)
+        self.assertEqual(probs, [])
+        self.assertIn("zero KV cache layers", " ".join(notes))
+        self.assertIn("not", " ".join(notes))    # recorded, never fabricated
+
+    def test_run_level_audit_spans_target_and_draft(self):
+        probs, notes, obs = tr.run_cache_runtime_audit(
+            req_quant(), quant_geos(device="cuda:0"), [])
+        self.assertEqual(probs, [])
+        self.assertEqual(obs["target"]["cls_counts"], {"CacheLayer_qsa_quant": 1})
+        self.assertEqual(obs["draft"]["layers_total"], 0)
+        self.assertEqual(len(notes), 1)
+        probs, _, _ = tr.run_cache_runtime_audit(req_quant(), [], quant_geos())
+        self.assertIn("target full-attention KV", " ".join(probs))
+
+    def test_fp16_diagnostic_baseline_accepts_fp16_layers_only(self):
+        probs, notes, obs = tr.validate_cache_alignment(fp16_geos(), req_fp16(),
+                                                        label="target", require_kv=True)
+        self.assertEqual(probs, [])
+        self.assertEqual(obs["cls_counts"], {"CacheLayer_fp16": 1})
+        probs, _, _ = tr.validate_cache_alignment(quant_geos(), req_fp16(),
+                                                  label="target", require_kv=True)
+        self.assertIn("diagnostic FP16 baseline requested", " ".join(probs))
+        g = fp16_geos()[0]
+        g["bits_variants"] = {"CacheLayer_fp16": [[5, 4]]}    # impossible but caught
+        probs, _, _ = tr.validate_cache_alignment([g], req_fp16(),
+                                                  label="target", require_kv=True)
+        self.assertIn("reports k_bits=5 v_bits=4", " ".join(probs))
+
+    def test_merge_accumulates_across_workers(self):
+        geos = quant_geos(device="cuda:0") + quant_geos(device="cuda:1", k_bits=8)
+        probs, _, obs = tr.validate_cache_alignment(geos, req_quant(),
+                                                    label="target", require_kv=True)
+        self.assertIn("k_bits=8", " ".join(probs))
+        self.assertEqual(obs["layers_total"], 2)
+        self.assertEqual(obs["cls_counts"], {"CacheLayer_qsa_quant": 2})
+        self.assertEqual(obs["bits_variants"], {"CacheLayer_qsa_quant": [[5, 4], [8, 4]]})
+
+
+# ---------------------------------------------------------------------------
 # Parent-side aggregation policy (pure data)
 # ---------------------------------------------------------------------------
 
@@ -552,10 +784,14 @@ def mod_rec(key, device, *, stub=False, weight=True, heads=0, experts=0,
     if experts:
         facts["num_local_experts"] = experts
     empty_geom = {"layers_total": 0, "bytes_total": None, "sample": []}
+    if cache_layers is None:
+        # Non-stub ranks DEMONSTRATE one actually-loaded K5/V4 layer, exactly
+        # like the real workers' tp_audit_rank records; stubs own nothing.
+        cache_layers = dict(empty_geom) if stub else qgeom(device)
     return {"key": key, "type": "X", "device": f"cuda:{device}", "device_index": device,
             "caps": {}, "transformer": not stub, "kv_cache_modules": 0,
             "recurrent_cache_modules": 0,
-            "cache_layers": cache_layers or dict(empty_geom),
+            "cache_layers": cache_layers,
             "recurrent_layers": recurrent_layers or dict(empty_geom),
             "facts": facts}
 
@@ -566,6 +802,26 @@ def geom(device, cl_device="cuda:0", tensors=None):
                         "n_tensors": 2,
                         "tensors": tensors or {"k": {"device": cl_device},
                                                "v": {"device": cl_device}}}]}
+
+
+def qgeom(device=0, cls="CacheLayer_qsa_quant", bits=(5, 4)):
+    """Canned cache_layers geometry for ONE actually-loaded K5/V4 layer, in the
+    shape _layer_geometry now emits (uncapped cls_counts/bits_variants plus a
+    representative sample with the packed qk/qv/sk/sv tensors)."""
+    dev = f"cuda:{device}"
+    return {"layers_total": 1, "bytes_total": 96,
+            "cls_counts": {cls: 1},
+            "bits_variants": {cls: [list(bits)] if bits else [[None, None]]},
+            "sample": [{"device": dev, "device_index": device, "cls": cls,
+                        "k_bits": bits[0] if bits else None,
+                        "v_bits": bits[1] if bits else None, "n_tensors": 6,
+                        "tensors": {n: {"device": dev} for n in
+                                    ("qk", "qv", "sk", "sv", "raw_k", "pooled")}}]}
+
+
+def fgeom(device=0):
+    """Canned geometry for one FP16 cache layer (diagnostic baseline records)."""
+    return qgeom(device=device, cls="CacheLayer_fp16", bits=None)
 
 
 def _dev(s):
@@ -873,7 +1129,8 @@ NGRAM_SHELL_KEY = "model.ple.ngram"
 
 def install_tp_stack(log, *, with_mtp=True, supports_tp=True, dispatch=None,
                      load_exc_cls=None, gen_cls=None, ngram_shell=True, active=(0, 1),
-                     children=None, destroy_exc=None, mp_conns=None, ngram_tables=False):
+                     children=None, destroy_exc=None, mp_conns=None, ngram_tables=False,
+                     kv="quant", kv_bits=(5, 4), cache_strips_layer_type=False):
     saved, saved_attr, pkg = tqmr._install_fake_stack(log)
     exl = sys.modules["exllamav3"]
     torch = sys.modules["torch"]
@@ -883,6 +1140,44 @@ def install_tp_stack(log, *, with_mtp=True, supports_tp=True, dispatch=None,
     torch.cuda.max_memory_allocated = lambda d: 222 * (idx(d) + 1)
     torch.cuda.memory_reserved = lambda d: 555 * (idx(d) + 1)
     base_model = exl.Model
+
+    # Engine-side layer CLASSES as run() imports them (`from exllamav3.cache
+    # import CacheLayer_fp16, CacheLayer_quant`, the verified real exports).
+    # The fakes carry the same names; identity, not name, is what the
+    # construction check compares, so the objects below must also be what the
+    # fake Cache stores back.
+    engine_quant = type("CacheLayer_quant", (), {})
+    engine_fp16 = type("CacheLayer_fp16", (), {})
+    cache_mod = types.ModuleType("exllamav3.cache")
+    cache_mod.CacheLayer_quant, cache_mod.CacheLayer_fp16 = engine_quant, engine_fp16
+    saved["exllamav3.cache"] = sys.modules.get("exllamav3.cache")
+    sys.modules["exllamav3.cache"] = cache_mod
+    exl.cache = cache_mod
+
+    base_cache = exl.Cache
+
+    class RecordingCache(base_cache):
+        """Minimal extension of the qwen FakeCache: accepts and records the
+        layer_type/k_bits/v_bits kwargs run() must pass IDENTICALLY to target
+        and draft, and reports the layer type it ACTUALLY constructed."""
+        def __init__(self, model, max_num_tokens=0, max_batch_size=1, max_history=0,
+                     layer_type=None, **bits):
+            resolved = (engine_fp16 if cache_strips_layer_type
+                        else layer_type or engine_fp16)
+            log.append(("cache", getattr(model, "component", "?"),
+                        {"layer_type": resolved.__name__,
+                         "k_bits": bits.get("k_bits"), "v_bits": bits.get("v_bits")}))
+            super().__init__(model, max_num_tokens=max_num_tokens,
+                             max_batch_size=max_batch_size, max_history=max_history)
+            self.layer_type = resolved
+
+    exl.Cache = RecordingCache
+
+    def kv_cache_layers():
+        return {"quant": [CacheLayer_qsa_quant(device="cuda:0",
+                                              k_bits=kv_bits[0], v_bits=kv_bits[1])],
+                "fp16": [CacheLayer_fp16(device="cuda:0")],
+                "none": []}[kv]
 
     class TPModel(base_model):
         DISPATCH = dict(dispatch or {})
@@ -907,10 +1202,20 @@ def install_tp_stack(log, *, with_mtp=True, supports_tp=True, dispatch=None,
             # CLI captures expected n-gram keys. LS tests additionally give it a
             # real CPU table tensor; TP tests keep empty shells so the stray-
             # parent-table scan stays clean while the ranks carry the owner.
-            self.modules = ([FModule("model.ple", 1, children=[
-                                FNgram(NGRAM_SHELL_KEY, "fp16_ram",
-                                       tables=[FT(device="cpu")] if ngram_tables else [])])]
-                            if ngram_shell and component == "text" else [])
+            # The text component also carries one attention module whose
+            # cache_layers are the ACTUAL layer objects the parent-side
+            # (_cache_geometries_from_model) audit reads; the mtp draft stays
+            # GDN-only (zero KV) on purpose.
+            shells = []
+            layers = kv_cache_layers() if component == "text" else []
+            if layers:
+                shells.append(FModule("model.layers.0", 0, caps={"kv_cache": True},
+                                      cache_layers=layers))
+            if ngram_shell and component == "text":
+                shells.append(FModule("model.ple", 1, children=[
+                    FNgram(NGRAM_SHELL_KEY, "fp16_ram",
+                           tables=[FT(device="cpu")] if ngram_tables else [])]))
+            self.modules = shells
 
         def load(self, **kw):
             super().load(**kw)
@@ -954,7 +1259,8 @@ def install_tp_stack(log, *, with_mtp=True, supports_tp=True, dispatch=None,
     mg = sys.modules["rocm_tools.rdna2.multi_gpu"]
     # Real geometry/ngram walkers (CPU-safe); placement audit stays the canned
     # tqmr stub -- the real auditor against LS fake models is qwen's suite's job.
-    for name in ("device_memory_snapshot", "find_ngram_modules", "describe_ngram_module"):
+    for name in ("device_memory_snapshot", "find_ngram_modules", "describe_ngram_module",
+                 "_iter_module_tree", "_cache_layer_tensors"):
         setattr(mg, name, getattr(real_multi_gpu, name))
 
     def ls_collect_ngram(model, require_ram):
@@ -1041,6 +1347,24 @@ class RunDispatchTests(unittest.TestCase):
                 self.assertEqual(rep["tp_audit"]["cpu_helper"]["backend"], "TPBackendRCCL")
                 self.assertEqual(rep["generator"]["mode"], "mtp")
                 self.assertTrue(rep["generator"]["mtp_draft"])
+                # ---- K5/V4 runtime cache audit: requested == actually loaded ----
+                self.assertEqual([e for e in log if e[0] == "cache"],
+                                 [("cache", "text", {"layer_type": "CacheLayer_quant",
+                                                     "k_bits": 5, "v_bits": 4}),
+                                  ("cache", "mtp", {"layer_type": "CacheLayer_quant",
+                                                    "k_bits": 5, "v_bits": 4})])
+                self.assertEqual(rep["cache"]["requested"]["policy"], "quant")
+                self.assertEqual((rep["cache"]["requested"]["k_bits"],
+                                  rep["cache"]["requested"]["v_bits"]), (5, 4))
+                obs = rep["cache"]["observed"]
+                self.assertEqual(obs["target"]["layers_total"], 2)      # both ranks proved
+                self.assertEqual(obs["target"]["cls_counts"], {"CacheLayer_qsa_quant": 2})
+                self.assertEqual(obs["target"]["bits_variants"],
+                                 {"CacheLayer_qsa_quant": [[5, 4]]})
+                self.assertEqual(obs["draft"]["layers_total"], 0)       # GDN-only draft
+                self.assertTrue(any("zero KV cache layers" in n for n in rep["cache"]["notes"]))
+                self.assertEqual(rep["cache"]["observed_post_inference"]["target"]
+                                 ["cls_counts"], {"CacheLayer_qsa_quant": 2})
                 # actual child peaks were queried post-inference BEFORE unload...
                 self.assertEqual([r["device"] for r in rep["tp_final_audit"]["ranks"]], [0, 1])
                 self.assertEqual(rep["peak_allocated_bytes"]["scope"], "parent_process_only")
@@ -1089,6 +1413,22 @@ class RunDispatchTests(unittest.TestCase):
                 self.assertTrue(post[0]["all_resident"])
                 self.assertNotIn("tp_audit", rep)
                 self.assertNotIn("scope", rep["peak_allocated_bytes"])  # plain dict as before
+                # LS observes the SAME real cache objects parent-side
+                self.assertEqual([e for e in log if e[0] == "cache"],
+                                 [("cache", "text", {"layer_type": "CacheLayer_quant",
+                                                     "k_bits": 5, "v_bits": 4}),
+                                  ("cache", "mtp", {"layer_type": "CacheLayer_quant",
+                                                    "k_bits": 5, "v_bits": 4})])
+                obs = rep["cache"]["observed"]
+                self.assertEqual(obs["target"]["cls_counts"], {"CacheLayer_qsa_quant": 1})
+                self.assertEqual(obs["target"]["bits_variants"],
+                                 {"CacheLayer_qsa_quant": [[5, 4]]})
+                self.assertEqual(obs["target"]["bytes_total"], 100)  # qk+qv int32, sk+sv+planes fp16
+                self.assertEqual(obs["target"]["representative_layers"][0]
+                                 ["tensors"]["qk"]["shape"], [8])
+                self.assertEqual(obs["target"]["representative_layers"][0]["cls"],
+                                 "CacheLayer_qsa_quant")
+                self.assertTrue(any("zero KV cache layers" in n for n in rep["cache"]["notes"]))
             finally:
                 helper.stop()
 
@@ -1291,6 +1631,93 @@ class RunDispatchTests(unittest.TestCase):
             finally:
                 TamperGen.TAMPER = None
                 helper.stop()
+
+    def test_cache_fp16_diagnostic_baseline_passes_when_layers_are_fp16(self):
+        with tempfile.TemporaryDirectory() as td:
+            helper = tqmr.FakeHelper(Path(td) / "power.sock")
+            helper.start()
+            try:
+                out = str(Path(td) / "fp16.json")
+                code, rep, log = self._case("ls", "mtp", str(Path(td) / "power.sock"), out,
+                                            extra=["--cache-fp16"], kv="fp16",
+                                            ngram_tables=True)
+                self.assertEqual(code, 0, rep.get("error"))
+                self.assertTrue(rep["complete"])
+                self.assertEqual(rep["cache"]["requested"]["policy"], "fp16-diagnostic")
+                self.assertIsNone(rep["cache"]["requested"]["k_bits"])
+                self.assertEqual([e for e in log if e[0] == "cache"],
+                                 [("cache", "text", {"layer_type": "CacheLayer_fp16",
+                                                     "k_bits": None, "v_bits": None}),
+                                  ("cache", "mtp", {"layer_type": "CacheLayer_fp16",
+                                                    "k_bits": None, "v_bits": None})])
+                self.assertEqual(rep["cache"]["observed"]["target"]["cls_counts"],
+                                 {"CacheLayer_fp16": 1})
+            finally:
+                helper.stop()
+
+    def test_silent_fp16_fallback_fails_closed_against_quant_request(self):
+        # The engine constructed FP16 layers although K5/V4 quant was demanded:
+        # exactly the silent fallback the user forbade; the run must fail.
+        with tempfile.TemporaryDirectory() as td:
+            helper = tqmr.FakeHelper(Path(td) / "power.sock")
+            helper.start()
+            try:
+                out = str(Path(td) / "fallback.json")
+                code, rep, log = self._case("ls", "mtp", str(Path(td) / "power.sock"), out,
+                                            kv="fp16", ngram_tables=True)
+                self.assertEqual(code, 1)
+                self.assertIn("cache runtime audit failed", rep["error"])
+                self.assertIn("silent fallback", rep["error"])
+                self.assertFalse(rep["complete"])
+                self.assertIn(("unload", "text"), log)        # fail closed, cleanup still ran
+                self.assertIn(("unload", "mtp"), log)
+            finally:
+                helper.stop()
+
+    def test_requested_bits_mismatch_with_observed_fails(self):
+        # Request K8 via CLI while the real layers report K5/V4: fail closed on
+        # the actual k_bits, never on a trusting default.
+        with tempfile.TemporaryDirectory() as td:
+            helper = tqmr.FakeHelper(Path(td) / "power.sock")
+            helper.start()
+            try:
+                out = str(Path(td) / "bits.json")
+                code, rep, log = self._case("ls", "mtp", str(Path(td) / "power.sock"), out,
+                                            extra=["--cache-k-bits", "8"], ngram_tables=True)
+                self.assertEqual(code, 1)
+                self.assertIn("k_bits=5 v_bits=4, requested 8/4", rep["error"])
+                self.assertEqual([e[2]["k_bits"] for e in log if e[0] == "cache"], [8, 8])
+            finally:
+                helper.stop()
+
+    def test_zero_kv_on_full_attention_target_is_not_demonstrated(self):
+        # GDN-only LAYERS inside the TARGET would zero the KV count; unlike the
+        # draft, a quantized global-attn cache must be DEMONSTRATED, not assumed.
+        with tempfile.TemporaryDirectory() as td:
+            helper = tqmr.FakeHelper(Path(td) / "power.sock")
+            helper.start()
+            try:
+                out = str(Path(td) / "nokv.json")
+                code, rep, _ = self._case("ls", "mtp", str(Path(td) / "power.sock"), out,
+                                          kv="none", ngram_tables=True)
+                self.assertEqual(code, 1)
+                self.assertIn("cache runtime audit failed", rep["error"])
+                self.assertIn("must be demonstrated", rep["error"])
+            finally:
+                helper.stop()
+
+    def test_construction_ignoring_layer_type_is_fatal_before_load(self):
+        # If Cache itself dropped the requested layer_type (engine-side silent
+        # fallback at construction), run() aborts BEFORE any model load.
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "strips.json")
+            code, rep, log = self._case("tp", "mtp", str(Path(td) / "absent.sock"), out,
+                                        cache_strips_layer_type=True,
+                                        dispatch=happy_dispatch())
+            self.assertEqual(code, 1)
+            self.assertIn("no silent fallback", rep["error"])
+            self.assertIn("CacheLayer_fp16", rep["error"])
+            self.assertEqual([e for e in log if e[0] in ("load", "dispatch")], [])
 
 
 if __name__ == "__main__":

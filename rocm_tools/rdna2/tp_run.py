@@ -53,6 +53,23 @@ a torch facade whose cuda.synchronize dispatches tp_sync_rank INTO each
 owning rank (the parent cannot drain a spawned context); LS keeps plain
 torch and every routed sync is reported.
 
+KV cache policy: the selected production setting is KEY 5-BIT / VALUE 4-BIT
+quantized caches for BOTH target and draft, built as
+Cache(model, ..., layer_type=CacheLayer_quant, k_bits=5, v_bits=4) (exported
+by exllamav3.cache). QSA attention modules auto-map CacheLayer_quant to
+CacheLayer_qsa_quant inside the engine and keep the FP16 raw_k/pooled
+indexer planes; GDN/PLE recurrent state is NOT KV and stays at its current
+FP32/BF16 types. --cache-fp16 is an EXPLICIT diagnostic baseline only
+(CacheLayer_fp16, no bits kwargs); it never becomes the default and bits
+overrides are rejected with it. The requested policy plus the ACTUAL loaded
+cache state are captured in the report: every worker/parent cache-layer
+record now carries the layer class name, k_bits/v_bits and the named packed
+qk/qv/sk/sv tensors (shape/dtype/device/bytes) alongside any FP16 planes,
+and validate_cache_alignment fails closed when an observed full-attention
+cache class or bit width does not match the request (a silent engine-side
+fallback to FP16 is a hard error; a GDN-only draft with zero KV layers is
+legitimate and recorded as such, never fabricated as quantized).
+
 Validation (--validate-finite) never masquerades as throughput: report
 "validation_only" gates consumption, the MAIN RETURN LOGITS are checked on
 the parent's model.forward, an optional picklable installer wraps each rank
@@ -112,6 +129,16 @@ TP_OUTPUT_DEVICE = "cuda:1"              # logits gathered where the unsharded M
 DRAFT_DEVICE = "cuda:1"
 EXPECT_ARCH = "gfx1030"
 PAGE = 256
+# Selected production KV policy (user-mandated going forward): 5-bit keys / 4-bit
+# values via CacheLayer_quant; QSA attention auto-maps to CacheLayer_qsa_quant
+# inside the engine. --cache-fp16 is an explicit diagnostic baseline ONLY.
+DEFAULT_KV_K_BITS = 5
+DEFAULT_KV_V_BITS = 4
+# Cache-layer classes an ACTUAL K5/V4 quantized request may legitimately load
+# (the requested CacheLayer_quant itself, plus the QSA variant Attention maps
+# to). Anything else under a quant request is a silent fallback and fails.
+KV_QUANT_CLASSES = frozenset({"CacheLayer_quant", "CacheLayer_qsa_quant"})
+KV_FP16_CLASSES = frozenset({"CacheLayer_fp16", "CacheLayer_qsa"})
 # MoE expert-parallel plan keys carry the owned expert index; count what a rank
 # actually holds rather than trusting the requested split.
 _EXPERT_KEY_RE = re.compile(r"(?:^|\.)experts?[._](\d+)")
@@ -144,6 +171,15 @@ def build_parser():
     ap.add_argument("--draft-confidence", type=float, default=0.4)
     ap.add_argument("--batch-size", type=int, default=1)
     ap.add_argument("--cache-tokens", type=int, default=8704)
+    ap.add_argument("--cache-k-bits", type=int, default=DEFAULT_KV_K_BITS,
+                    help="quantized KV cache key bits (2..8); the selected default is 5 (K5/V4). "
+                         "Ignored only by the explicit --cache-fp16 diagnostic baseline")
+    ap.add_argument("--cache-v-bits", type=int, default=DEFAULT_KV_V_BITS,
+                    help="quantized KV cache value bits (2..8); the selected default is 4 (K5/V4). "
+                         "Ignored only by the explicit --cache-fp16 diagnostic baseline")
+    ap.add_argument("--cache-fp16", action="store_true",
+                    help="DIAGNOSTIC ONLY: load FP16 KV caches instead of the default K5/V4 quant "
+                         "selection; never the default, and incompatible with bit overrides")
     ap.add_argument("--max-chunk-size", type=int, default=2048)
     ap.add_argument("--use-per-device", type=float, nargs=2, default=[28, 28], metavar=("GiB0", "GiB1"),
                     help="load budget per GPU in GiB")
@@ -172,7 +208,33 @@ def validate_args(args):
         raise ValueError("cache and chunk capacities must be multiples of 256")
     if args.mode == "ar" and args.dynamic_draft:
         raise ValueError("--dynamic-draft requires --mode mtp; AR has no draft proposals")
+    # KV cache selection: K5/V4 quant is the default and the only production
+    # policy; CacheLayer_quant itself asserts 2..8, so reject early with a
+    # CLI-facing message. --cache-fp16 is diagnostic-only and takes no bits.
+    for name, val in (("--cache-k-bits", args.cache_k_bits),
+                      ("--cache-v-bits", args.cache_v_bits)):
+        if not 2 <= val <= 8:
+            raise ValueError(f"{name} must be in 2..8 (CacheLayer_quant asserts the same range)")
+    if args.cache_fp16 and (args.cache_k_bits != DEFAULT_KV_K_BITS
+                            or args.cache_v_bits != DEFAULT_KV_V_BITS):
+        raise ValueError("--cache-fp16 is the diagnostic FP16 baseline; --cache-k-bits/"
+                         "--cache-v-bits only apply to the default K5/V4 quant selection")
     return args
+
+
+def requested_cache(args):
+    """The cache policy this invocation demands, captured verbatim in the
+    report so requested-vs-observed can be checked against the ACTUAL loaded
+    layers (no silent fallback)."""
+    if args.cache_fp16:
+        return {"policy": "fp16-diagnostic", "layer_type": "CacheLayer_fp16",
+                "k_bits": None, "v_bits": None,
+                "note": "explicit diagnostic baseline; the selected policy remains K5/V4 quant"}
+    return {"policy": "quant", "layer_type": "CacheLayer_quant",
+            "k_bits": args.cache_k_bits, "v_bits": args.cache_v_bits,
+            "note": "user-selected K5/V4 KV for target AND draft; QSA attention auto-maps to "
+                    "CacheLayer_qsa_quant (FP16 raw_k/pooled indexer planes retained); GDN "
+                    "recurrent state is not KV and stays FP32/BF16"}
 
 
 def required_cache_tokens(prompts, new_tokens, draft_tokens):
@@ -429,13 +491,46 @@ def _module_facts(m, tree, linear_cap=_LINEAR_CAP):
     return facts
 
 
+def _cache_layer_audit_tensors(cl):
+    """Named backing tensors of one KV cache layer FOR THE CACHE AUDIT.
+    multi_gpu._cache_layer_tensors probes k/v/raw_k/pooled first, so a quant
+    layer's packed pages would fall through to anonymous t0..t3; name qk/qv/
+    sk/sv here (plus the QSA FP16 planes when present) so the report shows
+    exactly what a K5/V4 layer actually allocated. Everything else keeps the
+    shared resolver's behavior."""
+    from rocm_tools.rdna2 import multi_gpu
+    tensors = {}
+    for attr in ("qk", "qv", "sk", "sv"):
+        t = getattr(cl, attr, None)
+        if t is not None:
+            tensors[attr] = t
+    if tensors:
+        for attr in ("raw_k", "pooled"):
+            t = getattr(cl, attr, None)
+            if t is not None:
+                tensors[attr] = t
+        return tensors
+    return multi_gpu._cache_layer_tensors(cl)
+
+
 def _layer_geometry(layers, tensors_fn, cap=_LAYER_GEOM_CAP):
     """Aggregate count + byte total with up to `cap` representative per-layer
     tensor metadata (device/shape/dtype/bytes) -- attribute level only, no
-    .item(), no GPU sync; picklable."""
+    .item(), no GPU sync; picklable. Cache layers additionally carry the
+    ACTUAL layer class name and k_bits/v_bits, and the aggregates
+    `cls_counts` / `bits_variants` are UNCAPACITATED so the requested-vs-
+    observed cache audit sees every layer, not only the sampled ones."""
     sample, total, all_known, bytes_total = [], 0, True, 0
+    cls_counts, bits_variants = {}, {}
     for cl in layers:
         total += 1
+        cls = type(cl).__name__
+        cls_counts[cls] = cls_counts.get(cls, 0) + 1
+        bits = []
+        for attr in ("k_bits", "v_bits"):
+            v = getattr(cl, attr, None)
+            bits.append(int(v) if isinstance(v, int) and not isinstance(v, bool) else None)
+        bits_variants.setdefault(cls, set()).add(tuple(bits))
         tensors = tensors_fn(cl)
         info = {}
         for name, t in sorted(tensors.items()):
@@ -458,9 +553,15 @@ def _layer_geometry(layers, tensors_fn, cap=_LAYER_GEOM_CAP):
         if len(sample) < cap:
             sample.append({"device": str(getattr(cl, "device", None)),
                            "device_index": _dev_index(getattr(cl, "device", None)),
+                           "cls": cls, "k_bits": bits[0], "v_bits": bits[1],
                            "n_tensors": len(tensors), "tensors": info})
     return {"layers_total": total,
             "bytes_total": bytes_total if (total and all_known) else None,
+            "cls_counts": cls_counts,
+            # None-vs-int tuples are not directly comparable; sort on a safe key.
+            "bits_variants": {c: [list(b) for b in
+                                  sorted(v, key=lambda b: [-1 if x is None else x for x in b])]
+                              for c, v in sorted(bits_variants.items())},
             "sample": sample}
 
 
@@ -535,7 +636,7 @@ def tp_audit_rank(local_context):
             "transformer": multi_gpu._is_transformer(m),
             "kv_cache_modules": sum(1 for sm in tree if multi_gpu._caps(sm).get("kv_cache")),
             "recurrent_cache_modules": sum(1 for sm in tree if multi_gpu._caps(sm).get("recurrent_cache")),
-            "cache_layers": _layer_geometry(cache_layers, multi_gpu._cache_layer_tensors),
+            "cache_layers": _layer_geometry(cache_layers, _cache_layer_audit_tensors),
             "recurrent_layers": _layer_geometry(rec_layers, multi_gpu._recurrent_layer_tensors),
             "facts": _module_facts(m, tree),
         })
@@ -752,6 +853,143 @@ def _module_has_real_work(m):
 
 
 # ---------------------------------------------------------------------------
+# KV cache selection audit: the REQUESTED policy (K5/V4 quant by default, or
+# the explicit FP16 diagnostic baseline) is checked against the cache layers
+# ACTUALLY constructed, from every observation source (per-rank worker audits
+# for TP, parent-side walks for LS and for the always-unsharded draft).
+# Pure data in / verdicts out -- unit-testable without the native stack.
+# ---------------------------------------------------------------------------
+
+def _merge_cache_geometries(geometries, sample_cap=4):
+    """Collapse per-module _layer_geometry dicts into aggregate facts, keeping
+    up to sample_cap representative per-layer tensor records (device/shape/
+    dtype/bytes of the actual qk/qv/sk/sv pages) so the cache section of the
+    report shows WHAT was loaded, not only WHICH counts."""
+    layers_total, bytes_total, cls_counts, bits_variants = 0, 0, {}, {}
+    known_bytes, reps = True, []
+    for g in geometries or []:
+        count = int(g.get("layers_total") or 0)
+        if not count:
+            continue  # Embedding/recurrent-only modules have no KV allocation.
+        layers_total += count
+        bt = g.get("bytes_total")
+        if isinstance(bt, int):
+            bytes_total += bt
+        else:
+            known_bytes = False
+        for c, n in (g.get("cls_counts") or {}).items():
+            cls_counts[c] = cls_counts.get(c, 0) + int(n)
+        for c, variants in (g.get("bits_variants") or {}).items():
+            bits_variants.setdefault(c, set()).update(tuple(v) for v in variants)
+        for s in g.get("sample") or []:
+            if len(reps) < sample_cap:
+                reps.append(s)
+    return {"layers_total": layers_total,
+            "bytes_total": bytes_total if (known_bytes and layers_total) else None,
+            "cls_counts": {c: cls_counts[c] for c in sorted(cls_counts)},
+            "bits_variants": {c: [list(b) for b in
+                                  sorted(v, key=lambda b: [-1 if x is None else x for x in b])]
+                              for c, v in sorted(bits_variants.items())},
+            "representative_layers": reps}
+
+
+def validate_cache_alignment(geometries, request, *, label, require_kv):
+    """Compare ACTUAL cache-layer geometry records against the requested
+    policy; returns (problems, notes, observed-summary). Fail closed on any
+    silent fallback (FP16 classes under a quant request, unknown classes,
+    wrong bit widths, quant classes without k_bits/v_bits evidence) and on a
+    require_kv model (the full-attention target) that shows NO cache layers
+    at all -- a quantized global-attn cache must be DEMONSTRATED, not
+    assumed. A GDN/recurrent-only draft legitimately holds zero KV layers
+    (its state is not KV); that is recorded as a note, never quantified."""
+    agg = _merge_cache_geometries(geometries)
+    observed = {"label": label, "request": request, **agg}
+    problems, notes = [], []
+    if not agg["layers_total"]:
+        if require_kv:
+            problems.append(
+                f"{label}: requested {request['layer_type']} KV but NO cache layers were "
+                "observed -- the quantized global-attention cache must be demonstrated, "
+                "never assumed")
+        else:
+            notes.append(
+                f"{label}: zero KV cache layers observed -- legitimate for a GDN/recurrent-only "
+                "draft (recurrent state is NOT KV and stays FP32/BF16); recorded as-is, not "
+                "fabricated as quantized")
+        return problems, notes, observed
+    if not agg["cls_counts"]:
+        problems.append(f"{label}: {agg['layers_total']} cache layer(s) observed without any "
+                        "class/bits metadata -- the audit cannot prove what was actually loaded")
+        return problems, notes, observed
+    if request["policy"] == "quant":
+        want = (request["k_bits"], request["v_bits"])
+        for cls, n in agg["cls_counts"].items():
+            if cls not in KV_QUANT_CLASSES:
+                problems.append(
+                    f"{label}: requested {want[0]}-bit K / {want[1]}-bit V quantized KV but "
+                    f"{n} '{cls}' layer(s) are actually loaded -- silent fallback to a "
+                    "different cache type is rejected (no --cache-fp16 was given)")
+                continue
+            variants = agg["bits_variants"].get(cls) or []
+            if not variants:
+                problems.append(f"{label}: '{cls}' exposes no k_bits/v_bits evidence")
+            for kb, vb in variants:
+                if kb is None or vb is None:
+                    problems.append(f"{label}: '{cls}' layer without k_bits/v_bits evidence "
+                                    f"(got {kb!r}/{vb!r}, requested {want[0]}/{want[1]})")
+                elif (kb, vb) != want:
+                    problems.append(f"{label}: '{cls}' actually built with k_bits={kb} "
+                                    f"v_bits={vb}, requested {want[0]}/{want[1]}")
+    else:
+        for cls, n in agg["cls_counts"].items():
+            if cls not in KV_FP16_CLASSES:
+                problems.append(f"{label}: diagnostic FP16 baseline requested but {n} "
+                                f"'{cls}' layer(s) are actually loaded")
+                continue
+            for kb, vb in agg["bits_variants"].get(cls) or []:
+                if kb is not None or vb is not None:
+                    problems.append(f"{label}: diagnostic FP16 baseline requested but '{cls}' "
+                                    f"reports k_bits={kb} v_bits={vb}")
+    return problems, notes, observed
+
+
+def run_cache_runtime_audit(request, target_geometries, draft_geometries):
+    """One requested-vs-actual audit over BOTH caches' real layer records:
+    target (full attention -- KV must be demonstrated) and draft (zero KV is
+    legitimate for GDN-only heads). Returns (problems, notes, observed)."""
+    t_probs, t_notes, t_obs = validate_cache_alignment(
+        target_geometries, request, label="target full-attention KV", require_kv=True)
+    d_probs, d_notes, d_obs = validate_cache_alignment(
+        draft_geometries, request, label="draft", require_kv=False)
+    return t_probs + d_probs, t_notes + d_notes, {"target": t_obs, "draft": d_obs}
+
+
+def _cache_geometries_from_modules(module_records):
+    """cache_layers geometry dicts from TP rank module records (already the
+    workers' actual observations)."""
+    out = []
+    for r in module_records:
+        for m in r.get("modules") or []:
+            g = m.get("cache_layers")
+            if isinstance(g, dict):
+                out.append(g)
+    return out
+
+
+def _cache_geometries_from_model(model):
+    """Parent-side equivalent of the worker capture, for the LS target and the
+    (never-sharded) draft whose cache tensors live in THIS process."""
+    from rocm_tools.rdna2 import multi_gpu
+    out = []
+    for m in (getattr(model, "modules", None) or []):
+        cache_layers = [cl for sm in multi_gpu._iter_module_tree(m)
+                        for cl in (getattr(sm, "cache_layers", None) or [])]
+        if cache_layers:
+            out.append(_layer_geometry(cache_layers, _cache_layer_audit_tensors))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Parent-side aggregation: the ONLY place TP cross-rank policy is decided.
 # ---------------------------------------------------------------------------
 
@@ -905,6 +1143,9 @@ def run(args, prompts):
     import torch
     import exllamav3_ext
     from exllamav3 import Model, Config, Cache, Tokenizer, Generator, Job
+    # CacheLayer_quant/CacheLayer_fp16 are exported by exllamav3.cache (verified in
+    # its __init__); the engine itself maps QSA attention to CacheLayer_qsa_quant.
+    from exllamav3.cache import CacheLayer_fp16, CacheLayer_quant
     from exllamav3.generator.sampler import ArgmaxSampler
     from rocm_tools.rdna2 import multi_gpu, power_policy
     from rocm_tools.rdna2.common import model_fingerprint, git_commit
@@ -912,6 +1153,7 @@ def run(args, prompts):
     native_path = Path(exllamav3_ext.__file__).resolve()
     report = {"complete": False, "validation_only": args.validate_finite,
               "cli": {k: v for k, v in vars(args).items()},
+              "cache": {"requested": requested_cache(args), "observed": None, "notes": []},
               "execution": {"requested": args.execution,
                             "tp_backend": TP_BACKEND if args.execution == "tp" else None,
                             "tp_output_device": TP_OUTPUT_DEVICE if args.execution == "tp" else None},
@@ -969,10 +1211,26 @@ def run(args, prompts):
         report["ngram_expected_keys"] = expected_ngram_keys
         draft = Model.from_config(cfg, component="mtp") if has_mtp else None
         report["mtp_residency"]["resident"] = draft is not None
+        # SAME cache kwargs for target and draft: K5/V4 quant by default (the
+        # user-selected policy), FP16 only when explicitly demanded as a
+        # diagnostic baseline. Bits never reach CacheLayer_fp16, and vice versa.
+        cache_kwargs = ({"layer_type": CacheLayer_fp16} if args.cache_fp16 else
+                        {"layer_type": CacheLayer_quant, "k_bits": args.cache_k_bits,
+                         "v_bits": args.cache_v_bits})
         cache = Cache(model, max_num_tokens=args.cache_tokens, max_batch_size=args.batch_size,
-                      max_history=args.draft_tokens)
-        dcache = (Cache(draft, max_num_tokens=args.cache_tokens, max_batch_size=args.batch_size)
-                  if draft is not None else None)
+                      max_history=args.draft_tokens, **cache_kwargs)
+        dcache = (Cache(draft, max_num_tokens=args.cache_tokens, max_batch_size=args.batch_size,
+                        **cache_kwargs) if draft is not None else None)
+        expected_cls = CacheLayer_fp16 if args.cache_fp16 else CacheLayer_quant
+        for cname, c in (("target", cache), ("draft", dcache)):
+            if c is None:
+                continue
+            got = getattr(c, "layer_type", None)
+            if got is not expected_cls:
+                raise RuntimeError(
+                    f"{cname} Cache constructed layer_type "
+                    f"{getattr(got, '__name__', got)!r} although {expected_cls.__name__} "
+                    "was requested -- no silent fallback")
         if draft is not None:
             draft.load(device=DRAFT_DEVICE, max_chunk_size=args.max_chunk_size, progressbar=False)
         report["allocated_bytes_after_draft_load"] = {f"cuda:{d}": torch.cuda.memory_allocated(d)
@@ -1034,6 +1292,19 @@ def run(args, prompts):
                 audit["ok"] = False
             audit["finite_hook_installs"] = finite_installs
             audit["plan_from_parent"] = _summarize_plan_all(model)
+            # ACTUAL loaded KV cache vs the requested K5/V4 (or diagnostic FP16)
+            # policy: rank records carry each worker's real cache-layer class,
+            # bits and qk/qv/sk/sv geometry; the parent-side walk covers the
+            # unsharded draft on cuda:1.
+            cache_probs, cache_notes, cache_obs = run_cache_runtime_audit(
+                report["cache"]["requested"],
+                _cache_geometries_from_modules(rank_records),
+                _cache_geometries_from_model(draft) if draft is not None else [])
+            report["cache"]["observed"] = cache_obs
+            report["cache"]["notes"] = cache_notes
+            if cache_probs:
+                audit["problems"].extend(cache_probs)
+                audit["ok"] = False
             report["tp_audit"] = audit
             if not audit["ok"]:
                 raise RuntimeError(f"TP worker audit failed: {audit['problems']}")
@@ -1062,6 +1333,17 @@ def run(args, prompts):
             report["ngram"] = ng
             if not ng["ok"]:
                 raise RuntimeError(f"ngram audit failed: {ng['problems']}")
+            # LS: the target's and the draft's cache tensors all live in THIS
+            # process, so the requested-vs-actual KV audit reads their real
+            # layer objects (same geometry capture as the TP workers).
+            cache_probs, cache_notes, cache_obs = run_cache_runtime_audit(
+                report["cache"]["requested"],
+                _cache_geometries_from_model(model),
+                _cache_geometries_from_model(draft) if draft is not None else [])
+            report["cache"]["observed"] = cache_obs
+            report["cache"]["notes"] = cache_notes
+            if cache_probs:
+                raise RuntimeError(f"cache runtime audit failed: {cache_probs}")
         report["memory_snapshot"] = multi_gpu.device_memory_snapshot(torch, [0, 1])
 
         kwargs = dict(model=model, cache=cache, tokenizer=tok, max_batch_size=args.batch_size,
@@ -1195,6 +1477,15 @@ def run(args, prompts):
             final_audit = aggregate_tp_audit(final_ranks, expected,
                                              _dev_index(TP_OUTPUT_DEVICE), os.getpid(),
                                              expected_ngram_keys=expected_ngram_keys)
+            fc_probs, fc_notes, fc_obs = run_cache_runtime_audit(
+                report["cache"]["requested"],
+                _cache_geometries_from_modules(final_ranks),
+                _cache_geometries_from_model(draft) if draft is not None else [])
+            report["cache"]["observed_post_inference"] = fc_obs
+            report["cache"]["notes_post_inference"] = fc_notes
+            if fc_probs:
+                final_audit["problems"].extend(fc_probs)
+                final_audit["ok"] = False
             report["tp_final_audit"].update({k: final_audit[k] for k in (
                 "ok", "problems", "notes", "ngram_ram_owners")})
             if not final_audit["ok"]:
