@@ -783,7 +783,11 @@ def collect_exl3(args, manifest, vocab, cleanup_errors: list):
             cid = case["case_id"]
             ev = {}
             try:
-                top1, nonfinite = run_case(case, ev)
+                # Cache tensors are created by model.load() in inference mode.
+                # State allocation/clearing and release belong to that mode too,
+                # not just the decorated model.forward() call.
+                with torch.inference_mode():
+                    top1, nonfinite = run_case(case, ev)
                 if nonfinite:
                     errors.append(f"case {cid}: non-finite logit rows at "
                                   f"{len(nonfinite)} position(s)")
