@@ -422,6 +422,15 @@ def mp_rotate_cache_pages(
         buffer = get_buffer(cache[0].shape, cache.device, cache.dtype)
         ext.cache_rotate(cache, all_rotations, buffer)
 
+    # The rotation indices arrived via a non-blocking H2D upload from the pinned shared
+    # arena, and the parent reuses (clears and rewrites) that arena as soon as this
+    # dispatch's ack arrives. The ack is sent when this function returns, so without a
+    # drain here the upload can execute against the NEXT forward's bytes (e.g. input
+    # token IDs) -> garbage rotation indices -> OOB cache writes. One stream sync at
+    # the end guarantees the upload and every queued rotation kernel have finished
+    # before the ack. This path is rare idle-defrag housekeeping, not per-token.
+    torch.cuda.current_stream(local_context["device"]).synchronize()
+
 
 # CPU page cache in TP mode. The main process owns the page table, the slot table and the eviction policy but
 # holds no cache tensors, so it names a slot by index and every rank keeps its own shard of that slot here. A
