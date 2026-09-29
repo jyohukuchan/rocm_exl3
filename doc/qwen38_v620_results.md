@@ -76,3 +76,19 @@ Engramの独立検証:
 `first-bench-512.json`: auto policy、max_chunk2048、cache8704、生成32、warm1+測定2、prefill/decode計6jobs、失敗0・通常終了。prefill中央値259.0tok/s（spread4.4%）、decode24.0tok/s（spread1.2%）、ITL p50約40.50ms。この512tokenの予備値を8K/32Kや最終最適値へ外挿しない。ロード約44秒、両deviceのQSA cache各6、recurrent state21/16。transformer module数27/22はPLEを1module含むため、48decoder層の分割数とは異なる。
 
 現在は`candidate-chunk1.json`/`candidate-chunk1-logits.f32`を生成する固定8case・1024位置のteacher-forced検証を実行中。長文、30job、独立モデル参照、最終profile/性能改善は未完了。
+
+### 品質比較の不合格とshared expert gateの競合
+
+`candidate-chunk1-v2.json`は8case/1024位置、2030chunk、全logits有限、state作成/解放各8、PLE履歴照合・release_failures/carry_notes無しでexit0。`candidate-bulk-v1.json`も同じ1024位置でexit0。ただし両者のtop1一致は832/1024=81.25%、KL(P_bulk||P_chunk1)平均0.36994nats、p99 3.73589natsで不合格（`chunk1-vs-bulk-top1.json`, `chunk1-vs-bulk-kld.json`）。従って上記512予備速度は正しいモデル演算としての性能合格値には使わず、修正後に測り直す。
+
+rootによる切り分け:
+- 同じ第1tokenの埋め込み/stream展開はbit一致。最初のdecoder層（PLEより前）から差が発生。
+- GDN、hyper-connection、shared expert単体の差は小さいが、MoE合成出力でrms差0.01644（値のrms約0.0466）。
+- 最初のMoE入力を完全固定し、選択expert10個とrouting weightsも一致させて比較。1/8/16rowおよびgeneric1rowで大差、64/183rowはEXL3 reconstruct参照に近い。個別expert Linearの高速/展開結果は近く、中間幅640の末尾切落とし仮説では説明できなかった。
+- 誤差の99.9999817%がshared expertのgate値の差で説明できる（`moe-shared-gate-fit.json`）。実gateのFP64内積は-0.51480674、通常Linearも-0.51480669、sigmoidは0.37406739。融合projection kernelは0.20132904を返す。bias無し、pre/post_scale=1を確認（`shared-gate-probe.json`）。
+- `reduction.cuh::block_reduce_sum_broadcast_f`はwarp0のshuffle-down集計後に全laneが`shared[0]=v`を書いていた。完全な合計を持つのはlane0だけで、他laneは部分和。RDNA2でこの競合により誤った値がbroadcastされる。
+- モデル不要の再現: onesの内積を1にしたdim128でsigmoidが期待0.73106→実0.5、dim2560で期待0.73101→実0.68993。均一入力の1024/2048/4096は問題を隠す（`shared-gate-synthetic-baseline.json`）。
+
+単一writer化＋直接projectionの数値回帰テストをOpenCodeへ委任中。native再build、回帰テスト、実モデル再検証は未完了。Pythonの参照projectionだけを差し込む`candidate-chunk1-gate-ref`介入実験を並行して実行中（品質原因の検証用であり運用/性能経路ではない）。
+
+`0ec44fc`: GDN/conv/gated norm/hyperconnections/QSA/状態のGPU前提テスト最終44件がroot実機runで成功。これは上記の実重みMoE gate不具合を覆い隠す合格条件ではない。native binaryはまだ旧`26c326b6...3156f`で、修正後は新binary identityを保存し共通kernelのD/M回帰も必要。
