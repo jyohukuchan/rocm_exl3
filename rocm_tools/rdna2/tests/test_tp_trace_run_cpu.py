@@ -17,8 +17,11 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import pickle
 import subprocess
 import sys
+import threading
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -27,6 +30,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import torch
 from rocm_tools.rdna2 import tp_trace_run as tr
+
+
+def _mod(name):
+    return types.ModuleType(name)
 
 
 class FakeModel:
@@ -458,6 +465,493 @@ class RoctxWorkerTests(unittest.TestCase):
             self.assertIn("pop_error", stop)
             self.assertEqual(stop.get("paused_after_window"), True)  # pause still ran
             self.assertNotIn("forward", m.__dict__)                  # restored regardless
+
+
+class RoctxNestedTaggingTests(unittest.TestCase):
+    """Milestone-2 nested labels: bounded class traversal, dedup against the
+    top-level wrappers, method-level tags (hc/ple/ngram), thread-local ranges
+    and exact restoration. FakeRoctx proves pairing, not the ctypes shim."""
+
+    class Block:                          # stand-in TransformerBlock
+        def __init__(self, key, *subs):
+            self.key = key
+            self.modules = list(subs)
+        def forward(self, x, params):
+            return 7
+
+    class Attention:
+        qsa_indexer = None
+        def __init__(self, key):
+            self.key = key
+            self.modules = []
+        def forward(self, x, params):
+            return 8
+
+    class Linear:                         # by NAME: traversal must not tag
+        def __init__(self, key):          # or descend into it
+            self.key = key
+            self.norm = RoctxNestedTaggingTests.RMSNorm("inner.norm")
+            self.modules = [self.norm]
+        def forward(self, x, params):
+            return 9
+
+    class RMSNorm:
+        def __init__(self, key):
+            self.key = key
+            self.modules = []
+        def forward(self, x, params):
+            return 10
+
+    class MLP:
+        def __init__(self, key):
+            self.key = key
+            self.modules = []
+        def forward(self, x, params):
+            return 11
+
+    class BlockSparseMLP(MLP):
+        def __init__(self, key, shared):
+            super().__init__(key)
+            self.shared_experts = shared
+
+    class PLELayer:
+        def __init__(self, key, ngram):
+            self.key = key
+            self.modules = [ngram]
+        def forward(self, x, params):
+            return 12
+        def prefetch(self, ids, params):
+            return 13
+
+    class NGramEmbedding:
+        def __init__(self, key):
+            self.key = key
+            self.modules = []
+        def forward(self, x, params):
+            return 14
+        def _stage(self, history, pin):
+            return self._gather_rows(torch.zeros(3), None)
+        def _gather_rows(self, uids, out):
+            return 15
+
+    class GatedResidual:
+        def __init__(self, key):
+            self.key = key
+            self.modules = []
+        def mix(self, streams, params):
+            return "mixed"
+        def apply_(self, x, y, post, comb, params):
+            return "applied"
+        def forward(self, x, params):
+            return 16
+
+    def _tags(self, modules, rx, prefix=""):
+        handles = []
+        n = tr._tag_nested_roctx(modules, rx, handles, prefix=prefix)
+        return handles, n
+
+    def _labels(self, rx, start=0):
+        return [op for op in rx.ops[start:] if op.startswith("push:")]
+
+    def test_class_labels_and_subclass_and_qsa(self):
+        rx = FakeRoctx()
+        attn = self.Attention("model.layers.0.self_attn")
+        qsa = type("QwenAttn", (self.Attention,), {})(                # subclass
+            "model.layers.1.self_attn")
+        qsa.qsa_indexer = object()
+        norm = self.RMSNorm("model.layers.0.input_layernorm")
+        lin = self.Linear("model.layers.0.self_attn.q_proj")
+        blk = self.Block("model.layers.0", attn, qsa, norm, lin)
+        handles, n = self._tags([blk], rx)
+        self.assertEqual(n, 3)                                        # 2 attn + 1 norm; Linear skipped
+        blk.forward(torch.zeros(1, 4, 2), {})
+        self.assertEqual(self._labels(rx), [])                        # block itself untagged
+        self.assertEqual(attn.forward(torch.zeros(1, 4, 2), {}), 8)
+        self.assertEqual(qsa.forward(torch.zeros(1, 4, 2), {}), 8)
+        self.assertEqual(norm.forward(torch.zeros(1, 4, 2), {}), 10)
+        self.assertEqual(lin.norm.forward(torch.zeros(1, 4, 2), {}), 10)   # inside Linear: NOT wrapped
+        self.assertEqual(self._labels(rx), [
+            "push:attn model.layers.0.self_attn seq=4",
+            "push:attn.qsa model.layers.1.self_attn seq=4",
+            "push:norm model.layers.0.input_layernorm seq=4"])
+        tr._restore_roctx_handles(handles)
+        for m in (attn, qsa, norm, lin.norm):                         # shadows gone, class intact
+            self.assertNotIn("forward", m.__dict__)
+        self.assertEqual(attn.forward(torch.zeros(1, 4, 2), {}), 8)
+
+    def test_moe_shared_expert_when_exposed(self):
+        rx = FakeRoctx()
+        shared = self.MLP("model.layers.0.mlp.shared_experts")
+        moe = self.BlockSparseMLP("model.layers.0.mlp", shared)
+        handles, n = self._tags([moe], rx)
+        self.assertEqual(n, 2)                                        # moe.forward + moe.shared.forward
+        shared.forward(torch.zeros(1, 2, 2), {})
+        self.assertEqual(self._labels(rx),
+                         ["push:moe.shared model.layers.0.mlp.shared_experts seq=2"])
+        self.assertEqual(moe.forward(torch.zeros(1, 2, 2), {}), 11)
+        self.assertEqual(self._labels(rx)[1:],
+                         ["push:moe model.layers.0.mlp seq=2"])
+        tr._restore_roctx_handles(handles)
+        self.assertNotIn("forward", shared.__dict__)
+        self.assertNotIn("forward", moe.__dict__)
+        nos = self.BlockSparseMLP("k", None)
+        h2, n2 = self._tags([nos], rx)
+        self.assertEqual((n2, len(h2)), (1, 1))                       # shared None: only moe
+
+    def test_hc_site_methods_and_ple_ngram_nesting(self):
+        rx = FakeRoctx()
+        ng = self.NGramEmbedding("model.layers.0.ple.ple_embedding")
+        ple = self.PLELayer("model.layers.0.ple", ng)
+        hc = self.GatedResidual("model.layers.0.hc_attn")
+        handles, n = self._tags([ple, hc], rx)
+        self.assertEqual(n, 5 + 3)          # ple fwd+prefetch, ngram fwd/_stage/_gather_rows, hc fwd/mix/apply_
+        self.assertEqual(ple.prefetch(torch.zeros(1, 3), {}), 13)
+        self.assertEqual(hc.mix(torch.zeros(1, 3, 2, 4), {}), "mixed")
+        self.assertEqual(hc.apply_(torch.zeros(1, 3, 2, 4), None, None, None, {}), "applied")
+        ng._stage(torch.zeros(1, 9), None)              # gather nests INSIDE stage
+        self.assertEqual(self._labels(rx), [
+            "push:ple.prefetch model.layers.0.ple seq=3",
+            "push:hc.mix model.layers.0.hc_attn seq=3",
+            "push:hc.apply_ model.layers.0.hc_attn seq=3",
+            "push:ngram._stage model.layers.0.ple.ple_embedding seq=9",
+            "push:ngram._gather_rows model.layers.0.ple.ple_embedding seq=3"])
+        self.assertEqual(rx.ops.count("pop"), 5)
+        # _stage on a foreign thread: the thread-local push/pop still pairs
+        t = threading.Thread(target=lambda: ng._stage(torch.zeros(1, 9), None))
+        t.start(); t.join()
+        self.assertEqual(rx.ops.count("push:ngram._stage "
+                                      "model.layers.0.ple.ple_embedding seq=9"), 2)
+        tr._restore_roctx_handles(handles)
+        for m, attrs in ((ple, ("forward", "prefetch")),
+                         (ng, ("forward", "_stage", "_gather_rows")),
+                         (hc, ("forward", "mix", "apply_"))):
+            for a in attrs:
+                self.assertNotIn(a, m.__dict__)
+
+    def test_dedup_against_toplevel_wrappers(self):
+        rx = FakeRoctx()
+        ng = self.NGramEmbedding("embed.ple")
+        ple = self.PLELayer("model.ple", ng)            # PLELayer itself top-level
+        handles = []
+        tr._tag_module_forwards_roctx({"modules": [ple]}, rx, handles)
+        n = tr._tag_nested_roctx([ple], rx, handles)
+        self.assertEqual(n, 4)      # ple.forward deduped; prefetch + 3 ngram attrs remain
+        self.assertEqual(ple.forward(torch.zeros(1, 5, 2), {}), 12)
+        self.assertEqual(self._labels(rx), ["push:model.ple seq=5"])   # ONE range, top-level label
+        tr._restore_roctx_handles(handles)
+        self.assertNotIn("forward", ple.__dict__)
+        self.assertNotIn("prefetch", ple.__dict__)
+        self.assertNotIn("_stage", ng.__dict__)
+
+    def test_prefix_for_draft_labels(self):
+        rx = FakeRoctx()
+        attn = self.Attention("trunk.layers.0.attn")
+        handles, n = self._tags([attn], rx, prefix="draft.")
+        attn.forward(torch.zeros(1, 2, 2), {})
+        self.assertEqual(self._labels(rx), ["push:draft.attn trunk.layers.0.attn seq=2"])
+
+    def test_callable_passthrough_args_returns_errors(self):
+        rx = FakeRoctx()
+        ng = self.NGramEmbedding("k")
+        sentinel = object()
+        def fwd(x, params, y=sentinel):                 # kw + multi-return
+            return (x, params, y)
+        ng.forward = fwd                                # PRE-EXISTING instance shadow
+        handles, _ = self._tags([ng], rx)               # wraps shadow, prev=fwd
+        self.assertEqual(ng.forward(1, 2), (1, 2, sentinel))   # args/kw/return pass through
+        self.assertEqual(self._labels(rx), ["push:ngram k seq=?"])    # fwd -> plain base; non-tensor -> "?"
+        tr._restore_roctx_handles(handles)
+        self.assertIs(ng.forward, fwd)                  # exact previous restored
+        def boom(*a, **kw):
+            raise RuntimeError("stage died")
+        ng._stage = boom
+        h2, _ = self._tags([ng], rx)
+        with self.assertRaises(RuntimeError):
+            ng._stage(torch.zeros(1, 4), None)          # exception propagates...
+        self.assertEqual(rx.ops.count("pop"), 2)        # ...both ranges closed
+        self.assertEqual(rx.ops[-2:], ["push:ngram._stage k seq=4", "pop"])
+        tr._restore_roctx_handles(h2)
+        self.assertIs(ng._stage, boom)
+
+
+class RoctxCommTaggingTests(unittest.TestCase):
+    """tp.<op> comm labels: metadata only (numel x element_size, never
+    .item()), behavior pass-through, exact restoration."""
+
+    class T:
+        def __init__(self, numel, esz=2):
+            self._n, self._e = numel, esz
+        def numel(self):
+            return self._n
+        def element_size(self):
+            return self._e
+
+    class Backend:
+        def fwd_barrier(self):
+            return "bar"
+        def broadcast(self, tensor, src_device):
+            return ("bcast", tensor, src_device)
+        def all_reduce(self, tensor, contribution=True):
+            if contribution:
+                raise RuntimeError("reduce wire died")
+            return ("red", tensor)
+        def gather(self, tensor, out, devices, dev, ldims):
+            return ("gather", out)
+        def gather_small(self, tensor, out, devices, dev, ldims):
+            return ("small", out)
+
+    def test_ops_labels_passthrough_restore(self):
+        rx = FakeRoctx()
+        b = self.Backend()
+        handles = []
+        n = tr._tag_backend_roctx(b, rx, handles)
+        self.assertEqual(n, 5)
+        t, o = self.T(4096), self.T(9000)
+        self.assertEqual(b.fwd_barrier(), "bar")
+        self.assertEqual(b.broadcast(t, 1), ("bcast", t, 1))
+        self.assertEqual(b.gather(t, o, None, 0, [1]), ("gather", o))
+        with self.assertRaises(RuntimeError):
+            b.all_reduce(t)                             # exception propagates...
+        self.assertEqual(rx.ops, [                      # labels + balanced ranges
+            "push:tp.fwd_barrier", "pop",
+            "push:tp.broadcast 4096x2B=8192B", "pop",
+            "push:tp.gather 4096x2B=8192B+9000x2B=18000B", "pop",
+            "push:tp.all_reduce 4096x2B=8192B", "pop"])  # ...closed by the raise
+        tr._restore_roctx_handles(handles)
+        self.assertEqual(b.__dict__, {})                # instance shadows removed
+        self.assertEqual(b.all_reduce(o, False), ("red", o))   # class methods intact
+
+    def test_preexisting_instance_attr_restored_and_no_tensor_meta(self):
+        rx = FakeRoctx()
+        b = self.Backend()
+        prev = lambda: "instance-shadow"
+        b.fwd_barrier = prev
+        handles = []
+        tr._tag_backend_roctx(b, rx, handles)
+        self.assertEqual(b.gather_small(self.T(3), None, None, 0, None),
+                         ("small", None))               # None out: no second meta
+        self.assertEqual(rx.ops[-2], "push:tp.gather_small 3x2B=6B")
+        tr._restore_roctx_handles(handles)
+        self.assertIs(b.fwd_barrier, prev)
+
+    def test_start_worker_tags_nested_and_comm(self):
+        rx = FakeRoctx()
+        attn = RoctxNestedTaggingTests.Attention("model.layers.0.self_attn")
+        blk = RoctxNestedTaggingTests.Block("model.layers.0", attn)
+        b = RoctxCommTaggingTests.Backend()
+        ctx = {"device": 0, "modules": [blk], "backend": b, "output_device": 0}
+        with _rank_state(rx):
+            start = tr.tp_trace_roctx_start_worker(ctx, {"range": "W"})
+            self.assertEqual((start["tagged_modules"], start["tagged_nested"],
+                              start["tagged_comm"]), (1, 1, 5))
+            b.fwd_barrier()
+            attn.forward(torch.zeros(1, 1, 2), {})
+            self.assertEqual(rx.ops[2:],
+                             ["push:tp.fwd_barrier", "pop",
+                              "push:attn model.layers.0.self_attn seq=1", "pop"])
+            stop = tr.tp_trace_roctx_stop_worker(ctx)
+            self.assertNotIn("error", stop)
+            for m in (blk, attn):
+                self.assertNotIn("forward", m.__dict__)
+            self.assertEqual(b.__dict__, {})
+
+
+class WorkerPhaseTests(unittest.TestCase):
+    """Milestone-2 worker phase attribution: the three module-level wrappers
+    are top-level (PICKLABLE by reference), call the ORIGINAL canonical
+    model_tp_fn functions, label with the rank's own _ACTIVE rx and restore
+    every replaced alias exactly. exllamav3 is faked via sys.modules; the
+    canonical module is never written to (getattr-only contract)."""
+
+    def _engine(self):
+        calls = []
+
+        def canon(name, ret=None, boom=False):
+            def fn(lc, *a, **kw):
+                calls.append((name, lc, a, kw))
+                if boom:
+                    raise RuntimeError("%s died" % name)
+                return ret
+            return fn
+
+        fnmod = _mod("exllamav3.model.model_tp_fn")
+        tpmod = _mod("exllamav3.model.model_tp")
+        originals = {}
+        for alias in ("mp_model_forward", "mp_model_forward_embedding",
+                      "mp_model_forward_lm_head_argmax"):
+            originals[alias] = canon(alias, ret=("R", alias))
+            setattr(fnmod, alias, originals[alias])
+            setattr(tpmod, alias, originals[alias])      # star-import alias
+        pkg = _mod("exllamav3.model")
+        pkg.model_tp, pkg.model_tp_fn = tpmod, fnmod
+        exl = _mod("exllamav3")
+        exl.model = pkg
+        mods = {"exllamav3": exl, "exllamav3.model": pkg,
+                "exllamav3.model.model_tp": tpmod,
+                "exllamav3.model.model_tp_fn": fnmod}
+        return mock.patch.dict(sys.modules, mods), calls, originals, tpmod
+
+    def test_wrappers_top_level_picklable(self):
+        for _alias, fn in tr._ROCTX_WORKER_ALIASES:
+            self.assertEqual(fn.__module__.rsplit(".", 1)[-1], "tp_trace_run")
+            self.assertIs(getattr(tr, fn.__qualname__), fn)      # resolvable
+            self.assertIs(pickle.loads(pickle.dumps(fn)), fn)    # by reference
+
+    def test_wrapper_labels_passthrough_and_no_rx(self):
+        patcher, calls, originals, _tp = self._engine()
+        rx = FakeRoctx()
+        with patcher, mock.patch.dict(tr._ACTIVE, {"rx": rx}, clear=True):
+            for fn, label, alias in (
+                    (tr.mp_model_forward_target, "phase=target.forward",
+                     "mp_model_forward"),
+                    (tr.mp_model_forward_mtp_embedding,
+                     "phase=mtp.borrowed_embedding", "mp_model_forward_embedding"),
+                    (tr.mp_model_forward_mtp_head, "phase=mtp.borrowed_head",
+                     "mp_model_forward_lm_head_argmax")):
+                lc = {"device": 0}
+                self.assertEqual(fn(lc, "x", {"p": 1}, 7), ("R", alias))
+                self.assertEqual(calls[-1], (alias, lc, ("x", {"p": 1}, 7), {}))
+                self.assertEqual(rx.ops[-2:], ["push:" + label, "pop"])
+        with patcher:                                      # window NOT open here:
+            rx2 = FakeRoctx()                              # plain passthrough,
+            with mock.patch.dict(tr._ACTIVE, {}, clear=True):
+                self.assertEqual(tr.mp_model_forward_target({"d": 1}, "x"),
+                                 ("R", "mp_model_forward"))
+            self.assertEqual(rx2.ops, [])
+        boom = _mod("exllamav3.model.model_tp_fn")         # worker-side exception:
+
+        def raiser(lc, *a, **kw):
+            raise RuntimeError("forward wedged")
+        boom.mp_model_forward = raiser
+        pkg = _mod("exllamav3.model")
+        pkg.model_tp_fn = boom
+        pkg.model_tp = _mod("x")
+        exl = _mod("exllamav3")
+        exl.model = pkg
+        with mock.patch.dict(sys.modules, {"exllamav3": exl,
+                                           "exllamav3.model": pkg,
+                                           "exllamav3.model.model_tp_fn": boom}), \
+                mock.patch.dict(tr._ACTIVE, {"rx": FakeRoctx()}, clear=True):
+            rxr = tr._ACTIVE["rx"]
+            with self.assertRaises(RuntimeError):
+                tr.mp_model_forward_target({}, "x")        # propagates...
+            self.assertEqual(rxr.ops, ["push:phase=target.forward", "pop"])
+
+    def test_install_parent_roctx_labels_draft_gen_and_aliases(self):
+        class Blk(RoctxNestedTaggingTests.Block):
+            pass
+        class Attn(RoctxNestedTaggingTests.Attention):
+            pass
+        patcher, _calls, originals, tpmod = self._engine()
+        blk = Blk("trunk.layers.0", Attn("trunk.layers.0.attn"))
+        draft = _mod("draft"); draft.modules = [blk]
+
+        class Gen:
+            def __init__(self):
+                self.draft_model = draft
+            def iterate_gen(self, results, draft_tokens=None):
+                return "verified"
+            def iterate_draftmodel_mtp_gen(self, results):
+                return "draft-tokens"
+        gen = Gen()
+        st = tr.WindowState(0, 4)
+        st.gen, st.spec = gen, {"backend": "roctx"}
+        rx = FakeRoctx()
+        try:
+            with patcher, mock.patch.dict(tr._ACTIVE,
+                                          {"rx": rx, "handles": []}, clear=True):
+                self.assertIsNone(tr._install_parent_roctx(st))
+                self.assertIs(tpmod.mp_model_forward, tr.mp_model_forward_target)
+                self.assertIs(tpmod.mp_model_forward_embedding,
+                              tr.mp_model_forward_mtp_embedding)
+                self.assertIs(tpmod.mp_model_forward_lm_head_argmax,
+                              tr.mp_model_forward_mtp_head)
+                self.assertEqual(gen.iterate_draftmodel_mtp_gen([]), "draft-tokens")
+                self.assertEqual(gen.iterate_gen([]), "verified")
+                self.assertEqual(blk.forward(torch.zeros(1, 1, 2), {}), 7)
+                self.assertEqual(blk.modules[0].forward(torch.zeros(1, 1, 2), {}), 8)
+                self.assertEqual(rx.ops, [
+                    "push:phase=mtp.draft", "pop",
+                    "push:phase=target.verify_or_ar", "pop",
+                    "push:draft.trunk.layers.0 seq=1", "pop",
+                    "push:draft.attn trunk.layers.0.attn seq=1", "pop"])
+                tr._restore_roctx_handles(tr._ACTIVE["handles"])   # = pseudo stop worker
+                for alias in originals:
+                    self.assertIs(tpmod.__dict__[alias], originals[alias])
+                for meth in ("iterate_draftmodel_mtp_gen", "iterate_gen"):
+                    self.assertNotIn(meth, gen.__dict__)           # shadows deleted
+                self.assertNotIn("forward", blk.__dict__)
+                self.assertNotIn("forward", blk.modules[0].__dict__)
+        finally:
+            tr._ACTIVE.clear()
+
+    def test_install_skipped_without_parent_window(self):
+        st = tr.WindowState(0, 4)
+        st.gen, st.spec = FakeGen([]), {"backend": "roctx"}
+        with mock.patch.dict(tr._ACTIVE, {}, clear=True):
+            self.assertIsNone(tr._install_parent_roctx(st))
+        self.assertTrue(any("no parent window" in e for e in st.errors))
+        self.assertEqual(tr._ACTIVE, {})
+
+    def test_start_cb_installs_and_survives_partial_failure(self):
+        patcher, _calls, originals, _tp = self._engine()
+
+        class BoomTp:                        # wrapper install fails midway,
+            def __init__(self):              # restore of the same keys works
+                for alias in ("mp_model_forward", "mp_model_forward_embedding",
+                              "mp_model_forward_lm_head_argmax"):
+                    setattr(self, alias, originals[alias])
+
+            def __setattr__(self, k, v):
+                if (k == "mp_model_forward_lm_head_argmax"
+                        and v is tr.mp_model_forward_mtp_head):
+                    raise RuntimeError("alias slot poisoned")
+                object.__setattr__(self, k, v)
+        bt = BoomTp()
+        st = tr.WindowState(0, 4)
+        st.spec = {"backend": "roctx", "trace_dir": "/tmp/x"}
+        st.gen = FakeGen([], model=FakeModel())
+        with patcher:
+            sys.modules["exllamav3.model"].model_tp = bt
+            try:
+                with mock.patch.dict(tr._ACTIVE, {"rx": FakeRoctx(), "handles": []},
+                                     clear=True):
+                    self.assertIs(tr._start_cb(st), False)     # fail closed
+                    self.assertTrue(any("install failed" in e for e in st.errors))
+                    # ranks were started, so a stop dispatch was still issued:
+                    self.assertEqual([d[1] for d in st.gen.model.dispatches],
+                                     ["tp_trace_roctx_start_worker",
+                                      "tp_trace_roctx_stop_worker"])
+                    pend = tr._ACTIVE["handles"]               # the pseudo stop
+                    self.assertEqual([h[1] for h in pend],     # worker / undo would
+                                     ["mp_model_forward", "mp_model_forward_embedding",
+                                      "mp_model_forward_lm_head_argmax"])
+                    tr._restore_roctx_handles(pend)            # restore these
+                    for alias in originals:                    # exact originals
+                        self.assertIs(bt.__dict__[alias], originals[alias])
+            finally:
+                tr._ACTIVE.clear()
+
+    def test_none_and_torch_start_cb_install_nothing(self):
+        patcher, _calls, originals, tpmod = self._engine()
+
+        class Gen(FakeGen):
+            def __init__(self):
+                super().__init__([], model=FakeModel())
+                self.draft_model = _mod("draft"); self.draft_model.modules = []
+            def iterate_gen(self, results):
+                return "x"
+        for backend in ("none", "torch"):
+            with self.subTest(backend=backend), patcher, \
+                    mock.patch.dict(tr._ACTIVE, {"rx": FakeRoctx()}, clear=True):
+                st = tr.WindowState(0, 4)
+                st.spec = {"backend": backend, "trace_dir": "/tmp/x"}
+                st.gen = Gen()
+                self.assertTrue(tr._start_cb(st))
+                for alias in originals:                        # NONE/torch: no hook
+                    self.assertIs(tpmod.__dict__[alias], originals[alias])
+                self.assertNotIn("iterate_gen", st.gen.__dict__)   # no shadows added
+                self.assertEqual(st.errors, [])
 
 
 class RoctxGateTests(unittest.TestCase):

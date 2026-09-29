@@ -67,11 +67,30 @@ the module stays CPU-safe for other importers). GPU kernels are collected
 by the EXTERNAL rocprofv3 attach (root's SDK-first LD_PRELOAD + Triton
 DEEPBIND bootstrap, which may pause earlier too: harmless). Rank start
 syncs its own device, resumes, pushes an outer window range and installs
-nested per-module "KEY seq=N" ROCtx markers; rank stop syncs, pops, pauses
-and restores the wrappers (profile_stages' exception-safe order). GPU
-execution is NOT claimed from inside this tool: the manifest records
-backend=roctx + rank/device/PID/window gate states and requires root's
-external CSV parse for kernel evidence.
+nested markers; rank stop syncs, pops, pauses and restores every hook
+(profile_stages' exception-safe order). MILESTONE-2 ATTRIBUTION
+(roctx-only; torch/none paths unchanged): per-module "KEY seq=N" ranges are
+extended by a BOUNDED class traversal of Module.modules (no descent into
+Linear subtrees, never a wrapper per expert): attn/attn.qsa, gdn, moe,
+moe.shared (only where the shared-expert MLP is called from Python; fused
+paths stay under moe), ple(+ple.prefetch), ngram(forward/_stage/
+_gather_rows, thread-local so the prefetch worker thread labels itself),
+hc(+hc.mix/hc.apply_ for site forms), norm, embed. Each rank's comm
+backend gets tp.<op> ranges with numel x element_size metadata (no .item(),
+no sync). The parent (pseudo output rank) additionally labels its draft
+model tree "draft.*", marks gen.iterate_draftmodel_mtp_gen / iterate_gen
+as phase=mtp.draft / phase=target.verify_or_ar, and swaps model_tp's
+worker-function aliases for top-level picklable wrappers that label each
+dispatch phase=target.forward / phase=mtp.borrowed_embedding /
+phase=mtp.borrowed_head (originals in model_tp_fn are never overwritten;
+aliases restore on success, install failure and stop-dispatch failure).
+Labels are INCLUSIVE CPU ranges: root derives exclusive GPU attribution
+from the HIP correlation of each kernel to its launching API and the
+markers enclosing THAT call, so shared target embedding/head kernels
+dispatched through a borrowed phase count as MTP work. GPU execution is
+NOT claimed from inside this tool: the manifest records backend=roctx +
+rank/device/PID/window gate states and requires root's external CSV parse
+for kernel evidence.
 """
 from __future__ import annotations
 
@@ -430,24 +449,215 @@ def tp_trace_stop_worker(local_context):
     return out
 
 
-def _tag_module_forwards_roctx(local_context, rx, handles):
+# ---- roctx-only nested task/phase attribution (milestone 2) ----
+# Labels are INCLUSIVE CPU ranges; root maps GPU kernels to them through the
+# HIP runtime Correlation_Id of the launching API call, never by GPU/CPU time
+# overlap. Class matching is by MRO name so engine subclasses stay covered
+# without importing exllamav3 here (the module must stay torch-free).
+
+_ROCTX_TAG_CLASSES = {          # class name -> (label base, wrapped attrs)
+    "Attention": ("attn", ("forward",)),
+    "GatedDeltaNet": ("gdn", ("forward",)),
+    "BlockSparseMLP": ("moe", ("forward",)),
+    "PLELayer": ("ple", ("forward", "prefetch")),
+    "Embedding": ("embed", ("forward",)),
+    "NGramEmbedding": ("ngram", ("forward", "_stage", "_gather_rows")),
+    "GatedResidual": ("hc", ("forward", "mix", "apply_")),
+    "RMSNorm": ("norm", ("forward",)),
+    "GatedRMSNorm": ("norm", ("forward",)),
+    "LayerNorm": ("norm", ("forward",)),
+}
+
+_ROCTX_COMM_OPS = ("all_reduce", "broadcast", "gather", "gather_small",
+                   "fwd_barrier")
+
+
+def _seq_meta(args, kw):
+    """Decode seq len from the first positional arg, duck-typed (2-D+ ->
+    shape[1], 1-D -> numel, else '?'). No torch dependency."""
+    x = args[0] if args else next(iter(kw.values()), None)
+    try:
+        return x.shape[1] if x.dim() >= 2 else x.numel()
+    except Exception:
+        return "?"
+
+
+def _tensor_meta(a):
+    """'numel x bytes = total' metadata string for a tensor-like arg, or
+    None. numel()/element_size() only: never touches values (no .item(), no
+    sync)."""
+    try:
+        n, e = a.numel(), a.element_size()
+        return "%dx%dB=%dB" % (n, e, n * e)
+    except Exception:
+        return None
+
+
+def _roctx_attr(m, attr):
+    """Resolve an inherited attribute without shadowing it: forward/mix/...
+    may live on the class, so plain hasattr+getattr is required."""
+    fn = getattr(m, attr, None)
+    return fn if callable(fn) else None
+
+
+def _tag_wrap_roctx(rx, m, attr, label_base, handles, key=None):
+    """Wrap one instance attribute in a thread-local ROCtx range (roctx's
+    push/pop stack is per thread, which is what lets ngram _stage/_gather_rows
+    tagged here label their ThreadPoolExecutor worker). Appends an
+    (obj, attr, previous) handle; skips targets already wrapped (dedup)."""
+    if any(h[0] is m and h[1] == attr for h in handles):
+        return False
+    orig = _roctx_attr(m, attr)
+    if orig is None:
+        return False
+    key = str(key if key is not None else getattr(m, "key", None)
+              or type(m).__name__)
+
+    def call(*a, _o=orig, _rx=rx, _lbl="%s %s" % (label_base, key), **kw):
+        with _roctx_range(_rx, "%s seq=%s" % (_lbl, _seq_meta(a, kw))):
+            return _o(*a, **kw)
+    handles.append((m, attr, m.__dict__.get(attr, _MISSING)))
+    setattr(m, attr, call)
+    return True
+
+
+def _restore_roctx_handles(handles):
+    """Undo (obj, attr, previous) handles in reverse install order: instance
+    shadows are deleted when they shadowed nothing, module/class attributes
+    are restored by value. Runs on success AND exception teardown paths."""
+    for obj, attr, prev in reversed(handles or []):
+        if prev is _MISSING:
+            obj.__dict__.pop(attr, None)
+        else:
+            setattr(obj, attr, prev)
+
+
+def _walk_roctx_tree(module):
+    """Bounded class traversal: yields the tree like Module.__iter__ but does
+    NOT descend into Linear subtrees (per-expert quant buffers) so tagging
+    stays at layer-scale labels, not thousands of expert wrappers."""
+    yield module
+    if any(c.__name__ == "Linear" for c in type(module).__mro__):
+        return
+    for sub in getattr(module, "modules", None) or []:
+        yield from _walk_roctx_tree(sub)
+
+
+def _tag_nested_roctx(modules, rx, handles, prefix=""):
+    """Class-based nested labels (see _ROCTX_TAG_CLASSES). Module forwards
+    already wrapped by the top-level pass are deduplicated away; only extra
+    methods (ple.prefetch, hc.mix/apply_, ngram._stage/_gather_rows) still
+    add ranges. Returns the number of wrapped attrs."""
+    n = 0
+    for top in modules or []:
+        for m in _walk_roctx_tree(top):
+            spec = next((_ROCTX_TAG_CLASSES[c.__name__]
+                         for c in type(m).__mro__ if c.__name__ in
+                         _ROCTX_TAG_CLASSES), None)
+            if spec is None:
+                continue
+            base, attrs = spec
+            if base == "attn" and getattr(m, "qsa_indexer", None) is not None:
+                base = "attn.qsa"        # QSA vs full attention
+            for attr in attrs:
+                lbl = base if attr == "forward" else "%s.%s" % (base, attr)
+                if _tag_wrap_roctx(rx, m, attr, prefix + lbl, handles):
+                    n += 1
+            se = getattr(m, "shared_experts", None)   # BlockSparseMLP
+            if se is not None and _tag_wrap_roctx(
+                    rx, se, "forward", prefix + "moe.shared", handles):
+                n += 1
+                # Fused shared-expert paths bypass Python entirely: those
+                # kernels then stay under "moe", never claimed as split here.
+    return n
+
+
+def _tag_backend_roctx(backend, rx, handles):
+    """Comm labels per rank: tp.<op> ranges carrying tensor metadata
+    (numel x element_size of the first tensor args) so root can size the
+    collective without any value read. Args/returns/exceptions pass through."""
+    n = 0
+    for op in _ROCTX_COMM_OPS:
+        orig = _roctx_attr(backend, op)
+        if orig is None or any(h[0] is backend and h[1] == op
+                               for h in handles):
+            continue
+
+        def call(*a, _o=orig, _rx=rx, _op=op, **kw):
+            meta = [m for m in (_tensor_meta(x) for x in a[:2]) if m]
+            label = "tp.%s%s" % (_op, (" " + "+".join(meta)) if meta else "")
+            with _roctx_range(_rx, label):
+                return _o(*a, **kw)
+        handles.append((backend, op, backend.__dict__.get(op, _MISSING)))
+        setattr(backend, op, call)
+        n += 1
+    return n
+
+
+def _tag_module_forwards_roctx(local_context, rx, handles, prefix=""):
     """ROCtx twin of _tag_module_forwards: nested push/pop markers keyed
     KEY seq=N around each top-level forward. Duck-typed on the input tensor,
-    so no torch import happens in roctx mode."""
+    so no torch import happens in roctx mode. Handles are (module, "forward",
+    previous) triples, restorable with _restore_roctx_handles."""
     for m in local_context.get("modules") or []:
         orig = m.forward
         key = str(getattr(m, "key", None) or type(m).__name__)
 
-        def call(*a, _o=orig, _k=key, _rx=rx, **kw):
-            x = a[0] if a else next(iter(kw.values()), None)
-            try:
-                seq = x.shape[1] if x.dim() >= 2 else "?"
-            except Exception:
-                seq = "?"
+        def call(*a, _o=orig, _k=prefix + key, _rx=rx, **kw):
+            seq = _seq_meta(a, kw)
             with _roctx_range(_rx, f"{_k} seq={seq}"):
                 return _o(*a, **kw)
-        handles.append((m, m.__dict__.get("forward", _MISSING)))
+        handles.append((m, "forward", m.__dict__.get("forward", _MISSING)))
         m.forward = call
+
+
+def _roctx_worker_phase(label, orig_name, local_context, args, kwargs):
+    """Shared body of the worker wrappers: resolve the ORIGINAL canonical
+    model_tp_fn function at call time (its alias in model_tp is what we
+    replace; the canonical module is never touched) and label the pass with
+    this rank's own window range. No rx (window closed/failed here) -> plain
+    passthrough, so a stale hook can never crash a worker."""
+    from exllamav3.model import model_tp_fn
+    orig = getattr(model_tp_fn, orig_name)
+    rx = _ACTIVE.get("rx")
+    if rx is None:
+        return orig(local_context, *args, **kwargs)
+    with _roctx_range(rx, label):
+        return orig(local_context, *args, **kwargs)
+
+
+# Top-level (PICKLABLE by module+qualname: the child unpickles the replaced
+# model_tp alias by reference, and the pseudo-rank runs it inline in the
+# parent). _start_cb swaps model_tp's star-imported aliases for these during
+# the active window ONLY; shared target embedding/head kernels dispatched
+# through a borrowed phase count as MTP work even when their nested module
+# label says target (root's exclusive attribution follows the phase range).
+
+def mp_model_forward_target(local_context, *args, **kwargs):
+    """phase wrapper: full target forward pass (prefill chunks and decode)."""
+    return _roctx_worker_phase("phase=target.forward", "mp_model_forward",
+                               local_context, args, kwargs)
+
+
+def mp_model_forward_mtp_embedding(local_context, *args, **kwargs):
+    """phase wrapper: MTP-borrowed target embedding dispatch."""
+    return _roctx_worker_phase("phase=mtp.borrowed_embedding",
+                               "mp_model_forward_embedding",
+                               local_context, args, kwargs)
+
+
+def mp_model_forward_mtp_head(local_context, *args, **kwargs):
+    """phase wrapper: MTP-borrowed target lm_head argmax dispatch."""
+    return _roctx_worker_phase("phase=mtp.borrowed_head",
+                               "mp_model_forward_lm_head_argmax",
+                               local_context, args, kwargs)
+
+
+_ROCTX_WORKER_ALIASES = (
+    ("mp_model_forward", mp_model_forward_target),
+    ("mp_model_forward_embedding", mp_model_forward_mtp_embedding),
+    ("mp_model_forward_lm_head_argmax", mp_model_forward_mtp_head),
+)
 
 
 def tp_trace_roctx_start_worker(local_context, spec):
@@ -474,10 +684,14 @@ def tp_trace_roctx_start_worker(local_context, spec):
         rx.push(label)
         out["range"] = label
         _tag_module_forwards_roctx(local_context, rx, handles)
-        _ACTIVE.update(rx=rx, handles=handles, idx=idx, t0=out["started_unix"])
         out["tagged_modules"] = len(handles)
+        nested = _tag_nested_roctx(local_context.get("modules"), rx, handles)
+        comm = _tag_backend_roctx(local_context.get("backend"), rx, handles)
+        _ACTIVE.update(rx=rx, handles=handles, idx=idx, t0=out["started_unix"])
+        out["tagged_nested"] = nested
+        out["tagged_comm"] = comm
     except Exception as e:
-        _restore_module_forwards(handles)
+        _restore_roctx_handles(handles)
         try:
             if out.get("range"):
                 rx.pop()
@@ -520,7 +734,7 @@ def tp_trace_roctx_stop_worker(local_context):
     except Exception as e:
         out["error"] = repr(e)
     finally:
-        _restore_module_forwards(st.get("handles") or [])
+        _restore_roctx_handles(st.get("handles") or [])
         _ACTIVE.clear()
     return out
 
@@ -609,6 +823,50 @@ def make_iterate_hook(state, on_start, on_stop):
     return iterate
 
 
+def _install_parent_roctx(state):
+    """Parent-side (output rank) attribution the rank workers cannot see:
+    the draft model runs in the PARENT and is not among the rank
+    local_context modules, the iterate-phase labels are instance shadows of
+    the generator, and the model_tp alias swap labels dispatched worker
+    passes. All handles append to the parent's _ACTIVE["handles"]: the
+    pseudo-rank stop worker restores them on success, _parent_roctx_undo
+    restores them if the stop dispatch never returns. Worker-phase labels
+    are pushed from EACH worker's own _ACTIVE rx (or passthrough if none)."""
+    rx = _ACTIVE.get("rx")
+    if rx is None:
+        state.errors.append(
+            "roctx attribution: no parent window (output-rank start failed); "
+            "draft/phase labels NOT installed")
+        return
+    handles = _ACTIVE.setdefault("handles", [])
+    gen = state.gen
+    draft = getattr(gen, "draft_model", None)
+    if draft is not None:
+        mods = getattr(draft, "modules", None) or []
+        _tag_module_forwards_roctx({"modules": mods}, rx, handles,
+                                   prefix="draft.")
+        _tag_nested_roctx(mods, rx, handles, prefix="draft.")
+    for meth, label in (("iterate_draftmodel_mtp_gen", "phase=mtp.draft"),
+                        ("iterate_gen", "phase=target.verify_or_ar")):
+        orig = getattr(gen, meth, None)
+        if not callable(orig) or any(h[0] is gen and h[1] == meth
+                                     for h in handles):
+            continue
+
+        def call(*a, _o=orig, _rx=rx, _lbl=label, **kw):
+            with _roctx_range(_rx, _lbl):
+                return _o(*a, **kw)
+        handles.append((gen, meth, gen.__dict__.get(meth, _MISSING)))
+        setattr(gen, meth, call)
+    from exllamav3.model import model_tp
+    for alias, wrapper in _ROCTX_WORKER_ALIASES:
+        prev = getattr(model_tp, alias, _MISSING)
+        if prev is wrapper:                          # already installed
+            continue
+        handles.append((model_tp, alias, prev))
+        setattr(model_tp, alias, wrapper)
+
+
 def _start_cb(state):
     model = getattr(state.gen, "model", None)
     if model is None or not getattr(model, "loaded_tp", False):
@@ -618,16 +876,28 @@ def _start_cb(state):
     try:
         state.records["start"] = model.tp_worker_dispatch_wait_multi(
             model.active_devices, start_fn, (state.spec,))
-        return True
     except Exception as e:
         state.errors.append(f"trace start dispatch failed: {e!r}")
         return False
+    if state.spec.get("backend") == "roctx":
+        try:
+            _install_parent_roctx(state)
+        except Exception as e:
+            state.errors.append(f"roctx attribution install failed: {e!r}")
+            try:
+                _stop_cb(state)              # close ranks + undo parent
+            except Exception as e2:
+                state.errors.append(f"stop after failed install: {e2!r}")
+            return False
+    return True
 
 
 def _parent_roctx_undo(state, why):
     """Best-effort LOCAL (parent = pseudo-rank) window teardown when the stop
     dispatch never reached it: an open resume/push would otherwise leak every
-    remaining group into the external trace."""
+    remaining group into the external trace. Restores EVERY parent handle:
+    rank/nested/comm wrappers plus the draft/gen/worker-alias hooks installed
+    by _install_parent_roctx."""
     rx = _ACTIVE.get("rx")                       # only if THIS process opened a window
     try:
         if rx is not None:
@@ -635,7 +905,7 @@ def _parent_roctx_undo(state, why):
             rx.pause()
     except Exception as e:
         state.errors.append(f"parent roctx teardown ({why}): {e!r}")
-    _restore_module_forwards(_ACTIVE.pop("handles", None))
+    _restore_roctx_handles(_ACTIVE.pop("handles", None))
     _ACTIVE.clear()
     state.errors.append(why)
 
@@ -774,7 +1044,20 @@ def run(argv=None):
                                                  "(SDK-first LD_PRELOAD, DEEPBIND)",
                      "kernel_observation": "none claimed by this tool: parse the "
                                            "external rocprofv3 CSV against the "
-                                           "window/marker records for GPU evidence"}
+                                           "window/marker records for GPU evidence",
+                     "task_phase_attribution": {
+                         "labels": "inclusive CPU ranges (nested module tags, "
+                                   "tp.<op> comm, phase=..., draft.*); root maps "
+                                   "kernels via the HIP runtime Correlation_Id of "
+                                   "the launching API call, never GPU/CPU overlap",
+                         "worker_phases": ["phase=target.forward",
+                                           "phase=mtp.borrowed_embedding",
+                                           "phase=mtp.borrowed_head",
+                                           "phase=mtp.draft",
+                                           "phase=target.verify_or_ar"],
+                         "note": "shared target embedding/head kernels dispatched "
+                                 "through a borrowed phase count as MTP work even "
+                                 "when their nested module label says target"}}
         else:
             pinfo = {"backend": "none", "control": "observer overhead",
                      "no_torch_profiler": True, "no_roctx": True,
