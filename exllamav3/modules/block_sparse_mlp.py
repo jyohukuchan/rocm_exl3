@@ -42,6 +42,13 @@ FUSED_ROWS_WIDE = int(os.environ.get("EXL3_MOE_FUSED_ROWS_WIDE", 256))
 # restores the atomic adds
 FUSED_DET = os.environ.get("EXL3_MOE_FUSED_DET", "1") != "0"
 MAX_BSZN = 8  # must match MAX_BSZN in exllamav3_ext/libtorch/blocksparse_mlp.h
+# EXPERIMENT, default off: EXL3_TP_REPLICATE_ROUTER=1 imports the routing gate on every TP
+# rank and computes routing locally, dropping the two per-layer routing broadcasts (small
+# RCCL messages are fixed-overhead-dominated on RDNA2). Scoped to the "std" router (Qwen);
+# other router types stay on the legacy broadcast path with an explicit reason
+TP_REPLICATE_ROUTER = os.environ.get("EXL3_TP_REPLICATE_ROUTER", "0") == "1"
+TP_REPLICATE_ROUTER_TYPES = ("std",)
+_TP_REPL_WARNED = set()
 
 @dataclass
 class FusedBuffers:
@@ -968,7 +975,8 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         if self.latent_in is not None:
             y = self.latent_in.forward(y, params)
 
-        # Broadcast routing indices and weights
+        # Broadcast routing indices and weights (legacy TP path; ranks with a replicated
+        # router import with routing_device = None and already computed them above)
         if self.routing_device is not None:
             params["backend"].broadcast(selected_experts, src_device = self.routing_device)
             params["backend"].broadcast(routing_weights, src_device = self.routing_device)
@@ -1331,6 +1339,22 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         return t
 
 
+    def tp_router_replicated(self) -> bool:
+        # Single source of truth for the EXL3_TP_REPLICATE_ROUTER experiment: the parent
+        # evaluates it in make_tp_allocation/tp_export, and tp_import/forward follow the
+        # EXPORTED decision, never the child's own environment
+        if not TP_REPLICATE_ROUTER or self.routing_gate is None:
+            return False
+        if self.router_type not in TP_REPLICATE_ROUTER_TYPES:
+            if self.router_type not in _TP_REPL_WARNED:
+                _TP_REPL_WARNED.add(self.router_type)
+                print(f" !! EXL3_TP_REPLICATE_ROUTER: router_type={self.router_type!r} is not "
+                      f"covered (supported: {TP_REPLICATE_ROUTER_TYPES}); this layer stays on "
+                      f"the legacy broadcast routing")
+            return False
+        return True
+
+
     def make_tp_allocation(self, options: dict) -> list[TPAllocation]:
         storage = 0
         storage += self.routing_gate.storage_size()
@@ -1343,6 +1367,13 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         storage_d = 0
         if self.latent_in is not None:
             storage_d += self.latent_in.storage_size() + self.latent_out.storage_size()
+        if self.tp_router_replicated():
+            # Replicated router: the gate plus the bsz-1 transpose RoutingCFG builds lazily are
+            # persistent bytes on EVERY rank (storage_per_device is not token-multiplied, unlike
+            # overhead), and no longer ride the split pool's single-owner share
+            gate_b = self.routing_gate.storage_size()
+            storage -= gate_b
+            storage_d += 2 * gate_b
         # TODO: More precise overhead estimate accounting for gate etc.
         overhead_d = self.hidden_size * torch.float.itemsize
         overhead_s = 4 * self.intermediate_size * (self.interm_dtype or torch.half).itemsize
@@ -1399,6 +1430,9 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                 "key_tid2eid": self.tid2eid_key,
                 "key_e_score_bias_vl": self.e_score_bias_vl_key,
             },
+            # Opt-in TP router replication (see tp_router_replicated). Read by tp_import with a
+            # default of False so older exported dicts (and the legacy path) are unchanged
+            "replicate_router": self.tp_router_replicated(),
             # Hash-MoE bootstrap layers (DeepSeek-V4): frozen token->experts table, needed
             # wherever routing runs (the output device, like the routing gate)
             "tid2eid": producer.send(self.tid2eid) if self.tid2eid is not None else None,
@@ -1454,6 +1488,10 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         # gates list so the ctor derives gated = False
         gated = exported.get("gates") is not None
 
+        # Parent's opt-in router-replication decision (EXL3_TP_REPLICATE_ROUTER); old exported
+        # dicts without the key take the legacy broadcast path
+        replicate_router = bool(exported.get("replicate_router", False))
+
         # Tensor parallel
         if unit == "channels":
             num_local_experts = exported["kwargs"]["num_experts"]
@@ -1489,10 +1527,16 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             shared_gate = _import("shared_gate"),
             latent_in = _import("latent_in"),
             latent_out = _import("latent_out"),
-            routing_gate = _import("routing_gate") if device == output_device else None,
+            # Empty routed shards need no router, including ranks holding only shared experts.
+            # This also respects allocator device limits: excluded ranks weren't charged for it.
+            routing_gate = _import("routing_gate") \
+                if ((last > first) if replicate_router else device == output_device) else None,
             routing_first = routing_first,
             routing_last = routing_last,
-            routing_device = output_device,
+            # Routing_device drives the per-layer broadcast of selected_experts/routing_weights.
+            # When the router is replicated on every rank, each rank computes routing locally,
+            # so suppress the broadcasts by leaving routing_device unset.
+            routing_device = None if replicate_router else output_device,
             shared_experts_post_norm = _import("shared_experts_post_norm"),
             router_pre_norm = _import("router_pre_norm"),
             routed_pre_norm = _import("routed_pre_norm"),
