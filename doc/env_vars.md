@@ -109,6 +109,21 @@ order. flash-attn is an optional dependency; when it is not installed, this swit
 FA2 across supported hardware and cover more cases (quantized caches, head dims > 256,
 attention sinks); this switch exists for A/B comparison.
 
+## Linear attention (GDN / KDA)
+
+### `EXL3_RDNA2_GDN_CHUNK` (default: `0`)
+
+Gated DeltaNet prefill backend on AMD RDNA2 (gfx103x) only. RDNA2 cannot compile the Triton
+chunk kernels' BF16 dot, and the FP32 form that works there is slower than the fused native
+recurrent kernel at every measured prefill length while adding Triton JIT (V620 pair,
+profile_peak, T65 / T512 / T2048: 0.56 / 4.1 / 16.2 ms native vs 2.9 / 9.2 / 36.1 ms FP32
+chunk, with matching output and state), so RDNA2 defaults long prefill to the native kernel --
+the same one short prompts and decode already use. Set to `1` to opt back into the FP32 chunk
+path for end-to-end A/B measurement. No other platform is affected (the per-device check never
+flips NVIDIA or RDNA3+ away from the chunk kernels, and the KDA branch is not gated); the
+variable is read at every long-prefill dispatch point, before any device query, so it also
+short-circuits the probe.
+
 ## EXL3 GEMM / GEMV
 
 ### `EXL3_GEMV` (default: `1`)

@@ -1,3 +1,5 @@
+import os
+
 import torch
 from ...ext import exllamav3_ext as ext
 from ...util.tensor import get_for_device, buffered_arange
@@ -85,6 +87,41 @@ def torch_recurrent_kda(q, k, v, g, beta, state):
     return out.to(torch.bfloat16)
 
 
+def _device_lacks_bf16_dot(device: torch.device) -> bool:
+    """
+    Indirection for the vendor probe so the import stays function-local (see
+    _rdna2_prefer_native_recurrent) and the seam is one the CPU dispatch tests can replace.
+    """
+    from ...vendor.fla.utils import device_lacks_bf16_dot
+    return device_lacks_bf16_dot(device)
+
+
+def _rdna2_prefer_native_recurrent(device: torch.device) -> bool:
+    """
+    RDNA2-only dispatch: on gfx103x, run long GDN prefill through the fused native recurrent
+    kernel instead of the fla chunk kernels.
+
+    The chunk kernels cannot emit BF16 dots on RDNA2; the vendor package fixed that by running
+    them in FP32 (see exllamav3/vendor/fla/__init__.py), and it matches the recurrence at every
+    size, but it is slower than the native kernel at all measured prefill lengths and adds
+    Triton JIT (V620 pair, profile_peak, runs/qwen38/gdn-backend-compare-peak.json: 0.556 vs
+    2.881 ms at T65, 4.052 vs 9.219 ms at T512, 16.206 vs 36.133 ms at T2048, with equal
+    output/state agreement). Native is the same kernel the short-prefill / decode path already
+    uses, so history, state slots and the bf16 output dtype semantics are unchanged.
+
+    EXL3_RDNA2_GDN_CHUNK (doc/env_vars.md) opts this hardware back into the FP32 chunk path
+    for end-to-end A/B measurement. No other platform is affected: the probe answers False on
+    non-RDMA2 (NVIDIA included -- a host-side per-device-index cached property read, no launch
+    or sync), the KDA chunk branch is deliberately not gated, and the whole predicate is only
+    ever evaluated at the long-prefill chunk-vs-native choice: decode (history=True or
+    seqlen < num_v_heads) short-circuits before it, so the token hot path neither imports the
+    vendor package nor queries the device.
+    """
+    if os.environ.get("EXL3_RDNA2_GDN_CHUNK", "0") != "0":
+        return False
+    return _device_lacks_bf16_dot(device)
+
+
 def gated_delta_rule_fn(
     mixed_qkv: torch.Tensor,
     beta: torch.Tensor,
@@ -162,8 +199,15 @@ def gated_delta_rule_fn(
         )
         return core_attn_out
 
-    # Chunked rule
-    if seqlen >= num_v_heads and not history:
+    # Chunked rule, except on RDNA2 where the native recurrent kernel is the default and
+    # faster route at measured prefill sizes (see _rdna2_prefer_native_recurrent; the vendor
+    # package import below stays on the chunk-only path).
+    # The native kernel always writes its supplied state. Keep the existing
+    # chunk semantics for callers explicitly requesting a read-only initial state.
+    if seqlen >= num_v_heads and not history and (
+        (recurrent_state is not None and not save_state)
+        or not _rdna2_prefer_native_recurrent(mixed_qkv.device)
+    ):
         from ...vendor.fla import chunk_gated_delta_rule
 
         q, k, v = torch.split(mixed_qkv, [k_dim, k_dim, v_dim], dim = -1)
