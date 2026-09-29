@@ -181,6 +181,23 @@ def required_cache_tokens(prompts, new_tokens, draft_tokens):
                for p in prompts)
 
 
+def _runtime_libraries():
+    """Actual loaded runtime paths; catches duplicate HSA/SDK copies that env alone misses."""
+    names = ("libhsa-runtime64", "libamdhip64", "librccl", "librocprofiler-sdk")
+    found = {name: set() for name in names}
+    try:
+        for line in Path("/proc/self/maps").read_text().splitlines():
+            fields = line.split(maxsplit=5)
+            if len(fields) != 6 or not fields[5].startswith("/"):
+                continue
+            for name in names:
+                if name in Path(fields[5]).name:
+                    found[name].add(fields[5])
+        return {name: sorted(paths) for name, paths in found.items()}
+    except OSError as e:
+        return {"error": repr(e)}
+
+
 def _proc_mem():
     """Own-process RSS/PSS/VmSwap (KB) plus minor/major fault counters from
     /proc (missing fields are None, never guessed)."""
@@ -490,6 +507,7 @@ def tp_audit_rank(local_context):
         except Exception:
             rec[key] = None
     rec["proc_mem"] = _proc_mem()
+    rec["runtime_libraries"] = _runtime_libraries()
 
     plan = local_context.get("plan")
     dev_plan = None
@@ -902,8 +920,11 @@ def run(args, prompts):
               "model_fingerprint": model_fingerprint(args.model),
               "repo_git_commit": git_commit(),
               "runtime_env": {k: v for k, v in os.environ.items()
-                              if k.startswith("EXL3_") or k in ("PYTHONPATH", "HSA_ENABLE_SDMA",
+                              if k.startswith(("EXL3_", "NCCL_", "TORCH_NCCL_")) or k in ("PYTHONPATH", "HSA_ENABLE_SDMA",
+                                  "LD_PRELOAD", "LD_LIBRARY_PATH", "AMD_SERIALIZE_KERNEL",
+                                  "HSA_DISABLE_COREDUMP_ON_EXCEPTION",
                                   "HSA_ENABLE_PEER_SDMA", "HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES")},
+              "runtime_libraries": _runtime_libraries(),
               "power_policy_socket": str(args.power_socket), **_raise_nofile(),
               "prompts": [{**{k: v for k, v in p.items() if k != "ids"},
                            "ids_sha256": p["sha"], "n_tokens": len(p["ids"])} for p in prompts],
@@ -1168,7 +1189,7 @@ def run(args, prompts):
             report["tp_final_audit"] = {
                 "ranks": [{k: r.get(k) for k in ("device", "pid", "gcnArchName",
                                                  "torch_allocated_bytes", "torch_peak_bytes",
-                                                 "torch_reserved_bytes", "proc_mem")}
+                                                 "torch_reserved_bytes", "proc_mem", "runtime_libraries")}
                           for r in final_ranks],
                 "finite_hook_stats": final_stats}
             final_audit = aggregate_tp_audit(final_ranks, expected,
