@@ -62,3 +62,17 @@ Engramの独立検証:
 - GDN convも33token以上のTriton経路でBF16 dot命令のLLVM abortを再現（`conv33-repro.log`）。nativeへ限定した独立probeは33/64/257/2048tokenおよび40token historyの出力参照比較に合格、状態はbit一致（`conv-native-probe.json`）。RDNA2だけ長文nativeへ分岐する修正を委任中。
 - `max_chunk_size=32`での最初の全体ロード試行はloaderのPAGE_SIZE=256制約で拒否。次の256chunk/native conv候補・予算[28,28]GiBは実VRAM不足で停止。まだ全体生成成功ではない。例外時の層/割当/最大transientを`load-oom-trace.py`で診断中。
 - GPU前提テストは実機試験・rootレビューで参照側のimport/因果conv位置/状態clone/入力contiguous/QSA並び順等を修正中。最終固定版の全テスト成功は未確認。途中版の成功数を全合格とは扱わない。
+
+### 最初の全体生成成功と割当エラーの切り分け
+
+`load-oom-trace.json`ではlayer18でGPU0の実割当18.95GiB・空き12.51GiBなのに128MiB allocationが失敗し、続くGPU1も割当42MiB・空き31.73GiBで同じ失敗。単純なVRAM総量不足ではない。コンテナのmemory limitは無し、cgroup OOM event無し、nofile soft limitが1024だった。
+
+プロセス内の`RLIMIT_NOFILE` soft limitだけを65536へ上げた候補で、同じ[28,28]GiB予算・Engram RAM・256chunk・cache4096のロードと2job生成が成功しexit0。途中の実FD数1610を確認。GPU0がlayer26で設定予算28GiBに達してGPU1へ移る正常なsplitも記録できた（その時点FD1496）。`first-smoke-nofile.json`はok=true、失敗0、spec_decode.enabled=false、RAM表32,640,156,672bytes・実配置監査OK。診断traceとnative conv一時overrideを含むこのrunの速度は性能値として採用しない。
+
+`37a96d5`で長いconvのRDNA2 native分岐を正式実装。CPU29testsと、override無しの33/64/257/2048token・40token historyを独立参照と比較し成功、状態bit一致（`conv-production-probe.json`）。
+
+以後、モデル全体は一時kernel override無しの正式コードで動作。プロセスのnofile soft limit65536は必要条件として継続する（現在のコンテナ既定は1024のままなので、実行コマンドで明示的に引き上げる）。
+
+`first-bench-512.json`: auto policy、max_chunk2048、cache8704、生成32、warm1+測定2、prefill/decode計6jobs、失敗0・通常終了。prefill中央値259.0tok/s（spread4.4%）、decode24.0tok/s（spread1.2%）、ITL p50約40.50ms。この512tokenの予備値を8K/32Kや最終最適値へ外挿しない。ロード約44秒、両deviceのQSA cache各6、recurrent state21/16。transformer module数27/22はPLEを1module含むため、48decoder層の分割数とは異なる。
+
+現在は`candidate-chunk1.json`/`candidate-chunk1-logits.f32`を生成する固定8case・1024位置のteacher-forced検証を実行中。長文、30job、独立モデル参照、最終profile/性能改善は未完了。
