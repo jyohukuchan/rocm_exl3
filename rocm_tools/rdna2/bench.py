@@ -80,6 +80,39 @@ Phase 3 -- dual-V620 layer split (rocm_tools/rdna2/multi_gpu.py):
     crashes on some RDNA builds; see bench_model.py header), judge by the
     artifacts.
 
+Phase 5 -- Qwen3.8-Flash-Next (qwen4_exp) benchmark trustworthiness:
+  * --ngram-ram forces the PLE n-gram embedding table into HOST RAM by
+    setting config.infer_params.ngram_stream_from_disk = False before load
+    (the model_init --ngram_ram lever; engine default otherwise stays
+    EXL3_NGRAM_STREAM=1 disk-streamed, unchanged when the flag is absent).
+    The assumption is then VERIFIED, not trusted: every NGramEmbedding in
+    the live model is duck-typed (multi_gpu.collect_ngram_state) and its
+    actual load mode ("trellis_ram"/"fp16_ram" vs the disk modes), table
+    tensor residence (str(tensor.device)) and metadata bytes, disk-handle
+    count/filenames and cumulative prefetch_stats are recorded. Requesting
+    --ngram-ram on a table-bearing model whose tables did NOT end up
+    host-RAM-resident fails the run closed (nonzero, JSON written, no
+    throughput measured). Tableless models get a recorded no-op note, not a
+    failure. Residence is evidenced by the tensors themselves plus process
+    RSS/page-fault snapshots (resource.getrusage + /proc/self/statm, taken
+    before load / after load / after inference); CUDA "reserved" is
+    allocator state on the board and is NEVER equated with board total or
+    used as residence evidence. The four load modes return identical
+    results for the same table contents (per exllamav3/modules/
+    ngram_embedding.py), so this measures the same model, not a different
+    one.
+  * The placement audit understands the hybrid architecture: GDN recurrent
+    modules and their local conv_state/recurrent_state tensors, PLE layers
+    with host-side id_state, and the QSA indexer planes (raw_k/pooled) on
+    attention cache layers are inspected through direct attributes only (no
+    arbitrary-graph traversal, no GPU .item sync), recurrent layer counts
+    are recorded per device, and a device holding only GDN/PLE layers is
+    not rejected for missing ordinary KV cache layers (dense Qwen3 D/M
+    verdicts are unchanged).
+  * Still NO speculation anywhere: draft model/n-gram drafting stay off and
+    generator.num_draft_tokens == 0 is asserted; --ngram-ram changes table
+    STORAGE only, never decoding.
+
 Examples
 --------
     # smoke: one run per job, early EOS allowed but labeled
@@ -106,6 +139,17 @@ Examples
         -m /work/models/qwen3-8b-exl3-4bpw --mode bench \
         --use-per-device 3 4 \
         --json-out /work/phase3/bench_ls_qwen3_8b.json
+
+    # Phase 5: Qwen3.8-Flash-Next on the V620 pair with the PLE n-gram table
+    # held in host RAM (sets config.infer_params.ngram_stream_from_disk=False
+    # before load; actual mode/residence/bytes, prefetch stats and RSS +
+    # major/minor fault deltas land in the JSON; the run fails closed if a
+    # table-bearing model did NOT end up RAM-backed). Hybrid GDN/QSA
+    # placement is audited with per-device recurrent-layer state counts.
+    /opt/venv/bin/python rocm_tools/rdna2/bench.py \
+        -m /work/models/qwen3.8-flash-next-exl3 --mode bench \
+        --use-per-device 12 14 --ngram-ram \
+        --json-out /work/phase5/bench_ls_qwen38.json
 """
 
 from __future__ import annotations
@@ -176,6 +220,17 @@ def build_parser() -> argparse.ArgumentParser:
                            "cuda:1... order, and the visible device count must equal it. Without "
                            "this flag the single-GPU path is unchanged (exactly one visible GPU "
                            "required; multi-device boxes are refused with a pointer to this flag)")
+    ap.add_argument("--ngram-ram", action = "store_true",
+                    help = "hold the PLE n-gram embedding table in host RAM: sets "
+                           "config.infer_params.ngram_stream_from_disk = False before load "
+                           "(the model_init --ngram_ram lever; equivalent to EXL3_NGRAM_STREAM=0). "
+                           "Legacy default is untouched without this flag (engine env default, "
+                           "disk-streamed). The ACTUAL table mode/residence/bytes and prefetch "
+                           "stats are audited from the live modules after load; requesting this "
+                           "flag on a table-bearing model that did not end up RAM-backed fails "
+                           "the run (nonzero, JSON written). Storage location only: the four "
+                           "load modes return identical results, so decoding and this harness's "
+                           "spec-decode assertions are unaffected.")
     ap.add_argument("--seed", type = int, default = 1234)
     ap.add_argument("--expect-arch", default = "gfx1030")
     ap.add_argument("--json-out", default = "rdna2_bench_results.json")
@@ -350,6 +405,47 @@ def summarize(samples: list[float]) -> dict:
     }
 
 
+def process_memory_snapshot() -> dict:
+    """
+    Host-process memory/fault accounting for the --ngram-ram assumption check.
+    rss_peak_bytes is resource.getrusage(RUSAGE_SELF).ru_maxrss (Linux kB ->
+    bytes; peak over the process lifetime); rss_bytes is the CURRENT resident
+    set from /proc/self/statm (pages * page size); major/minor_faults are the
+    cumulative rusage counters. Anything unreadable stays None -- never
+    guessed, never inferred from CUDA allocator state (reserved/allocated on
+    the board says nothing about host RAM residence or board capacity).
+    """
+    out = {"rss_bytes": None, "rss_peak_bytes": None,
+           "major_faults": None, "minor_faults": None}
+    try:
+        import resource
+        ru = resource.getrusage(resource.RUSAGE_SELF)
+        out["rss_peak_bytes"] = int(ru.ru_maxrss) * 1024
+        out["major_faults"] = int(ru.ru_majflt)
+        out["minor_faults"] = int(ru.ru_minflt)
+        try:
+            with open("/proc/self/statm", "r") as f:
+                resident_pages = int(f.read().split()[1])
+            out["rss_bytes"] = resident_pages * resource.getpagesize()
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return out
+
+
+def memory_delta(before: dict | None, after: dict | None) -> dict | None:
+    """Per-key int difference of two process_memory_snapshot() dicts;
+    None where either side is missing/non-integer. Pure arithmetic (CPU-testable)."""
+    if not before or not after:
+        return None
+    out: dict = {}
+    for k in after:
+        a, b = after.get(k), before.get(k)
+        out[k] = (a - b) if isinstance(a, int) and isinstance(b, int) else None
+    return out
+
+
 def run(args) -> int:
     # Budget validation happens at the CLI boundary, before any GPU import.
     try:
@@ -395,11 +491,31 @@ def run(args) -> int:
     copy_stats_after_load = None
     cache_tokens = None
     model = None
+    ngram_stream_cfg = None
+    ngram_state = None
+    ngram_final_modules = None
+    host_mem_before_load = None
+    host_mem_after_load = None
+    host_mem_after_inference = None
 
     # Everything that touches the device is inside try; model.unload() runs in
     # finally and its failure is recorded (never swallowed silently).
     try:
         config = Config.from_directory(args.model_dir)
+        # Phase 5: --ngram-ram = the model_init --ngram_ram lever. Set the
+        # load-time option BEFORE the load; without the flag the config (and
+        # the engine's EXL3_NGRAM_STREAM env default) stays untouched. This
+        # changes table STORAGE only -- all four NGramEmbedding load modes
+        # return identical results -- so it is not a model-changing option.
+        if args.ngram_ram:
+            infer_params = getattr(config, "infer_params", None)
+            if infer_params is None:
+                raise SystemExit(" !! FATAL: --ngram-ram: this Config exposes no "
+                                 "infer_params, so ngram_stream_from_disk=False cannot "
+                                 "be set before load")
+            infer_params.ngram_stream_from_disk = False
+        ngram_stream_cfg = getattr(getattr(config, "infer_params", None),
+                                   "ngram_stream_from_disk", None)
         model = Model.from_config(config)
         tokenizer = Tokenizer.from_config(config)
         vocab = int(tokenizer.actual_vocab_size)
@@ -411,6 +527,7 @@ def run(args) -> int:
         cache = Cache(model, max_num_tokens = cache_tokens)   # BEFORE model.load()
 
         t0 = time.time()
+        host_mem_before_load = process_memory_snapshot()
         if split:
             # Official layer-split autosplit API: NO device argument (the engine
             # asserts device and use_per_device are mutually exclusive).
@@ -424,6 +541,7 @@ def run(args) -> int:
         load_s = time.time() - t0
         mem_after_load = torch.cuda.memory_allocated(dev)
         copy_stats_after_load = dict(device_copy.stats)
+        host_mem_after_load = process_memory_snapshot()
         if split:
             multi_gpu.sync_devices(torch, used_idx)
             mem_after_load_per_device = multi_gpu.device_memory_snapshot(torch, used_idx)
@@ -433,6 +551,7 @@ def run(args) -> int:
                   f"(budgets {plan['budgets']} GiB over "
                   f"{len(used_idx)}x {gpu['expect_arch']}); transformer modules per device: {tp}; "
                   f"cache layers per device: {placement['cache_layers_per_device']}; "
+                  f"recurrent layer states per device: {placement['recurrent_layers_per_device']}; "
                   f"placement audit: {'OK' if placement['ok'] else 'FAILED'}", flush = True)
             if not placement["ok"]:
                 for p in placement["problems"]:
@@ -448,6 +567,28 @@ def run(args) -> int:
             # finally below still runs model.unload() on the normal path.
             failures.append("layer-split placement audit failed: "
                             + "; ".join(placement["problems"])
+                            + " -- no throughput jobs were run")
+            raise _SkipJobs()
+
+        # ---- Phase 5: n-gram table residence, VERIFIED from the live modules
+        # (never assumed, never inferred from CUDA reserved memory). Recording
+        # happens in both load modes; the fail-closed check only when
+        # --ngram-ram was requested: a table-bearing model that did not end up
+        # host-RAM-backed invalidates the RAM assumption the run is testing.
+        ngram_state = multi_gpu.collect_ngram_state(model, require_ram = args.ngram_ram)
+        if args.ngram_ram or ngram_state["tables_found"]:
+            print(f" -- ngram table(s): {ngram_state['tables_found']}; modes "
+                  f"{[m['mode'] for m in ngram_state['modules']]}; RAM bytes "
+                  f"{ngram_state['total_table_ram_bytes']}; residence read from the actual "
+                  f"table tensors (NOT from CUDA reserved); audit: "
+                  f"{'OK' if ngram_state['ok'] else 'FAILED'}", flush = True)
+            for note in ngram_state["notes"]:
+                print(f"    note: {note}", flush = True)
+        if args.ngram_ram and not ngram_state["ok"]:
+            for p in ngram_state["problems"]:
+                print(f"    NGRAM-RAM FAIL: {p}", file = sys.stderr, flush = True)
+            failures.append("ngram-ram audit failed: "
+                            + "; ".join(ngram_state["problems"])
                             + " -- no throughput jobs were run")
             raise _SkipJobs()
 
@@ -612,6 +753,15 @@ def run(args) -> int:
                     print(f" -- {label:16} FAIL: {e}", flush = True)
                     if not isinstance(e, (AssertionError, RuntimeError, SystemExit)):
                         traceback.print_exc()
+
+        # Phase 5: post-inference evidence -- prefetch counters moved how far?
+        # Table tensors unchanged (RAM modes never free them mid-run)? RSS and
+        # major/minor fault deltas separate "load allocated the table" from
+        # "inference is paging it".
+        host_mem_after_inference = process_memory_snapshot()
+        if ngram_state is not None:
+            ngram_final_modules = multi_gpu.collect_ngram_state(
+                model, require_ram = False)["modules"]
     except _SkipJobs:
         pass   # audit already recorded the failure in "failures"; run cleanup
     finally:
@@ -704,6 +854,34 @@ def run(args) -> int:
         }),
         "spec_decode": {"enabled": False, "asserted": True,
                         "draft_model": None, "ngram_match_min": 0},
+        # Phase 5: the --ngram-ram assumption, checked against the live engine
+        # objects instead of trusted. after_load holds the per-module records
+        # (mode/residence/bytes/prefetch counters) + verdict; after_inference_
+        # modules re-reads the cumulative prefetch counters once jobs have run;
+        # process_memory brackets the run with RSS + major/minor faults so the
+        # RAM allocation (load delta) and any paging (inference delta) are both
+        # visible. Table residence NEVER uses CUDA reserved-vs-board-total:
+        # reserved is allocator state on the GPU, not host RAM evidence.
+        "ngram_ram": {
+            "requested": bool(args.ngram_ram),
+            "legacy_default_untouched": not args.ngram_ram,
+            "config_ngram_stream_from_disk": ngram_stream_cfg,
+            "after_load": ngram_state,
+            "after_inference_modules": ngram_final_modules,
+            "process_memory": {
+                "before_load": host_mem_before_load,
+                "after_load": host_mem_after_load,
+                "after_inference": host_mem_after_inference,
+                "delta_load": memory_delta(host_mem_before_load, host_mem_after_load),
+                "delta_inference": memory_delta(host_mem_after_load,
+                                                host_mem_after_inference),
+            },
+            "semantics": "ngram_stream_from_disk is a STORAGE-location switch "
+                         "(disk-streamed rows vs host-RAM table); all four "
+                         "NGramEmbedding load modes return identical results, so "
+                         "no decoding behavior or model identity changes and the "
+                         "spec-decode assertions above are unaffected",
+        },
         "sampler": "ArgmaxSampler (greedy, deterministic; min_new_tokens=max_new_tokens in bench mode)",
         "fresh_prompt": "exactly N random IDs in [5%,95%) of actual vocab per run from seeded CPU rng",
         "formulas": {

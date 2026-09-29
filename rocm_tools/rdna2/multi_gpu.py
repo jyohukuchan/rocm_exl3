@@ -28,9 +28,30 @@ split path in these CLIs: without budgets the legacy single-device path runs
 completely unchanged (bench requires exactly one visible GPU, while
 collect_top1 loads onto its explicit --device). When a budgeted split loads, the actual placement
 is AUDITED from the live objects -- module.device, each cache layer's device
-against its owning attention module, the backing k/v tensors, and
-model.active_devices. Budgets and device counts are never evidence by
-themselves.
+against its owning attention module, the backing k/v tensors (plus the QSA
+indexer's raw_k/pooled planes where the layer exposes them), the recurrent
+layer states on hybrid modules (module.recurrent_layers: GDN conv_state/
+recurrent_state, PLE conv_state/id_state), and model.active_devices. Budgets
+and device counts are never evidence by themselves.
+
+Phase 5 (Qwen3.8-Flash-Next / qwen4_exp hybrid architecture): the auditor
+also records recurrent layer counts per device, and a KV-cache-ownership
+problem is only raised for devices that actually own kv_cache-capable
+modules -- a device holding only GDN/PLE layers must instead own its
+recurrent states locally (they are audited against their owning module's
+device; host-side holders such as PLE's id_state are recorded, not
+enforced). Dense Qwen3 (all-attention) verdicts are unchanged. The n-gram
+helpers (find_ngram_modules / describe_ngram_module / collect_ngram_state)
+duck-type NGramEmbedding's load modes so bench.py can VERIFY -- not assume --
+that a --ngram-ram request actually ended up with host-RAM-resident table
+tensors; table residence is read from the tensors themselves, never inferred
+from CUDA reserved memory (allocator reservation says nothing about host RAM
+or board capacity).
+
+All of it stays attribute-level introspection: no .item()/GPU sync, no
+traversal of arbitrary Python object graphs (only .modules / .cache_layers /
+.recurrent_layers / named tensor holders), so the audit is cheap at job
+boundaries and unit-testable with stubs on a CPU-only host.
 """
 
 from __future__ import annotations
@@ -228,6 +249,124 @@ def diff_transfer_stats(before: dict, after: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# n-gram (PLE) table residence: RAM vs disk-streamed, measured from tensors
+# ---------------------------------------------------------------------------
+
+# NGramEmbedding.load() sets exactly one of these four modes; RAM modes keep
+# the table as CPU tensors in .tables, disk modes keep DiskTensorHandles in
+# .handles and never load the table. No other module uses this vocabulary.
+NGRAM_MODES = ("trellis_disk", "trellis_ram", "fp16_disk", "fp16_ram")
+NGRAM_RAM_MODES = ("trellis_ram", "fp16_ram")
+
+
+def _tensor_bytes(t) -> int | None:
+    """numel * element_size from tensor METADATA only (never .item(), never a
+    device query that syncs); None when the object doesn't speak tensor."""
+    try:
+        return int(t.numel()) * int(t.element_size())
+    except Exception:
+        return None
+
+
+def find_ngram_modules(model) -> list:
+    """Every loaded NGramEmbedding in the live model, duck-typed by its
+    load-mode string (multi_gpu stays exllamav3-free). Walks the .modules
+    tree only."""
+    out = []
+    for top in (getattr(model, "modules", None) or []):
+        for m in _iter_module_tree(top):
+            if (getattr(m, "mode", None) in NGRAM_MODES
+                    or type(m).__name__ == "NGramEmbedding"):
+                out.append(m)
+    return out
+
+
+def describe_ngram_module(m) -> dict:
+    """
+    Auditable residence record for one NGramEmbedding: the ACTUAL mode after
+    load, where the backing tensors really live (str(tensor.device), metadata
+    byte counts), how many disk handles exist if any, and a copy of the
+    cumulative prefetch_stats counters when the module exposes them. This is
+    the evidence a --ngram-ram assumption is checked against; CUDA
+    reserved/allocated memory is NOT evidence of table residence.
+    """
+    tables = list(getattr(m, "tables", None) or [])
+    handles = list(getattr(m, "handles", None) or [])
+    tinfo = [{"device": str(getattr(t, "device", None)), "bytes": _tensor_bytes(t)}
+             for t in tables]
+    known = [x["bytes"] for x in tinfo if x["bytes"] is not None]
+    ram_bytes = sum(known) if tables and len(known) == len(tables) else None
+    stats = getattr(m, "prefetch_stats", None)
+    mode = getattr(m, "mode", None)
+    return {
+        "key": getattr(m, "key", None),
+        "mode": mode,
+        "device": str(getattr(m, "device", None)),
+        "ram_backed": bool(tables) and mode in NGRAM_RAM_MODES,
+        "num_rows": getattr(m, "num_rows", None),
+        "rows_per_shard": getattr(m, "rows_per_shard", None),
+        "num_table_tensors": len(tables),
+        "table_tensors": tinfo,
+        "table_residence": sorted({x["device"] for x in tinfo}),
+        "table_ram_bytes": ram_bytes,
+        "num_disk_handles": len(handles),
+        "disk_handle_files": sorted({str(getattr(h, "filename", "?")) for h in handles}),
+        "prefetch_stats": dict(stats) if isinstance(stats, dict) else None,
+    }
+
+
+def collect_ngram_state(model, require_ram: bool) -> dict:
+    """
+    Snapshot + verdict for every n-gram table in the live model. With
+    require_ram (bench --ngram-ram) a table-bearing model that did NOT end up
+    RAM-backed (disk mode, missing table tensors, or a RAM-mode table whose
+    tensors are not host-resident) is reported in "problems" -- the caller
+    fails the run closed. Without the requirement the record is observational
+    only (legacy default unchanged: disk modes pass). A model with no tables
+    at all never fails; the no-op is surfaced in "notes".
+    """
+    modules = [describe_ngram_module(m) for m in find_ngram_modules(model)]
+    problems: list[str] = []
+    notes: list[str] = []
+    if require_ram and not modules:
+        notes.append("--ngram-ram requested but this model exposes no n-gram table "
+                     "(flag is a no-op; nothing was forced into RAM)")
+    for rec in modules:
+        if not require_ram:
+            continue
+        if rec["mode"] not in NGRAM_RAM_MODES:
+            problems.append(
+                f"{rec['key']}: n-gram table is {rec['mode']!r} (disk-streamed), not "
+                f"RAM-backed, although --ngram-ram set ngram_stream_from_disk=False")
+        elif not rec["num_table_tensors"]:
+            problems.append(f"{rec['key']}: RAM mode {rec['mode']!r} but no table "
+                            f"tensors are present")
+        else:
+            off_host = sorted({d for d in rec["table_residence"] if d != "cpu"})
+            if off_host:
+                problems.append(f"{rec['key']}: RAM-mode table tensors are not host-"
+                                f"resident: {off_host}")
+    per_bytes = [r["table_ram_bytes"] for r in modules]
+    total_ram = (sum(b for b in per_bytes if b is not None)
+                 if modules and all(b is not None for b in per_bytes) else None)
+    return {
+        "requested": bool(require_ram),
+        "tables_found": len(modules),
+        "ram_backed": (all(r["mode"] in NGRAM_RAM_MODES for r in modules)
+                       if modules else None),
+        "total_table_ram_bytes": total_ram,
+        "modules": modules,
+        "problems": problems,
+        "notes": notes,
+        "ok": not problems,
+        "residence_evidence": "read from the actual table tensors (device + metadata "
+                              "bytes) and process RSS/fault snapshots in the artifact; "
+                              "CUDA 'reserved' is allocator state on the board and is "
+                              "NOT treated as evidence of table residence or capacity",
+    }
+
+
+# ---------------------------------------------------------------------------
 # placement audit: does the split ACTUALLY live where it was supposed to?
 # ---------------------------------------------------------------------------
 
@@ -267,15 +406,40 @@ def _is_transformer(module) -> bool:
 
 def _cache_layer_tensors(cl) -> dict:
     """The actual backing tensors of one cache layer, read from the object
-    itself (CacheLayer_fp16 exposes .k/.v directly; fall back to get_tensors())."""
+    itself (CacheLayer_fp16 exposes .k/.v directly; the QSA layers expose the
+    indexer planes as .raw_k/.pooled; fall back to get_tensors(), which for
+    CacheLayer_quant lists the packed qk/qv/sk/sv -- and the planes through
+    the QSAPlanes mixin override)."""
     tensors: dict = {}
-    for attr in ("k", "v"):
+    for attr in ("k", "v", "raw_k", "pooled"):
         t = getattr(cl, attr, None)
         if t is not None:
             tensors[attr] = t
     if not tensors:
         try:
             got = cl.get_tensors()
+        except Exception:
+            got = None
+        if got:
+            for idx, t in enumerate(got if isinstance(got, (list, tuple)) else ()):
+                if t is not None:
+                    tensors[f"t{idx}"] = t
+    return tensors
+
+
+def _recurrent_layer_tensors(rl) -> dict:
+    """Named backing tensors of one recurrent layer state (GDNLayerState:
+    conv_state/recurrent_state; PLELayerState: conv_state/id_state), with a
+    get_state_tensors() fallback for state classes using other names. Direct
+    attributes only -- no arbitrary object-graph traversal."""
+    tensors: dict = {}
+    for attr in ("conv_state", "recurrent_state", "id_state"):
+        t = getattr(rl, attr, None)
+        if t is not None:
+            tensors[attr] = t
+    if not tensors:
+        try:
+            got = rl.get_state_tensors()
         except Exception:
             got = None
         if got:
@@ -302,29 +466,48 @@ def audit_placement(model, expect_indices: list[int]) -> dict:
         are rejected; a degenerate model with zero transformer modules is
         audited by module count and passes vacuously;
       * when cache layers exist, each cache layer must have backing storage
-        (k/v tensors or non-empty get_tensors()), its recorded .device must
-        equal its OWNING attention module's .device, its actual k/v tensor
-        devices must match that device, and the device must be in the split;
-        every expected device that owns transformer layers must own at least
-        one cache layer (KV pages local to the attention that needs them);
+        (k/v tensors, QSA indexer planes raw_k/pooled, or non-empty
+        get_tensors()), its recorded .device must equal its OWNING attention
+        module's .device, its actual tensor devices must match that device,
+        and the device must be in the split; every expected device that owns
+        kv_cache-capable modules must own at least one cache layer (KV pages
+        local to the attention that needs them). A device that owns NO
+        kv_cache-capable modules (e.g. only GDN/PLE hybrid layers) is not
+        held to the ordinary-attention count;
+      * recurrent layer states (module.recurrent_layers: GDN conv_state /
+        recurrent_state, PLE conv_state / id_state) are audited the same way:
+        allocated (.device not None), local to their owning module's device,
+        inside the split; computation tensors must be on that device, while
+        PLE's id_state must stay on CPU for the host-side n-gram hashing.
+        Empty or meta-only state is rejected. Every expected device that owns recurrent_cache-capable
+        modules must own at least one recurrent state, and the counts per
+        device are recorded;
       * device progression along the forward order (model.modules) must be
         contiguous: one run per device in expected order -- (0,1,0) means
         placement is broken;
       * model.output_device and model.active_devices are cross-checked.
 
-    Returns an auditable dict (ordered per-module and per-cache-layer records)
-    with "ok" and "problems". Never raises: the CLIs turn problems into a
-    hard, fail-closed exit.
+    Returns an auditable dict (ordered per-module, per-cache-layer and
+    per-recurrent-layer records) with "ok" and "problems". Never raises: the
+    CLIs turn problems into a hard, fail-closed exit. All reads are attribute
+    / tensor-metadata level (numel, element_size, .device): no .item() or
+    other GPU sync, no traversal beyond .modules / .cache_layers /
+    .recurrent_layers.
     """
     expected = list(expect_indices)
     order_of = {i: k for k, i in enumerate(expected)}
     problems: list[str] = []
     modules_out: list[dict] = []
     cache_layers_out: list[dict] = []
+    recurrent_layers_out: list[dict] = []
     dev_of_top: list[int | None] = []
     transformer_own: dict[str, int] = {device_key(i): 0 for i in expected}
     cache_own: dict[str, int] = {device_key(i): 0 for i in expected}
+    recurrent_own: dict[str, int] = {device_key(i): 0 for i in expected}
+    kv_modules_own: dict[str, int] = {device_key(i): 0 for i in expected}
+    rec_modules_own: dict[str, int] = {device_key(i): 0 for i in expected}
     total_cache_layers = 0
+    total_recurrent_layers = 0
 
     modules = list(getattr(model, "modules", None) or [])
     if not modules:
@@ -352,6 +535,13 @@ def audit_placement(model, expect_indices: list[int]) -> dict:
         caps = _caps(module)
         transformer = _is_transformer(module)
         inside = idx is not None and idx in order_of
+        # capability tallies (full tree, the top module included: PLELayer is
+        # itself recurrent_cache-capable and lives at the top level)
+        n_kv_caps = sum(1 for sm in tree if _caps(sm).get("kv_cache"))
+        n_rec_caps = sum(1 for sm in tree if _caps(sm).get("recurrent_cache"))
+        if inside:
+            kv_modules_own[device_key(idx)] += n_kv_caps
+            rec_modules_own[device_key(idx)] += n_rec_caps
 
         if dev is None:
             problems.append(f"module[{top_i}] {getattr(module, 'key', '?')}: device is None "
@@ -386,6 +576,8 @@ def audit_placement(model, expect_indices: list[int]) -> dict:
             "submodule_devices": sub_devices,
             "transformer": transformer,
             "cache_modules": cache_keys,
+            "kv_cache_modules": n_kv_caps,
+            "recurrent_cache_modules": n_rec_caps,
         })
 
         for m in tree:
@@ -415,6 +607,9 @@ def audit_placement(model, expect_indices: list[int]) -> dict:
                                     f"tensors (empty cache storage on a cache-capable module)")
                 elif hasattr(cl, "k") and hasattr(cl, "v") and (cl.k is None or cl.v is None):
                     problems.append(f"cache layer of {getattr(m, 'key', '?')}: missing k/v tensor")
+                elif any(hasattr(cl, name) and getattr(cl, name) is None
+                         for name in ("raw_k", "pooled")):
+                    problems.append(f"cache layer of {getattr(m, 'key', '?')}: missing QSA plane")
                 elif cd is not None:
                     for name, td in sorted(tensor_devices.items()):
                         if td != str(cd):
@@ -423,6 +618,7 @@ def audit_placement(model, expect_indices: list[int]) -> dict:
                             break
                 if len(problems) == problems_before and ckey is not None:
                     cache_own[ckey] += 1
+                tbytes = [_tensor_bytes(t) for t in tensors.values()]
                 cache_layers_out.append({
                     "module_key": getattr(m, "key", None),
                     "module_device": str(mdev) if mdev is not None else None,
@@ -431,6 +627,59 @@ def audit_placement(model, expect_indices: list[int]) -> dict:
                     "device_index": cidx if cidx in order_of else None,
                     "n_tensors": len(tensors),
                     "tensor_devices": tensor_devices,
+                    "total_bytes": (sum(b for b in tbytes if b is not None)
+                                    if tensors and all(b is not None for b in tbytes) else None),
+                })
+
+            for rl in (getattr(m, "recurrent_layers", None) or []):
+                total_recurrent_layers += 1
+                rd = getattr(rl, "device", None)
+                ridx = rd.index if (rd is not None and getattr(rd, "type", None) == "cuda") else None
+                mdev = getattr(m, "device", None)
+                tensors = _recurrent_layer_tensors(rl)
+                tensor_devices = {name: str(getattr(t, "device", None))
+                                  for name, t in tensors.items()}
+                rkey = device_key(ridx) if ridx in order_of else None
+                rlabel = f"recurrent layer state of {getattr(m, 'key', '?')}"
+
+                problems_before = len(problems)
+                if rd is None:
+                    problems.append(f"{rlabel}: device is None (state tensors were not "
+                                    f"allocated on any device)")
+                elif ridx is not None and ridx not in order_of:
+                    problems.append(f"{rlabel}: on {rd}, not one of the expected split "
+                                    f"devices {expected}")
+                elif ridx is None and getattr(rd, "type", None) not in (None, "cuda"):
+                    problems.append(f"{rlabel}: on {rd}, not a cuda device of the split "
+                                    f"{expected}")
+                if mdev is not None and rd is not None and rd != mdev:
+                    problems.append(f"{rlabel}: records device {rd} but its owning module is "
+                                    f"on {mdev} -- state would be remote to the layer that "
+                                    f"advances it")
+                # PLE's id history is intentionally on the CPU. Computation
+                # state must actually be allocated on its owning GPU.
+                if not tensors:
+                    problems.append(f"{rlabel}: no backing state tensors")
+                if rd is not None:
+                    remote = sorted({td for name, td in tensor_devices.items()
+                                     if td != ("cpu" if name == "id_state" else str(rd))})
+                    if remote:
+                        problems.append(f"{rlabel}: records device {rd} but state tensor(s) "
+                                        f"live on {remote}")
+                if len(problems) == problems_before and rkey is not None:
+                    recurrent_own[rkey] += 1
+                rbytes = [_tensor_bytes(t) for t in tensors.values()]
+                recurrent_layers_out.append({
+                    "module_key": getattr(m, "key", None),
+                    "module_device": str(mdev) if mdev is not None else None,
+                    "layer_idx": getattr(m, "layer_idx", None),
+                    "state_class": type(rl).__name__,
+                    "device": str(rd) if rd is not None else None,
+                    "device_index": ridx if ridx in order_of else None,
+                    "n_tensors": len(tensors),
+                    "tensor_devices": tensor_devices,
+                    "total_bytes": (sum(b for b in rbytes if b is not None)
+                                    if tensors and all(b is not None for b in rbytes) else None),
                 })
 
     total_transformers = sum(transformer_own.values())
@@ -442,11 +691,26 @@ def audit_placement(model, expect_indices: list[int]) -> dict:
                                 f"model did not actually split across the requested devices "
                                 f"(budgets are not evidence; placement is)")
     if total_cache_layers > 0:
+        # ordinary-attention count: only devices that actually own kv_cache-
+        # capable modules must own KV pages locally. A hybrid split may put
+        # ONLY GDN/PLE layers on a device; holding it to the attention count
+        # would reject a placement that is correct.
         for i in expected:
-            if cache_own[device_key(i)] == 0:
-                problems.append(f"device {device_key(i)} owns NO cache layers although "
+            k = device_key(i)
+            if kv_modules_own[k] > 0 and cache_own[k] == 0:
+                problems.append(f"device {k} owns NO cache layers although "
                                 f"{total_cache_layers} cache layer(s) exist -- KV pages are "
                                 f"not local to the devices whose attention layers need them")
+    if total_recurrent_layers > 0:
+        # the hybrid counterpart: every device whose layers ADVANCE recurrent
+        # state (GDN conv+delta state, PLE conv+id state) must own it locally
+        for i in expected:
+            k = device_key(i)
+            if rec_modules_own[k] > 0 and recurrent_own[k] == 0:
+                problems.append(f"device {k} owns NO recurrent layer states although "
+                                f"{total_recurrent_layers} recurrent state(s) exist -- "
+                                f"hybrid (GDN/PLE) state is not local to the devices whose "
+                                f"layers advance it")
 
     # contiguous device progression over the forward order (only in-split,
     # cuda-mounted top modules join the sequence)
@@ -484,9 +748,14 @@ def audit_placement(model, expect_indices: list[int]) -> dict:
         "transformer_modules_per_device": transformer_own,
         "cache_layers_per_device": cache_own,
         "total_cache_layers": total_cache_layers,
+        "recurrent_layers_per_device": recurrent_own,
+        "total_recurrent_layers": total_recurrent_layers,
+        "kv_cache_modules_per_device": kv_modules_own,
+        "recurrent_cache_modules_per_device": rec_modules_own,
         "total_transformer_modules": total_transformers,
         "output_device": str(out_dev) if out_dev is not None else None,
         "modules": modules_out,
         "cache_layers": cache_layers_out,
+        "recurrent_layers": recurrent_layers_out,
         "problems": problems,
     }
