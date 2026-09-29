@@ -142,6 +142,10 @@ Mを主対象とし、Dも回帰確認に使う。
 
 ## Phase 6: 本家対応を取り込んだTP2
 
+2026-09-29 ユーザー追加指示: TP2に進む前にQwen3.8 Flash NextのMTPを有効化・高速化する。従来の「投機生成なし」は通常decode baselineの条件として保存し、新しいMTP評価には適用しない。電力方針はbatch=1でprefill auto / drafting・verification・decode profile_peak / 終了後auto、batch>1を許可する構成では推論中profile_peak維持。これは省エネルギー上の選択で、約400Wでの冷却能力不足への対策ではない。
+
+MTPは既存3.05bpw checkpointに含まれる3bit MTP重みを起点に、短文実生成→採用率・巻戻し/状態確認→同一条件AR baselineとのdraft長別速度比較→必要な修正の順で進める。Engram RAMと本体EXL3約3bpwの条件は維持する。
+
 TPはモデル分割と通信backendの二層に分けて実装する。
 
 ### 6A: 本家差分の取り込み
