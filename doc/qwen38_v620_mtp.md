@@ -68,6 +68,8 @@ batch1の推奨は**MTP上限4＋動的調整＋confidence0.6**。設定を[JSON
 
 ## 再現
 
+公式BF16からMTPを自前3bit/5bit量子化した追加比較は、[精度別比較レポート](qwen38_v620_mtp_precision.md)に保存した。既存MTPはHQ構成（主部3bit、入力projection4bit、attention/shared expert5bit）。HQを維持した自前5bitは復元誤差が減ったが、自前3bitとの速度差は小さく、追加VRAM約0.63GiBに見合う改善は確認できなかった。既定はこの文書の配布済み3bitのまま。追加した `--mtp-model` でMTP部分だけ別ディレクトリから比較できる。
+
 以下はホスト側supervisor。専用Unix socket helperを一時起動し、container内のCLIを実行、終了時に両GPUをautoへ戻す。
 
 ```bash
