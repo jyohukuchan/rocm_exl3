@@ -92,3 +92,21 @@ rootによる切り分け:
 単一writer化＋直接projectionの数値回帰テストをOpenCodeへ委任中。native再build、回帰テスト、実モデル再検証は未完了。Pythonの参照projectionだけを差し込む`candidate-chunk1-gate-ref`介入実験を並行して実行中（品質原因の検証用であり運用/性能経路ではない）。
 
 `0ec44fc`: GDN/conv/gated norm/hyperconnections/QSA/状態のGPU前提テスト最終44件がroot実機runで成功。これは上記の実重みMoE gate不具合を覆い隠す合格条件ではない。native binaryはまだ旧`26c326b6...3156f`で、修正後は新binary identityを保存し共通kernelのD/M回帰も必要。
+
+### gate修正完了・長文検証・進行基準の更新
+
+`1885e20`でbroadcast reductionをlane0だけの書込みへ修正。gfx1030 native buildはexit0、候補 `/work/lib-qwen38-reduction` のSHA256は `12859e31a1bd03b61ef5a1ba6725d020dca3557e3c206dcd10f791662ae4767a`。旧 `/work/lib` は保持しており、実行時は候補をPYTHONPATHに明示する。新projection 8件とarchitecture 44件の実GPUテストは計52件成功。旧binaryでは新テスト7件が失敗し、回帰検出力を確認した。
+
+同じ実モデルMoE入力・routingを使った独立reconstruct参照比較でも、1/8rowの最大絶対差は0.14969から2.575e-5、RMS差は0.016426から7.026e-6へ縮小（`moe-isolated-fixed-probe.json`）。これは明確なgate不具合の修正確認。
+
+残る経路差（同一EXL3重み・固定1024位置）:
+- cached prefill対native decodeは1001/1024=97.7539%一致、KL平均0.005919・p99 0.054472。
+- uncached bulk対cached prefillは1014/1024=99.0234%一致。
+- `EXL3_QKV_SLICE=0`はnative decode logitsのSHA256まで同一で、今回の差に影響しない。
+- 選択位置のうち次tokenラベルを持つ1016位置のPPLはuncached bulk 3.79696、native decode 3.81172。全corpus PPLとは区別する（`sampled-position-ppl.json`）。
+
+ユーザーは「実モデルの推論で明らかな異常値が発生しないなら問題を放置して先に進んで」と指示。上記の残差は保存し、暫定99%/KLD基準だけを理由に原因追跡を続けない。量子化品質や完全な経路同値が証明されたという意味ではない。
+
+修正後の正式経路で8K/32K入力それぞれ256token生成に成功、全256logit行が有限・正常終了（`long-8192-native.json`, `long-32768-native.json`）。投機生成なし、prefix cache miss、Engram実テーブルCPU RAM 32,640,156,672bytes、Swap 0。32KのtorchピークはGPU0 30,172,561,920bytes / GPU1 25,656,937,472bytes、0.5秒サンプリングのboard VRAM最大は31,184,961,536 / 26,680,176,640bytes。各stepで有限性を検査するrunなので正式性能値にはしない。
+
+正式性能測定はauto/profile_peak各36job（prefill/decode × 512/2048/8192入力 × warmup1+測定5）、生成256tokenを順次実行中。`formal-benchmarks-process.json`で終了状態・policy復元を管理。残る作業は測定結果の集計、全corpus NLLの記録、共有native変更のD/M回帰、起動条件の再現性確認。
