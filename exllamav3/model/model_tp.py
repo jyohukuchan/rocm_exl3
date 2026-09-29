@@ -18,6 +18,33 @@ from ..tokenizer.mm_embedding import send_embeddings
 cleanupper = Cleanupper()
 DISPATCH_TIMEOUT = 20
 
+def _load_dispatch_timeout() -> float:
+    """
+    Per-worker-response timeout while loading the model, separately configurable from the
+    inference DISPATCH_TIMEOUT: a single mp_model_append on a huge MoE block off slow storage
+    can legitimately far exceed what a decode-step ack may take, so the load path gets its own
+    (longer) bound. The inference default is untouched.
+    """
+    default = 180.0
+    raw = os.environ.get("EXL3_TP_LOAD_TIMEOUT")
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
+        if value > 0 and value == value and value != float("inf"):
+            return value
+    except ValueError:
+        pass
+    print(f" !! Ignoring invalid EXL3_TP_LOAD_TIMEOUT={raw!r}, using {default}s")
+    return default
+
+LOAD_DISPATCH_TIMEOUT = _load_dispatch_timeout()
+
+# Bounded worker reaping in destroy_tp_context: join, terminate, join again so terminated
+# children are reaped instead of left as zombies. Both waits are finite.
+CHILD_JOIN_TIMEOUT = 2
+CHILD_TERMINATE_JOIN_TIMEOUT = 5
+
 class Model_TPMixin:
 
     def __init__(self):
@@ -28,6 +55,11 @@ class Model_TPMixin:
         self.tp_output_device = None
         self.tp_producer = None
         self.tp_backend = None
+        # Timeout in effect for worker result waits. Always DISPATCH_TIMEOUT except while
+        # _load_tp runs, which raises it to LOAD_DISPATCH_TIMEOUT for its own dispatches
+        # (cold JIT / huge module imports off slow storage need far more slack than a
+        # decode-step ack).
+        self.tp_dispatch_timeout = DISPATCH_TIMEOUT
         # Devices whose per-forward None acks are still in flight (see forward_tp), and a strong
         # reference to the dispatched args for that pass: pickling CPU tensors (e.g. exported
         # recurrent-state handles) moves their storages into torch shared-memory segments that
@@ -50,6 +82,16 @@ class Model_TPMixin:
         The output device is the TP "master" for this process: it runs synchronously in the main process through
         PseudoParentConn instead of in a spawned worker. _load_tp() keeps that device last in active_devices so
         fan-out dispatch reaches spawned workers before invoking the blocking pseudo-worker path.
+
+        Lifecycle hardening: the atexit hook is installed before anything that can fail, and a partial spawn
+        (SMProducer/Pipe/Process.start/PseudoParentConn init raising) tears down everything built so far through
+        destroy_tp_context, which tolerates the half-constructed state and surfaces any teardown shortfall as a
+        cleanup error attached to the original exception (the original error always propagates; nothing claims a
+        clean teardown it did not finish). Bounded by design: the pseudo-worker's own process group is only
+        reachable through the PseudoParentConn object AFTER its constructor returns - a constructor that fails
+        before assignment is torn down by the backend's own constructor cleanup (model_tp_rccl /
+        model_tp_backend), and collective/blocking teardown there is bounded by that backend's PG timeout
+        (EXL3_TP_TIMEOUT_S), not by anything in this module.
         """
         log_tp(None, "Creating TP context")
 
@@ -87,38 +129,62 @@ class Model_TPMixin:
         self.mp_children: list = [None] * (num_devices + 1)
         self.mp_parent_conn: list = [None] * (num_devices + 1)
         self.mp_child_conn: list = [None] * (num_devices + 1)
-        self.tp_producer = SMProducer(buffer_size = 64 * 1024**2)
+        self.tp_pending_acks = []
+        self.tp_pending_refs = None
 
-        for rank, device in enumerate(self.active_devices + [-1]):
-            log_tp(None, f"Spawning child process: {device}")
-            if self.tp_output_device == device:
-                self.mp_parent_conn[device] = PseudoParentConn(
-                    device,
-                    self.active_devices,
-                    self.tp_output_device,
-                    backend_args,
-                    self.tp_producer,
-                    global_t0
-                )
-                self.mp_child_conn[device] = PseudoChildConn()
-                self.mp_children[device] = PseudoChild()
-            else:
-                self.mp_parent_conn[device], self.mp_child_conn[device] = Pipe()
-                self.mp_children[device] = Process(
-                    target = mp_model_worker, args = (
-                        self.mp_child_conn[device],
+        # Install exit hook to avoid child processes hanging if main process exits before unloading model.
+        # Registered before anything that can fail: destroy_tp_context is idempotent and tolerates a
+        # half-constructed context, so even a partial spawn below is reaped by this hook (directly, through
+        # the except path, or at interpreter exit if the caller abandons the model).
+        cleanupper.register_atexit(self.destroy_tp_context)
+
+        try:
+            self.tp_producer = SMProducer(buffer_size = 64 * 1024**2)
+
+            for rank, device in enumerate(self.active_devices + [-1]):
+                log_tp(None, f"Spawning child process: {device}")
+                if self.tp_output_device == device:
+                    self.mp_parent_conn[device] = PseudoParentConn(
                         device,
                         self.active_devices,
                         self.tp_output_device,
                         backend_args,
-                        self.tp_producer.export(),
+                        self.tp_producer,
                         global_t0
                     )
-                )
-                self.mp_children[device].start()
-
-        # Install exit hook to avoid child processes hanging if main process exits before unloading model
-        cleanupper.register_atexit(self.destroy_tp_context)
+                    self.mp_child_conn[device] = PseudoChildConn()
+                    self.mp_children[device] = PseudoChild()
+                else:
+                    self.mp_parent_conn[device], self.mp_child_conn[device] = Pipe()
+                    child = Process(
+                        target = mp_model_worker, args = (
+                            self.mp_child_conn[device],
+                            device,
+                            self.active_devices,
+                            self.tp_output_device,
+                            backend_args,
+                            self.tp_producer.export(),
+                            global_t0
+                        )
+                    )
+                    # Link before start(): if start() raises after the popen object exists, the
+                    # teardown path must still see the process and be able to reap it
+                    self.mp_children[device] = child
+                    child.start()
+        except BaseException as exc:
+            # Partial-failure cleanup: close the pseudo-worker's process group, quit/terminate/join
+            # the children that started, close every pipe, unlink the arena and drop the atexit hook.
+            # destroy_tp_context resets all state, so the caller sees the original error and a later
+            # create (or an abandoned model) starts from a clean slate. Teardown shortfalls are never
+            # swallowed: they are attached to the original exception for context, which still wins.
+            try:
+                self.destroy_tp_context()
+            except Exception as cleanup_err:
+                errors = getattr(cleanup_err, "tp_teardown_errors", None)
+                self._tp_attach_cleanup_errors(exc, list(errors) if errors else [repr(cleanup_err)])
+            except BaseException as cleanup_err:
+                self._tp_attach_cleanup_errors(exc, [repr(cleanup_err)])
+            raise
 
         log_tp(None, "TP context created")
 
@@ -126,55 +192,174 @@ class Model_TPMixin:
     def destroy_tp_context(self):
         """
         Destroy child processes (when unloading TP model or atexit)
+
+        Idempotent and total-state-resetting: safe to call twice, safe to call on a
+        half-constructed context (the create_tp_context partial-failure path relies on it), and
+        safe to call with the pseudo conn or the shared-memory producer missing. Only real,
+        owned, started children are joined/terminated, with bounded waits (join, terminate,
+        join again so terminated children are reaped rather than left as zombies); the
+        pseudo-worker (which is this process) is never terminated, only quit. Every connection
+        that exists is closed, deferred forward acks and their pinned arg references are
+        dropped, loaded_tp is reset so the object can be reloaded, and the atexit hook is
+        unregistered.
+
+        Teardown is best-effort and never lies: a failure on one step (worker join, pseudo
+        backend close, producer unlink, connection close, a child that survived terminate) is
+        recorded, ALL remaining resources are still released, and the collected errors are
+        raised at the end as a single RuntimeError carrying them in .tp_teardown_errors. On any
+        path the caller can take, the context is detached from self, so a retry (or a second
+        destroy) sees a clean slate. tp_output_device is deliberately retained (unload_tp()
+        clears it): _load_tp's failure path still consults it after teardown.
         """
         log_tp(None, "Destroying TP context")
+        teardown_errors = []
 
-        # Collect any deferred forward acks so quit commands aren't interleaved with stale results
+        # Collect any deferred forward acks while the pipes are still installed, so quit
+        # commands aren't interleaved with stale results. A failed drain means a worker died
+        # or hung mid-pass - recorded, never swallowed, and not a leak: the reaping below
+        # still runs.
         try:
             self.tp_drain_acks()
-        except Exception:
+        except Exception as e:
             log_tp(None, "Exception draining deferred acks during destroy")
+            teardown_errors.append(f"draining deferred acks: {e!r}")
+
+        # Move the whole context out of self first: every step below operates on the
+        # snapshot, and a second call (or the atexit hook racing an explicit unload) then
+        # sees empty state and is a no-op. loaded_tp follows the state out, so a restart
+        # is possible even when a later teardown step fails; tp_output_device is kept.
+        parent_conns, self.mp_parent_conn = self.mp_parent_conn, []
+        child_conns, self.mp_child_conn = self.mp_child_conn, []
+        children, self.mp_children = self.mp_children, []
+        producer, self.tp_producer = self.tp_producer, None
+        output_device = self.tp_output_device
+        self.loaded_tp = False
+        self.tp_dispatch_timeout = DISPATCH_TIMEOUT
 
         # Destroy process group in child processes
-        for device, (parent_conn, child) in \
-                zip(list(range(len(self.mp_parent_conn))) + [-1], zip(self.mp_parent_conn, self.mp_children)):
-            if device == self.tp_output_device or child is None:
+        for device, (parent_conn, child) in enumerate(zip(parent_conns, children)):
+            if parent_conn is None or child is None:
                 continue
-            if child.is_alive():
-                try:
+            if device == output_device or isinstance(child, PseudoChild):
+                continue
+            if getattr(child, "pid", None) is None or child.pid == os.getpid():
+                continue  # never started, or not a process we own
+            try:
+                if child.is_alive():
                     log_tp(device, f"Closing backend, device {device}")
                     parent_conn.send("quit")
-                except Exception:
-                    log_tp(device, f"Exception while closing backend, device {device}")
-                    pass
+            except Exception as e:
+                log_tp(device, f"Exception while closing backend, device {device}")
+                teardown_errors.append(f"signalling quit to worker device {device}: {e!r}")
 
         # Destroy process group in main process. Called last since it blocks the main process
-        self.mp_parent_conn[self.tp_output_device].quit()
+        pseudo_conn = None
+        if output_device is not None and 0 <= output_device < len(parent_conns):
+            pseudo_conn = parent_conns[output_device]
+        if isinstance(pseudo_conn, PseudoParentConn):
+            try:
+                pseudo_conn.quit()
+            except Exception as e:
+                log_tp(output_device, f"Exception while closing pseudo-worker backend, device {output_device}")
+                teardown_errors.append(f"pseudo-worker quit, device {output_device}: {e!r}")
+                # quit() only reaches its close() after the backend teardown succeeded; make sure
+                # the pinned consumer and local context still go away
+                try:
+                    pseudo_conn.close()
+                except Exception as e:
+                    log_tp(output_device, f"Exception while closing pseudo-worker, device {output_device}")
+                    teardown_errors.append(f"pseudo-worker close, device {output_device}: {e!r}")
 
-        # Join child processes (terminate if hung), close connections
+        # Join child processes (terminate if hung), close connections. Only started,
+        # owned, real children are joined/terminated; join on a never-started Process
+        # raises and terminate on anything that isn't ours would be worse than the leak.
         for device, (parent_conn, child_conn, child) in \
-            enumerate(zip(self.mp_parent_conn, self.mp_child_conn, self.mp_children)):
-            if device == self.tp_output_device or child is None:
-                continue
-            log_tp(None, f"Attempting to destroy child, device {device}")
-            child.join(timeout = 2)
-            if child.is_alive():
-                log_tp(None, f"Terminating child, device {device}")
-                child.terminate()
-            child_conn.close()
-            parent_conn.close()
+                enumerate(zip(parent_conns, child_conns, children)):
+            is_pseudo = child is not None and isinstance(child, PseudoChild)
+            if child is not None and not is_pseudo and device != output_device:
+                pid = getattr(child, "pid", None)
+                if pid is not None and pid != os.getpid():
+                    log_tp(None, f"Attempting to destroy child, device {device}")
+                    try:
+                        child.join(timeout = CHILD_JOIN_TIMEOUT)
+                        alive = child.is_alive()
+                    except Exception as e:
+                        log_tp(None, f"Exception joining child, device {device}")
+                        teardown_errors.append(f"joining worker device {device}: {e!r}")
+                        alive = True  # assume stuck: fall through to terminate
+                    if alive:
+                        log_tp(None, f"Terminating child, device {device}")
+                        try:
+                            child.terminate()
+                        except Exception as e:
+                            teardown_errors.append(
+                                f"terminating worker device {device}: {e!r}, "
+                                f"pid {pid} may still be running")
+                        try:
+                            child.join(timeout = CHILD_TERMINATE_JOIN_TIMEOUT)
+                            if child.is_alive():
+                                teardown_errors.append(
+                                    f"worker device {device} (pid {pid}) survived terminate "
+                                    f"and is still running")
+                        except Exception as e:
+                            teardown_errors.append(
+                                f"reaping terminated worker device {device}: {e!r}")
+            # Close every connection that exists, including the output-device slots. The
+            # pseudo parent conn was closed by quit()/close() above; closing a
+            # multiprocessing Connection twice is itself safe, each close guarded here so a
+            # single failure can't leave later slots open.
+            if parent_conn is not None and not isinstance(parent_conn, PseudoParentConn):
+                try:
+                    parent_conn.close()
+                except Exception as e:
+                    log_tp(None, f"Exception closing parent connection, device {device}")
+                    teardown_errors.append(f"closing parent connection, device {device}: {e!r}")
+            if child_conn is not None:
+                try:
+                    child_conn.close()
+                except Exception as e:
+                    log_tp(None, f"Exception closing child connection, device {device}")
+                    teardown_errors.append(f"closing child connection, device {device}: {e!r}")
             log_tp(None, f"Closed connections, device {device}")
 
-        self.mp_children = []
-        self.mp_parent_conn = []
-        self.mp_child_conn = []
+        self.tp_pending_acks = []
+        self.tp_pending_refs = None
 
-        self.tp_producer.close()
-        self.tp_producer = None
+        if producer is not None:
+            try:
+                producer.close()
+            except Exception as e:
+                log_tp(None, "Exception closing TP shared-memory producer")
+                teardown_errors.append(f"closing TP shared-memory producer: {e!r}")
 
         # Unregister exit hook
         cleanupper.unregister_atexit(self.destroy_tp_context)
+
+        if teardown_errors:
+            err = RuntimeError(
+                f"TP context teardown incomplete, {len(teardown_errors)} problem(s): "
+                + "; ".join(teardown_errors))
+            err.tp_teardown_errors = teardown_errors
+            log_tp(None, str(err))
+            raise err
         log_tp(None, "Destroyed TP context")
+
+
+    def _tp_attach_cleanup_errors(self, exc, errors):
+        """
+        Surface teardown shortfalls on an exception that is already propagating (create/load
+        error paths) without replacing it: attached as a note (3.11+) and as a
+        tp_cleanup_errors attribute for harnesses reading structured reports.
+        """
+        if not errors:
+            return
+        msg = "TP cleanup during error recovery reported: " + "; ".join(errors)
+        try:
+            exc.add_note(msg)
+        except (AttributeError, TypeError):
+            pass
+        existing = getattr(exc, "tp_cleanup_errors", None)
+        exc.tp_cleanup_errors = list(existing or []) + list(errors)
 
 
     def tp_drain_acks(self):
@@ -187,36 +372,107 @@ class Model_TPMixin:
         Child exceptions from the deferred pass surface here.
         """
         pending, self.tp_pending_acks = self.tp_pending_acks, []
-        for device in pending:
-            r = self.tp_worker_result(device)
-            assert r is None, "TP logic error"
-        # All children have consumed the deferred pass's command; shared storages may be released
-        self.tp_pending_refs = None
+        try:
+            for device in pending:
+                r = self.tp_worker_result(device)
+                assert r is None, "TP logic error"
+        finally:
+            # All children have consumed the deferred pass's command; shared storages may be
+            # released. Cleared even when a drain errored (dead or crashed worker): holding the
+            # refs afterwards leaks torch shared-memory segments with no reader left to blame.
+            self.tp_pending_refs = None
+
+
+    def _tp_dead_workers(self, devices):
+        """
+        Reasons why the spawned workers for the SELECTED `devices` cannot take part in a
+        dispatch: dead, never started, or outright missing from a half-built context. A
+        selected-but-absent worker is NOT healthy - the pseudo-worker would block inside a
+        collective waiting on a rank that can never arrive - so it fails the preflight too.
+        The in-process pseudo rank is not a spawned worker and is exempt.
+        """
+        children = self.mp_children
+        if not children:
+            # Selected devices with no context at all: every worker is missing
+            return [(device, "missing (no TP context)") for device in devices
+                    if device != self.tp_output_device]
+        out = []
+        for device in devices:
+            if device == self.tp_output_device:
+                continue
+            child = children[device] if -len(children) <= device < len(children) else None
+            if isinstance(child, PseudoChild):
+                continue
+            if child is None:
+                out.append((device, "missing"))
+                continue
+            pid = getattr(child, "pid", None)
+            if pid is None:
+                out.append((device, "never started"))
+                continue
+            if pid == os.getpid():
+                continue  # not a process we own; joining/killing it would hurt this one instead
+            if not child.is_alive():
+                out.append((device, "is no longer alive"))
+        return out
+
+
+    def _tp_dead_error(self, dead):
+        detail = "; ".join(
+            f"device {device} worker {reason}" for device, reason in dead)
+        return RuntimeError(
+            f"TP dispatch aborted: {detail}. The tensor-parallel model must be unloaded "
+            f"and reloaded.")
+
+
+    def _tp_require_workers_alive(self, devices):
+        """
+        Preflight that every spawned worker about to take part in the following dispatch is
+        still alive, and raise an informative error if not.
+
+        The output-device pseudo-worker executes its command synchronously in the main process
+        and can block inside a backend collective or barrier until every peer rank arrives;
+        a dead child would therefore hang the main process indefinitely (pipe polls bound the
+        wait after the fact, but not a collective entered inline). Checking before fan-out
+        turns that hang into an immediate, named failure. The check is a cheap is_alive()
+        (a non-blocking waitpid) per spawned rank, so the normal all-alive path pays
+        microseconds.
+        """
+        dead = self._tp_dead_workers(devices)
+        if dead:
+            raise self._tp_dead_error(dead)
 
 
     def tp_worker_dispatch_single(self, device, fn, args):
         """
         Dispatch single function call to child and get return value
         """
-        self.tp_drain_acks()
-        conn = self.mp_parent_conn[device]
-        conn.send((fn, args))
-        if conn.poll(DISPATCH_TIMEOUT):
-            result = conn.recv()
-        else:
-            raise TimeoutError("Timed out waiting for worker")
-        if isinstance(result, Exception):
-            raise result
-        return result
+        self.tp_worker_dispatch(device, fn, args)
+        return self.tp_worker_result(device)
 
 
     def tp_worker_dispatch(self, device, fn, args):
         """
         Dispatch function call to child
         """
+        if device == self.tp_output_device:
+            # A pseudo-worker send executes fn inline in the main process and may block inside a
+            # collective with every peer rank, so this dispatch carries the full fan-out liveness
+            # preflight; a spawned worker's dispatch only checks its own pipe's owner.
+            self._tp_require_workers_alive((*self.active_devices, -1))
+        else:
+            self._tp_require_workers_alive([device])
         self.tp_drain_acks()
         conn = self.mp_parent_conn[device]
-        conn.send((fn, args))
+        try:
+            conn.send((fn, args))
+        except Exception as e:
+            # A dead rank usually fails the write (broken pipe): name it instead of surfacing
+            # a bare OSError; anything else propagates unchanged.
+            dead = self._tp_dead_workers([device])
+            if dead:
+                raise self._tp_dead_error(dead) from e
+            raise
 
 
     def tp_worker_result(self, device):
@@ -224,10 +480,16 @@ class Model_TPMixin:
         Await and return result from child function, and propagate any exceptions to main process
         """
         conn = self.mp_parent_conn[device]
-        if conn.poll(DISPATCH_TIMEOUT):
-            result = conn.recv()
-        else:
-            raise TimeoutError("Timed out waiting for worker")
+        timeout = self.tp_dispatch_timeout
+        try:
+            if conn.poll(timeout):
+                result = conn.recv()
+            else:
+                dead = self._tp_dead_workers([device])
+                hint = f" ({dict(dead).get(device, 'unresponsive')})" if dead else ""
+                raise TimeoutError(f"Timed out after {timeout}s waiting for worker on device {device}{hint}")
+        except EOFError as e:
+            raise RuntimeError(f"TP worker on device {device} died while a result was pending") from e
         if isinstance(result, Exception):
             raise result
         return result
@@ -241,7 +503,11 @@ class Model_TPMixin:
         active_devices order. Callers normally pass self.active_devices, whose last entry is the in-process output
         device. That ordering matters because dispatching to the pseudo-worker executes the function immediately and
         can block on TP collectives; spawned workers must already have received the same command before that happens.
+
+        All spawned workers in the fan-out set are prefighted for liveness before any command is sent, so a dead
+        peer fails here instead of hanging the output-device pseudo-worker inside a collective.
         """
+        self._tp_require_workers_alive(active_devices)
         self.tp_drain_acks()
         for idx, device in enumerate(active_devices):
             d_args = args
@@ -476,88 +742,144 @@ class Model_TPMixin:
         self.active_devices = active_devices
         self.create_tp_context(tp_backend)
 
-        # Split model
-        num_devices = max(self.active_devices) + 1
-        max_mem = [0] * num_devices
-        free_total = self.tp_worker_dispatch_wait_multi(self.active_devices, touch_device_measure_vram, ())
-        for device, (free, total) in zip(self.active_devices, free_total):
-            # print(free / 1024**3)  snip
-            if reserve_per_device is not None:
-                free -= reserve_per_device[device]
-            if use_per_device is not None:
-                free = use_per_device[device]
-            max_mem[device] = free
+        # From here on, everything this function builds (workers' module shards, the temporary
+        # distribution pipeline, parent-side loaded modules and the config's deferred-load STC
+        # bracket) must be torn down if the load raises OR the generator is abandoned mid-way
+        # (GeneratorExit), otherwise a failed load leaks child processes, shared-memory segments
+        # and a config stuck in deferred mode. create_tp_context already self-cleans on partial
+        # failure, and destroy_tp_context is idempotent, so the cleanup below is total regardless
+        # of how far we got.
+        producer = None
+        loaded_module = None
+        defer_open = False
+        try:
+            # The load path gets its own (longer, separately configurable) worker-response
+            # timeout: first-touch collectives and huge module imports can legitimately far
+            # exceed what an inference ack may take. Inference keeps DISPATCH_TIMEOUT.
+            self.tp_dispatch_timeout = LOAD_DISPATCH_TIMEOUT
 
-        # Define TP split
-        components = []
-        for m in modules:
-            components += m.make_tp_allocation(tp_options)
-        allocator = TPAllocator(
-            components,
-            num_tokens = max_chunk_size,
-            output_num_tokens = max_output_size,
-            dev_limits = dev_limits,
-        )
-        allocator.initial_split(max_mem)
-        if verbose:
-            allocator.print_split()
-        self.plan = allocator.compile_tp_plan()
-        self.tp_worker_dispatch_wait_multi(self.active_devices, mp_set_plan, (self.plan, self.active_devices))
+            # Split model
+            num_devices = max(self.active_devices) + 1
+            max_mem = [0] * num_devices
+            free_total = self.tp_worker_dispatch_wait_multi(self.active_devices, touch_device_measure_vram, ())
+            for device, (free, total) in zip(self.active_devices, free_total):
+                # print(free / 1024**3)  snip
+                if reserve_per_device is not None:
+                    free -= reserve_per_device[device]
+                if use_per_device is not None:
+                    free = use_per_device[device]
+                max_mem[device] = free
 
-        # Distribution pipeline
-        producer = SMProducer()
-        self.tp_worker_dispatch_wait_multi(
-            self.active_devices,
-            mp_set_consumer,
-            (),
-            [(producer.export(),) if d != tp_output_device else (producer,) for d in active_devices]
-        )
+            # Define TP split
+            components = []
+            for m in modules:
+                components += m.make_tp_allocation(tp_options)
+            allocator = TPAllocator(
+                components,
+                num_tokens = max_chunk_size,
+                output_num_tokens = max_output_size,
+                dev_limits = dev_limits,
+            )
+            allocator.initial_split(max_mem)
+            if verbose:
+                allocator.print_split()
+            self.plan = allocator.compile_tp_plan()
+            self.tp_worker_dispatch_wait_multi(self.active_devices, mp_set_plan, (self.plan, self.active_devices))
 
-        # Begin loading modules
-        with (ProgressBar(f"Loading (TP)" if progressbar else None, len(modules)) as progress):
-            for idx, module in enumerate(modules):
-                last_module = module
+            # Distribution pipeline
+            producer = SMProducer()
+            self.tp_worker_dispatch_wait_multi(
+                self.active_devices,
+                mp_set_consumer,
+                (),
+                [(producer.export(),) if d != tp_output_device else (producer,) for d in active_devices]
+            )
 
-                if callback_sync: callback_sync(idx, len(modules))
-                if generator: yield idx, len(modules)
+            # Begin loading modules
+            with (ProgressBar(f"Loading (TP)" if progressbar else None, len(modules)) as progress):
+                for idx, module in enumerate(modules):
+                    last_module = module
 
-                # Load module to CPU. tp_parent_defer lets payload-heavy modules that the plan
-                # places whole on a single TP rank (the n-gram Engram table under --ngram_ram)
-                # skip materializing in the parent: their tp_export ships the source locations
-                # and the owning rank loads the payload itself. Never a second copy, never
-                # through shared memory.
-                defer = module.can_defer_load()
-                if defer:
-                    config.stc.begin_deferred_load()
-                module.load(torch.device("cpu"), tp_parent_defer = True)
-                if defer:
-                    config.stc.end_deferred_load()
+                    if callback_sync: callback_sync(idx, len(modules))
+                    if generator: yield idx, len(modules)
 
-                # Do module-specific device/process split
-                exported = module.tp_export(self.plan, producer)
-                self.tp_worker_dispatch_wait_multi(self.active_devices, mp_model_append, (exported,))
-                producer.clear()
+                    # Load module to CPU. tp_parent_defer lets payload-heavy modules that the plan
+                    # places whole on a single TP rank (the n-gram Engram table under --ngram_ram)
+                    # skip materializing in the parent: their tp_export ships the source locations
+                    # and the owning rank loads the payload itself. Never a second copy, never
+                    # through shared memory.
+                    loaded_module = module
+                    defer = module.can_defer_load()
+                    if defer:
+                        config.stc.begin_deferred_load()
+                        defer_open = True
+                    module.load(torch.device("cpu"), tp_parent_defer = True)
+                    if defer:
+                        config.stc.end_deferred_load()
+                        defer_open = False
 
-                # Release loaded module
-                module.unload()
+                    # Do module-specific device/process split
+                    exported = module.tp_export(self.plan, producer)
+                    self.tp_worker_dispatch_wait_multi(self.active_devices, mp_model_append, (exported,))
+                    producer.clear()
 
-                # Progress and callbacks per fully loaded module
-                progress.update(idx + 1)
+                    # Release loaded module
+                    module.unload()
+                    loaded_module = None
 
-            # Append final gather layer
-            if last_module.caps["logits_output"]:
-                self.tp_worker_dispatch_wait_multi(self.active_devices, mp_model_append_gather, ())
+                    # Progress and callbacks per fully loaded module
+                    progress.update(idx + 1)
 
-            # Final callback, 100% loaded
-            if callback_sync: callback_sync(len(modules), len(modules))
-            if generator: yield len(modules), len(modules)
+                # Append final gather layer
+                if last_module.caps["logits_output"]:
+                    self.tp_worker_dispatch_wait_multi(self.active_devices, mp_model_append_gather, ())
 
-        # Distribution pipeline
-        self.tp_worker_dispatch_wait_multi(self.active_devices, mp_close_consumer, ())
-        producer.close()
+                # Final callback, 100% loaded
+                if callback_sync: callback_sync(len(modules), len(modules))
+                if generator: yield len(modules), len(modules)
 
-        config.stc.close()
-        self.loaded_tp = True
+            # Distribution pipeline
+            self.tp_worker_dispatch_wait_multi(self.active_devices, mp_close_consumer, ())
+            producer.close()
+            producer = None
+
+            config.stc.close()
+            self.loaded_tp = True
+        except BaseException as exc:
+            # Best-effort teardown in dependency order, keeping the original error visible even
+            # if a cleanup step also fails: every cleanup shortfall is attached to the original
+            # exception (note + tp_cleanup_errors) instead of being swallowed.
+            self.tp_dispatch_timeout = DISPATCH_TIMEOUT  # any destroy-side waits must be short
+            cleanup_errors = []
+            if defer_open:
+                try:
+                    config.stc.abort_deferred_load()
+                except Exception as e:
+                    cleanup_errors.append(f"aborting deferred load: {e!r}")
+            if loaded_module is not None:
+                try:
+                    loaded_module.unload()
+                except Exception as e:
+                    cleanup_errors.append(f"unloading partially loaded module: {e!r}")
+            if producer is not None:
+                try:
+                    producer.close()
+                except Exception as e:
+                    cleanup_errors.append(f"closing distribution producer: {e!r}")
+            self.loaded_tp = False
+            try:
+                self.destroy_tp_context()
+            except Exception as e:
+                teardown = getattr(e, "tp_teardown_errors", None)
+                cleanup_errors.extend(teardown if teardown else [f"destroying TP context: {e!r}"])
+            except BaseException as e:
+                cleanup_errors.append(f"destroying TP context: {e!r}")
+            if cleanup_errors:
+                log_tp(None, "Cleanup after failed TP load reported: " + "; ".join(cleanup_errors))
+                self._tp_attach_cleanup_errors(exc, cleanup_errors)
+            raise
+        finally:
+            self.tp_dispatch_timeout = DISPATCH_TIMEOUT
 
         if 'yield' in locals():
             yield
@@ -626,6 +948,11 @@ class Model_TPMixin:
         last_kv_module_idx: int,
         modules: list,
     ):
+        # Preflight every spawned rank (children and the CPU helper) up front: this method
+        # feeds the child ranks through raw send_bytes and then enters the blocking, in-process
+        # pseudo-worker forward, so a dead rank must fail here rather than hang the main process
+        # inside a collective (or wedge on a pipe write to a corpse mid-fan-out).
+        self._tp_require_workers_alive((*self.active_devices, -1))
         self.tp_worker_dispatch(-1, mp_cpu_reduce, ())
 
         x, reserve = self.prepare_inputs_for_tp(x, params)
@@ -660,6 +987,13 @@ class Model_TPMixin:
         last_kv_module_idx: int,
         modules: list,
     ):
+        # Preflight every spawned rank (children and the CPU helper) up front: this method
+        # feeds the child ranks through raw send_bytes and then enters the blocking, in-process
+        # pseudo-worker forward, so a dead rank must fail here rather than hang the main process
+        # inside a collective (or wedge on a pipe write to a corpse mid-fan-out). The pseudo
+        # dispatch at the end of the loop re-checks, closing the window between fan-out and the
+        # blocking call; each pass is just a waitpid per rank.
+        self._tp_require_workers_alive((*self.active_devices, -1))
         self.tp_worker_dispatch(-1, mp_cpu_reduce, ())
 
         x, reserve = self.prepare_inputs_for_tp(x, params)
