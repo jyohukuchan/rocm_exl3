@@ -140,8 +140,18 @@ docker exec -e PYTHONPATH=/work/lib-qwen38-reduction:/src \
 
 全て5回の中央値。decodeはgeneratorのtime_generateによる従来値、右列は最初のtoken受取から最後のtoken受取までの実測値で、最終iterate内の終了処理を含む。autoの最終token受取は0.4〜1.4秒かかり、この差を無視しない。8Kの実TTFT中央値はauto21.716秒/peak22.473秒。decode ITL p50/p95はauto40.38/40.96ms、peak27.50/27.81ms（各1275間隔）。
 
-profile_peakで8K decodeは約47%向上、終了処理込みでも約46%向上。8K prefillは約3.5%低下。生成重視ではprofile_peakが有利だが、設定を恒久変更せず測定後autoへ戻した。2K auto prefillはspread5.1%、2K decode jobのTTFTは18.4%と揺れがあり、その値から小さい改善差を論じない。8K prefillのspreadはauto0.71%/peak0.63%程度、decodeはauto2.28%/peak0.3%程度。
+profile_peakで8K decodeは約47%向上、終了処理込みでも約46%向上。8K prefillは約3.5%低下。生成重視ではprofile_peakが有利だが、設定を恒久変更せず測定後autoへ戻した。2K auto prefillはspread5.1%、2K decode jobのTTFTは18.4%と揺れがあり、その値から小さい改善差を論じない。8K prefillのspreadはauto0.71%/peak0.57%程度、decodeはauto2.28%/peak0.3%程度。
 
 両policyでboard VRAM sampled peakはGPU0約28.853GiB/GPU1約24.655GiB、torch peak約27.976/23.625GiB。終了時host RSSはauto38.37GiB/peak38.40GiB、推論区間major fault0。Engram表は30.40GiB、再帰checkpoint cacheの既定上限は別途4GiB。VRAM使用量はjobごとのsnapshotを保存し、増加はcontext/cacheと一時割当に対応する。
 
 gpu_metricsのGPU1 activityはauto run全体で99%固定だったため、この値だけでGPU稼働割合を推定しない。clock/power/VRAMは変動しており生値を保存。測定中の他GPUコンテナはsleepのみ（`formal-process-inventory.json`）。終了時の待ち時間はキャッシュ整理/RAM返却の計測で切り分ける。
+
+### 実生成と終了処理の追加確認
+
+`chat-sanity-native.json`: モデル付属chat template、thinking無効、greedy、投機生成なし。日本語のVRAM/RAM説明は88token、順序保持の重複除去Python関数は91tokenでEOS正常終了。全179logit行が有限で、目視で明らかな崩壊・反復異常なし。生成関数は空リスト・重複・負数を含む4caseで期待値と一致（`chat-code-check.json`）。これは限定的な生成smokeであり総合能力評価ではない。初回は診断wrapperの引数名不一致でTypeErrorになったため、修正して再実行。失敗ログは`chat-sanity-harness-failure.*`に保持。
+
+`idle-observed-auto-2k.json`: 2Kだけの追加12jobは0fail・exit0。`idle-observation.json`ではdecode最後のiterateが92.7〜343.3ms、そのうちqueue終了処理が51.8〜303.4msで、残り約40msは通常decodeと一致。RAM返却の`malloc_trim`とstranded checkpoint除去中の同処理が主な終了コストで、page defragは最大0.004ms未満。この追加runのhost RSSは34.36→35.24GiB、保持checkpointは最大0.759GiBで、正式36jobの約38.4GiBとは状態が異なる。従って正式runの0.4〜1.4秒の内訳をこのrunだけで断定しない。
+
+2K追加prefill中央値412.5tok/s、spread21.4%で揺れを再確認。正式結果の小さなprefill差は8Kの同一入力比較を中心に評価する。終了時のメモリ返却を無効化する変更は加えず、現在の到達性能と終了コストを分けて記録する。
+
+全corpus評価用に`3a14430`で`collect_nll.py`を追加。OpenCodeの実装をrootがレビューし、例外後の誤った位置対応を防止する処理と不完全artifact保存を強化。CPU294tests・compile成功。固定manifestの全次tokenラベル2022個を評価対象とし、1024選択位置のPPLと区別する。
