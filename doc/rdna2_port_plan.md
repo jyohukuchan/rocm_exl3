@@ -138,6 +138,8 @@ Mを主対象とし、Dも回帰確認に使う。
 
 性能の暫定実用目標: batch=1、8K入力時にdecode 10 tok/s以上、warm状態・prefix cache missの8K TTFT 60秒以内。これは実測予測やユーザー指定値ではなく、本計画の改善優先度を決める仮目標。32Kはまず完走・安定性を確認して別測定する。未達なら追加のprofile→修正→再測定を行い、物理的・実装的制約と到達値を明記する。
 
+2026-09-29 Phase5到達: 修正nativeで32K+256有限logits、36連続job×auto/profile_peak（各条件5測定）正常終了、日本語/コード生成、2048入力の1792token prefix再利用、全corpus2022ラベルPPL3.786、D/M各1024位置回帰一致。8Kの実TTFT21.7/22.5秒、decode24.6/36.1tok/s（auto/peak）。終了処理込みの実受取decodeは23.6/34.3tok/s。Engram実RAM常駐、VRAM/host memory記録、起動のnofile65536・修正binary明示も整備。残差は上記ユーザー指示で保留し、後続はPhase6。詳細・制約・生artifact名は`doc/qwen38_v620_results.md`。
+
 ## Phase 6: 本家対応を取り込んだTP2
 
 TPはモデル分割と通信backendの二層に分けて実装する。

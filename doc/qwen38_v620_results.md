@@ -1,14 +1,16 @@
-# Qwen3.8 Flash Next / V620 pair — 検証中
+# Qwen3.8 Flash Next / V620 pair — 実行・性能検証結果
 
-2026-09-29開始。未完了。目的は投機的デコーディング無しでQwen3.8 Flash NextをEXL3約3bpw、PLE/EngramをRAMに置いてV620×2で実行し、正確性と速度を検証・改善すること。
+2026-09-29。Qwen3.8 Flash Next EXL3 3.05bpwをV620×2のlayer split、PLE/Engram RAM、投機的デコーディング無しで実行。32K+256生成・有限logits、日本語/コード生成、36連続job×2電力設定で正常終了を確認した。8K入力時はautoでprefill388.7/decode24.6tok/s、profile_peakで374.9/36.1tok/s。以下に固定条件、検証経過、正式結果、再現用コマンドを保存する。
+
+cached prefill/decodeのtop-1一致率97.75%前後は既知事項として残す。ユーザー指示に従い、明らかな実推論異常がなければ暫定99%閾値だけで進行を止めない。Tensor Parallelは後続Phase6であり、今回の実測はTPではない。
 
 ## 固定条件
 
 - モデル: `turboderp/Qwen3.8-Flash-Next-exl3`、branch `3.05bpw_h5_ng5`、revision `69e33439ae950f17bcbe95c98f117d80f759ab6d`。
-- HF metadataの全ファイル合計: 85,139,442,313 bytes。本体EXL3 3.05bpw、head 5bit、ngram専用量子化。PLEはVRAMへ全量配置せずRAM常駐を実測確認する。
+- HF metadataの全ファイル合計: 85,139,442,313 bytes。本体EXL3 3.05bpw、head 5bit、ngram専用量子化。全サイズ・LFS SHA256照合済み。PLEはRAM常駐を実測確認済み。
 - text-only、batch1、全routed expertはGPU常駐。draft model、MTP、n-gram draftingを使わない。
 - 基準環境: `doc/v620_pair_config.json`。V620 UUID順43→03、`HSA_ENABLE_SDMA=0`。性能測定時のみ`profile_peak`、終了時に元のpolicyへ戻す。
-- 初期load budget `[28,28]` GiBは未検証。scratch/cache/driver込みの実VRAMと余裕を確認して決定する。
+- load budget `[28,28]` GiBを検証済み。32K+256時のboard sampled peakは約29.043/24.848GiBで、scratch/cache/driver込みでも各GPUに余裕を残す。
 - 48層: GDN36、QSA12。GDN key/value heads16/48、head_dim128。QSA main head_dim256、indexer head_dim128、token budget2048。PLEは第2層前。
 
 ## 検証・改善の順序
@@ -21,7 +23,7 @@
 
 完了条件・暫定性能目標は`doc/rdna2_port_plan.md` Phase5を維持する。未達・未測定を完了へ読み替えない。Tensor Parallelは同計画Phase6で扱う。
 
-## 現在の証拠
+## 調査の経過（以下の「未完了」「実行中」は各時点の記録）
 
 - 元repo HEAD `9d32c69`、作業開始時clean。既存の2GPU D/M検証済み環境を再使用。
 - 既存GDNテストの小規模参照一致2件・ビット再現性3件が実V620で成功（5 passed、19 deselected）。Qwen3.8全体の正確性は未証明。
@@ -155,3 +157,19 @@ gpu_metricsのGPU1 activityはauto run全体で99%固定だったため、この
 2K追加prefill中央値412.5tok/s、spread21.4%で揺れを再確認。正式結果の小さなprefill差は8Kの同一入力比較を中心に評価する。終了時のメモリ返却を無効化する変更は加えず、現在の到達性能と終了コストを分けて記録する。
 
 全corpus評価用に`3a14430`で`collect_nll.py`を追加。OpenCodeの実装をrootがレビューし、例外後の誤った位置対応を防止する処理と不完全artifact保存を強化。CPU294tests・compile成功。固定manifestの全次tokenラベル2022個を評価対象とし、1024選択位置のPPLと区別する。
+
+### 全corpus評価・共通nativeの回帰確認
+
+全corpus NLL追加時、最初のcase後にGPU page faultが2回再現した。損失計算をGPU FP64からCPU FP64へ移しても再現し、FP64計算だけが原因という仮説は否定。全ラベルの評価では最後の入力tokenに次tokenラベルが無いため、その最終forwardをharvestしない。以前のmanifestは最後の位置を選択しており、harvestの`.item()`が暗黙の同期を担っていた。評価collectorは未完了のGPU処理がある状態で次caseへ進み得た。
+
+`c3183e8`: 再帰stateを返却する前に全使用GPUを同期するケース境界処理を追加。生成エンジンは無変更、各tokenでの追加同期ではない。同じCPU損失計算のまま境界同期だけを追加すると全8case完走・exit0。CPU294testsも成功。故障runのログと途中GPU coreは別名で保存し、故障済みの当該PIDだけを終了、GPU resetは実施していない。
+
+`full-corpus-nll-native.json`: 全2022ラベル、mean NLL **1.33130964**、PPL **3.78599843**、complete=true、errors0。以前のnative decode結果と共通する1016位置はtop1 **1016/1016一致**（`full-nll-overlap-check.json`）。このrunはCPUでFP64損失を計算し、そのmetadata表示フィールドの追加前に起動したもの。PPLは本固定corpusに対する値であり、独立の未量子化モデルとの同等性は主張しない。
+
+`dm-native-regression.json`: 新nativeで既存D（Qwen3-8B 4bpw）/M（Qwen3-30B-A3B 3bpw）も各1024位置を再収集し、両方とも従来bulk結果と1024/1024一致、通常exit0。新nativeへの変更で両モデルの測定対象位置に退行なし。
+
+`prefix-reuse-native.json`: 同じ2048token入力を2回生成し、1回目cache miss、2回目1792token再利用。両方32token・全logits有限・生成ID列も一致・正常exit0。最初の試行はロード前のhost RAM guardで停止した（`prefix-reuse-memory-guard.*`）。109GiBホストでZFS ARCが約78GiBを占有し、MemAvailableが必要量を下回っていたため。他に大きなRSSのprocessがないことを確認し、この診断だけ`EXL3_HOST_MEM_RESERVE_MB=0`で事前guardを解除。ARCは実際に回収されて完走した。OS/ZFS設定は変更していない。
+
+運用時はEngram約30.4GiBとその他のhost working set分のRAMを確保すること。既定guardはMemAvailableだけを見るため、ZFS ARCが大きいとロードを拒否し得る。上記guard解除はRAM量・回収可能cacheを確認した診断条件であり、正式72jobの速度値はguard解除無しのrun。再現コマンドは既定guardを維持する。
+
+Phase5の到達点: 32K+256、連続36job×2条件、実生成、prefix再利用、全corpus記録、D/M回帰、新nativeの再現用起動条件を確認済み。8K実TTFT約22秒・decode24.6〜36.1tok/sで暫定実用目標を満たす。残る経路間top1差はユーザー指示で保留。TP2、未量子化モデルとの総合品質比較、全kernelの最適化完了は今回の結果に含めない。
