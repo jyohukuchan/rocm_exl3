@@ -110,3 +110,20 @@ rootによる切り分け:
 修正後の正式経路で8K/32K入力それぞれ256token生成に成功、全256logit行が有限・正常終了（`long-8192-native.json`, `long-32768-native.json`）。投機生成なし、prefix cache miss、Engram実テーブルCPU RAM 32,640,156,672bytes、Swap 0。32KのtorchピークはGPU0 30,172,561,920bytes / GPU1 25,656,937,472bytes、0.5秒サンプリングのboard VRAM最大は31,184,961,536 / 26,680,176,640bytes。各stepで有限性を検査するrunなので正式性能値にはしない。
 
 正式性能測定はauto/profile_peak各36job（prefill/decode × 512/2048/8192入力 × warmup1+測定5）、生成256tokenを順次実行中。`formal-benchmarks-process.json`で終了状態・policy復元を管理。残る作業は測定結果の集計、全corpus NLLの記録、共有native変更のD/M回帰、起動条件の再現性確認。
+
+### 再現用起動条件
+
+コンテナ `rocm-exl3-v620-pair` はV620の2枚だけを公開し、`/src`が本repo、`/work`が `/home/homelab1/datapool/rocm-exl3-rdna2`。コンテナ既定の旧binary/nofileに依存せず、次のように明示する。GPU power policyは外から変更せず現在値を利用する（測定時のpolicyは結果と併記）。
+
+```bash
+docker exec -e PYTHONPATH=/work/lib-qwen38-reduction:/src \
+  -e HSA_ENABLE_SDMA=0 -w /src rocm-exl3-v620-pair \
+  bash -c 'ulimit -S -n 65536 && exec python rocm_tools/rdna2/bench.py \
+    -m /work/models/qwen38-flash-next-exl3-3.05bpw \
+    --use-per-device 28 28 --ngram-ram --mode bench \
+    --contexts 512 2048 8192 --new-tokens 256 --warmup 1 --repeats 5 \
+    --max-chunk-size 2048 --cache-tokens 8704 \
+    --json-out /work/runs/qwen38/reproduce-bench.json'
+```
+
+`--ngram-ram`はEngramのCPU RAM常駐指定。投機デコーディング用のngram matchingとは別機能で、本harnessはdraft model無し・ngram matching無効を実体で検査する。32K検証はcache33280を使用。上の8704は512/2K/8K測定専用。
