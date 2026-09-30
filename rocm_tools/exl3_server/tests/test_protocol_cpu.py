@@ -193,6 +193,68 @@ def test_incremental_metadata_and_arguments_arrive_before_close_and_initial_reas
     assert tool_deltas and tool_deltas[0]["tool_calls"][0]["function"]["name"] == "get_weather"
 
 
+@pytest.mark.parametrize("thought", ["thought", "\nthought\n", " \tthought \t",
+                                     "思考 α😺\n", "", "\n \t"])
+@pytest.mark.parametrize("chunking", ["whole", "character", "byte"])
+def test_initial_thinking_is_streamed_once_with_padding_and_utf8(thought, chunking):
+    raw = thought + "</think>answer"
+    if chunking == "whole":
+        chunks = [raw]
+    elif chunking == "character":
+        chunks = list(raw)
+    else:
+        encoded = raw.encode("utf-8")
+        chunks = [encoded[i:i + 1] for i in range(len(encoded))]
+    parser = IncrementalAssistantParser(initial_reasoning=True)
+    events = []
+    for chunk in chunks:
+        events.extend(parser.feed(chunk))
+    result = parser.finish()
+    events.extend(result["events"])
+    reasoning = "".join(e["delta"] for e in events if e["type"] == "reasoning_content")
+    assert reasoning == thought
+    assert result["reasoning_content"] == (thought.strip() or None)
+    assert result["content"] == "answer"
+
+
+def test_padded_initial_thinking_does_not_repeat_at_split_close_or_finish():
+    parser = IncrementalAssistantParser(initial_reasoning=True)
+    events = parser.feed("\nthought\n")
+    # Thought text arrives before the closing tag, not only at finish.
+    assert "".join(e["delta"] for e in events if e["type"] == "reasoning_content") == "\nthought\n"
+    for chunk in ["</thi", "nk", ">", "answer", ""]:
+        later = parser.feed(chunk)
+        assert not any(e["type"] == "reasoning_content" for e in later)
+        events.extend(later)
+    result = parser.finish()
+    assert not any(e["type"] == "reasoning_content" for e in result["events"])
+    assert result["reasoning_content"] == "thought"
+    assert result["content"] == "answer"
+
+
+@pytest.mark.parametrize("initial", ["\nfirst\n", "\n \t"])
+def test_reconciling_initial_thinking_preserves_later_thinking_and_tools(initial):
+    parser = IncrementalAssistantParser(initial_reasoning=True, tools=TOOLS)
+    events = parser.feed(initial + "</think>")
+    # Later genuine thought blocks must survive suppression of the first one.
+    later = []
+    for chunk in ["<think>second</thi", "nk>",
+                  '<tool_call><function=get_weather><parameter=city>"Tokyo"',
+                  "</parameter></function></tool_call>"]:
+        later.extend(parser.feed(chunk))
+    result = parser.finish()
+    later.extend(result["events"])
+    streamed_initial = "".join(e["delta"] for e in events if e["type"] == "reasoning_content")
+    assert streamed_initial == initial
+    suffix = "".join(e["delta"] for e in later if e["type"] == "reasoning_content")
+    assert suffix == ("\nsecond" if initial.strip() else "second")
+    assert result["reasoning_content"] == ("first\nsecond" if initial.strip() else "second")
+    events.extend(later)
+    arguments = "".join(e["delta"] for e in events if e["type"] == "tool_call_arguments")
+    assert json.loads(arguments) == {"city": "Tokyo"}
+    assert len([e for e in events if e["type"] == "tool_call_start"]) == 1
+
+
 def test_partial_second_tool_call_never_leaks_raw_xml():
     parser = IncrementalAssistantParser(tools=TOOLS)
     events = parser.feed(

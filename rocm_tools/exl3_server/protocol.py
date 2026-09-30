@@ -718,9 +718,13 @@ class IncrementalAssistantParser:
     def _events_from_parsed(self, parsed: dict) -> list[dict]:
         events = []
         reasoning = parsed.get("reasoning_content") or ""
-        if self.initial_reasoning and self._initial_reasoning_value \
-                and reasoning.startswith(self._initial_reasoning_value):
-            reasoning = reasoning[len(self._initial_reasoning_value):]
+        # Initial thought text has already been streamed verbatim. Match it
+        # using the same trimming as _remove_top_level_think, while leaving
+        # any subsequent genuine thought blocks available for emission.
+        initial_reasoning = self._initial_reasoning_value.strip()
+        if self.initial_reasoning and initial_reasoning \
+                and reasoning.startswith(initial_reasoning):
+            reasoning = reasoning[len(initial_reasoning):]
         content = parsed.get("content") or ""
         if len(reasoning) > self._emitted_reasoning:
             events.append({"type": "reasoning_content", "delta": reasoning[self._emitted_reasoning:]})
