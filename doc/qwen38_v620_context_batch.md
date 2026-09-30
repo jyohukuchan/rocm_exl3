@@ -1,6 +1,6 @@
 # Qwen3.8 Flash Next: V620 TP2 context / batch / MTP measurements
 
-Status: batch4 speed confirmation in progress, 2026-09-30. Further long-context tests are deferred at the user's request. Only completed runs below are usable evidence. Capacity allocation alone is not an inference result.
+Status: batch4 speed confirmation complete, 2026-09-30. Further long-context tests are deferred at the user's request. Only completed runs below are usable evidence. Capacity allocation alone is not an inference result.
 
 ## Configuration and artifacts
 
@@ -8,7 +8,7 @@ Status: batch4 speed confirmation in progress, 2026-09-30. Further long-context 
 - Model revision `69e33439ae950f17bcbe95c98f117d80f759ab6d`, `/work/models/qwen38-flash-next-exl3-3.05bpw`.
 - Engram: one physical CPU RAM table (32,640,156,672 bytes), per-table mincore residency audit; no disk streaming. K5/V4 for both target and draft QSA cache; recurrent states retain their original types.
 - New native `/work/lib-context-mr-bounds`, SHA256 `57afa48c9a61b9e7ba2721917bf011096d7cc947e43b2a8444ee8350f0820718`.
-- Final batch1–3 source `/work/runs/context-batch/source-prune-native-fixed`; batch4 retry and subsequent long runs use `/work/runs/context-batch/source-mlock-fixed` with the reviewed RAM-lock addition. Manifests record source hashes and validated commits; snapshots do not contain `.git`.
+- Final batch1–3 source `/work/runs/context-batch/source-prune-native-fixed`; batch4 confirmation uses `/work/runs/context-batch/source-mlock-fixed` with the reviewed RAM-lock addition. Manifests record source hashes and validated commits; snapshots do not contain `.git`.
 - Explicit environment: `EXL3_TP_REPLICATE_ROUTER=1`, `EXL3_ROCM_MOE_MGEMM_MAX_ROWS=20`, `EXL3_BATCH_RECURRENT_PRUNE=1`, `HSA_ENABLE_SDMA=0`, `LD_PRELOAD=libhsa-runtime64.so`.
 - Batch1: auto prefill, profile_peak draft/verify/decode, auto idle. Batch>1: profile_peak inference, auto after exit.
 - Host artifacts: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/context-batch` (container `/work/runs/context-batch`). JSON files contain prompts/hashes, actual cache/RAM/TP audits, delivery events, and per-rank memory data. `*-process.json` contains command/exit/power restoration and sampled board VRAM peaks.
@@ -21,16 +21,16 @@ Main decode metric is delivered-token aggregate throughput from the first delive
 
 Prefill throughput is total input tokens divided by the latest first-delivery time, so it conservatively includes first-token overhead. Engine-internal decode timing is not interchangeable with observed delivery timing.
 
-## Final 8K measurements (partial)
+## Final 8K measurements
 
-Each language has one warmup and two timed groups. Input 8192 and output 256 tokens per sequence; cache 8704 tokens per sequence, target load budgets 28/28 GiB, prefill chunk 2048. Batch1 dynamic MTP max4/confidence0.6; batch2–4 fixed MTP1 based on the screening below.
+Each language has one warmup; batch1–3 have two timed groups and the final batch4 confirmation has three. Input 8192 and output 256 tokens per sequence; cache 8704 tokens per sequence, target load budgets 28/28 GiB, prefill chunk 2048. Batch1 dynamic MTP max4/confidence0.6; batch2–4 fixed MTP1 based on the screening below.
 
 | Batch | Draft setting | Japanese decode aggregate tok/s | Code decode aggregate tok/s | Japanese/code prefill aggregate tok/s |
 |---|---|---:|---:|---:|
 | 1 | dynamic max4 | 38.88 | 50.52 | 476.76 / 479.41 |
 | 2 | fixed1 | 55.85 | 56.68 | 473.83 / 467.18 |
 | 3 | fixed1 | 66.25 | 73.95 | 472.67 / 465.49 |
-| 4 | fixed1 | 66.89 | 58.81 | 436.01 / 460.61 |
+| 4 | fixed1 | 70.56 | 66.51 | 471.80 / 459.68 |
 
 Batch1 run: `final-8k-b1-d4`; Japanese repetitions 38.74–39.02, code 50.45–50.58 tok/s. Do not infer a universal gain from a two-repeat median.
 
@@ -38,7 +38,24 @@ Batch2 run: `final-8k-b2-d1`; per-sequence averages Japanese27.93/code28.34 tok/
 
 Batch3 run: `final-8k-b3-d1`; per-sequence averages Japanese22.08/code24.65 tok/s. Common-window aggregate Japanese70.06/code78.92 tok/s. Final audits and power restoration passed. Earlier fixed-MTP2 baseline was Japanese34.71/code41.93 aggregate; the difference combines draft/history settings and code changes, not an isolated kernel speedup.
 
-Batch4 run: `final-8k-b4-d1`; all24 jobs and final audits passed with RAM locking. These initial two-repeat medians need confirmation: Japanese66.56–67.21, code48.61–69.01 aggregate tok/s. Common-window medians Japanese70.86/code71.03. A separate three-repeat batch4-only measurement is queued after external quantization/evaluation load subsides. The prior failed RAM-audit run is excluded; all24 generated token sequences are identical between that run and the successful mlocked run.
+Batch4 final run: `confirm-concurrent-8k-b4-d1-r3`, three timed groups per language. The user explicitly selected measurement with other work allowed to run concurrently. External `kld_llama_dump`/`llama-quantize` jobs were present in277 of333 sampled inference observations and finished during the run; this is neither an isolated benchmark nor a constant external-load experiment. The batch1–3 rows were obtained earlier, so comparisons are descriptive, not a controlled batch-scaling isolation test.
+
+| Batch4 metric | Japanese | Code |
+|---|---:|---:|
+| Full-span aggregate decode median tok/s | 70.56 | 66.51 |
+| Range of the three timed groups | 68.46–73.24 | 63.98–72.04 |
+| Full-span aggregate /4 tok/s | 17.64 | 16.63 |
+| Common-window aggregate decode median tok/s | 76.29 | 85.80 |
+| Common-window aggregate /4 tok/s | 19.07 | 21.45 |
+| Prefill aggregate median tok/s | 471.80 | 459.68 |
+| Latest first-delivery median seconds | 69.45 | 71.28 |
+| MTP draft acceptance | 70.57% | 92.24% |
+
+All32 jobs (24 timed) completed, each with8192 uncached input tokens and256 outputs, actual draft1. Final TP/K5V4/single-owner RAM audits passed; native/model fingerprints matched the prior run. The24 repeated prompts produced identical token sequences to the earlier successful mlocked run. Exactly one process held32,640,159,744 locked bytes and released them to0 on unload. Board VRAM peaks were27.47/28.72GiB. Both V620s remained `profile_peak` in every sampled inference observation and returned to `auto` after exit. Evidence: `batch4-final-audit.json`, main report, process/power reports, and the2-second host-load log.
+
+Earlier successful `final-8k-b4-d1` had only two timed groups: full-span medians Japanese66.89/code58.81, ranges66.56–67.21/48.61–69.01. It is retained as historical variation, not silently pooled into the three-repeat confirmation. The preceding failed RAM-audit run is excluded; all24 outputs matched its successful mlocked retry.
+
+The additional run used `EXL3_HOST_MEM_RESERVE_MB=0` only as a recorded load-time diagnostic override after the normal guard rejected a prior attempt (`confirm-8k-b4-d1-r3`: needed31128MiB, available24997MiB, reserve2048MiB). The guard uses kernel MemAvailable without accounting for reclaimable ZFS ARC. OS/ARC/swap settings were not changed. Actual mlock and before/after table-residency audits remained mandatory; the selected library/config default host reserve is unchanged. Minimum sampled host MemAvailable during inference was3.66GiB. The failure and the abandoned idle-wait logs remain in the artifact directory.
 
 ## Long context (partial; further tests deferred)
 
@@ -85,15 +102,15 @@ For these runs, the launcher grants only the benchmark process and inherited chi
 
 ## Reproduction
 
-The artifact `run_bench.py` starts/stops the local power helper and serializes one container invocation. Do not run GPU benchmarks concurrently. For example, from the host artifact directory (choose a fresh tag):
+The artifact `run_bench.py` starts/stops the local power helper and serializes one container invocation. Run V620 benchmarks serially; the final confirmation explicitly allowed the separate R9700 workload. For example, from the host artifact directory (choose a fresh tag):
 
 ```bash
-python3 run_bench.py --tag verify-b2-8k --source /work/runs/context-batch/source-mlock-fixed \
+python3 run_bench.py --tag verify-b4-8k --source /work/runs/context-batch/source-mlock-fixed \
   --native /work/lib-context-mr-bounds --model /work/models/qwen38-flash-next-exl3-3.05bpw \
-  --execution tp --mode mtp --prompts /work/runs/context-batch/prompts-8192-b2-r2.json \
-  --cache-tokens 17408 --batch-size 2 --draft-tokens 1 --fixed-draft \
+  --execution tp --mode mtp --prompts /work/runs/context-batch/prompts-8192-b4-r3.json \
+  --cache-tokens 34816 --batch-size 4 --draft-tokens 1 --fixed-draft \
   --replicate-router --env EXL3_ROCM_MOE_MGEMM_MAX_ROWS=20 --env EXL3_BATCH_RECURRENT_PRUNE=1 \
-  --env EXL3_NGRAM_MLOCK=1 --memlock-gib 34
+  --env EXL3_NGRAM_MLOCK=1 --memlock-gib 34 --env EXL3_HOST_MEM_RESERVE_MB=0
 ```
 
 The JSON configuration is documentation, not automatically loaded by EXL3. The runner records the exact generated command in `TAG-process.json`; preserve both process completion and main report completion, final audits, and power restoration before treating a run as successful. For long-context reproduction also pass the recorded per-device load budgets, chunk size, total cache tokens, and the frozen long-prompt file.

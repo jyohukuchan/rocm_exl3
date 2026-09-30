@@ -40,13 +40,19 @@
     "evidence": "K5/V4 and replicated router: 8K+256 AR/MTP repeated jobs; 32K+256 JA/code finite with fixed4."
   },
   "batch_gt1": {
-    "draft_tokens": 2,
+    "draft_tokens": 1,
     "dynamic_draft_tokens": false,
     "cache_slots": "match configured batch size",
-    "max_history": 2,
+    "max_history": 1,
     "power_during_inference": "profile_peak",
     "power_after_exit": "auto",
-    "evidence": "K5/V4 and replicated router: batch2, two8K+256 jobs simultaneously, fixed2 finite validation; larger-batch optimum not established."
+    "evidence": "Fixed1 selected from batch1..4/MTP1..4 screening and validated at8K+256 for batch2..4. Final batch4: warm1+timed3 per language,32 jobs, normal final audits with mlocked Engram. Optional draft3/4 validated, but not universally faster.",
+    "optional_draft_tokens": [
+      2,
+      3,
+      4
+    ],
+    "optional_draft_note": "Increase max_history to the selected draft window when using deeper MTP; context and performance change."
   },
   "cache_tokens_example_batch1_8k": 8704,
   "max_chunk_size": 2048,
@@ -96,9 +102,12 @@
   },
   "validation": {
     "batch1": "K5/V4 and replicated router: 8K+256 AR/MTP repeated jobs; 32K+256 JA/code finite with fixed4.",
-    "batch2": "K5/V4 and replicated router: batch2, two8K+256 jobs simultaneously, fixed2 finite validation; larger-batch optimum not established.",
+    "batch2": "Fixed1,8K+256, warm1+timed2 per language; all final TP/K5V4/RAM audits pass.",
     "power": "batch1 auto prefill/peak draft+verify+decode/auto idle; batch>1 peak during inference, auto exit",
-    "report": "doc/v620_tp_decode_optimization.md"
+    "report": "doc/v620_tp_decode_optimization.md",
+    "batch3": "Fixed1,8K+256, warm1+timed2 per language; all final TP/K5V4/RAM audits pass.",
+    "batch4": "Fixed1,8K+256,warm1+timed3 per language;32 jobs and all final TP/K5V4/mlocked RAM audits pass. Fixed4 short finite smoke also passes.",
+    "batch_report": "doc/qwen38_v620_context_batch.md"
   },
   "container": "rocm-exl3-v620-pair",
   "historical_validation_cache": "FP16: earlier MTP/TP reports, including 32K and batch2 checks, predate the K5/V4 selection; they are not K5/V4 evidence.",
@@ -125,10 +134,82 @@
   },
   "batch_optimization": {
     "report": "doc/qwen38_v620_context_batch.md",
-    "status": "Final batch2..4 speed/context measurements pending; retain previous batch_gt1 recommendation until repeated measurements complete.",
+    "status": "8K speed measurements complete for batch1..4; batch4 confirmed with concurrent host work allowed. Further long-context tests deferred at user request.",
     "moe_rows": 20,
     "prune": true,
     "prune_generic_default": false,
     "prune_evidence": "Same-input batch4 MTP1..4 sweep: 64/64 output rows unchanged; observed timed-group wall -5.2%, single repeat per condition, includes defrag/trim variance."
+  },
+  "batch4_benchmark": {
+    "tag": "confirm-concurrent-8k-b4-d1-r3",
+    "input_tokens_each": 8192,
+    "output_tokens_each": 256,
+    "cache_tokens_total": 34816,
+    "warmup_groups_per_language": 1,
+    "timed_groups_per_language": 3,
+    "condition": "Other host work allowed concurrently by user; external jobs ended during run. Not an isolated or constant-load benchmark.",
+    "artifact_directory": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/context-batch",
+    "load_time_env_override": {
+      "EXL3_HOST_MEM_RESERVE_MB": "0"
+    },
+    "env_override_scope": "This confirmation run only; default host reserve remains enabled. Actual mlock/mincore audits still mandatory.",
+    "languages": {
+      "code": {
+        "full_span_aggregate_decode_tps": {
+          "median": 66.51172908510753,
+          "min": 63.97757969501468,
+          "max": 72.03968222731275
+        },
+        "full_span_per_sequence_decode_tps": {
+          "median": 16.627932271276883,
+          "min": 15.99439492375367,
+          "max": 18.009920556828188
+        },
+        "aggregate_decode_tps": {
+          "median": 85.80349448399502,
+          "min": 82.01394013165532,
+          "max": 86.65256530936169
+        },
+        "aggregate_prefill_tps": {
+          "median": 459.6795967402648,
+          "min": 455.59497922661006,
+          "max": 464.2246933906094
+        },
+        "last_ttft_s": {
+          "median": 71.28443427197635,
+          "min": 70.58650792716071,
+          "max": 71.92353185196407
+        },
+        "acceptance": 0.9224030037546934
+      },
+      "ja": {
+        "full_span_aggregate_decode_tps": {
+          "median": 70.55990951922435,
+          "min": 68.45560553824612,
+          "max": 73.24006151729125
+        },
+        "full_span_per_sequence_decode_tps": {
+          "median": 17.639977379806087,
+          "min": 17.11390138456153,
+          "max": 18.310015379322813
+        },
+        "aggregate_decode_tps": {
+          "median": 76.28533181097524,
+          "min": 75.89128733248249,
+          "max": 76.7467093653562
+        },
+        "aggregate_prefill_tps": {
+          "median": 471.8010214612957,
+          "min": 465.48983854341515,
+          "max": 473.8430263490816
+        },
+        "last_ttft_s": {
+          "median": 69.45300774998032,
+          "min": 69.15370318409987,
+          "max": 70.39466232503764
+        },
+        "acceptance": 0.7057190449750139
+      }
+    }
   }
 }
