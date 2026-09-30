@@ -37,9 +37,14 @@ class DraftConfidenceCalibrator:
         self.bins = {}  # bin index -> [tested, accepted], exponentially decayed
         self.total = 0.0
         self.cached_threshold = None
+        self.invalid_estimates = 0
+        self.skipped_nonfinite_labels = 0
 
 
     def add_label(self, score: float, accepted: bool):
+        if not math.isfinite(score):
+            self.skipped_nonfinite_labels += 1
+            return
         idx = math.floor(score / self.bin_width)
         b = self.bins.get(idx)
         if b is None:
@@ -98,6 +103,11 @@ class DraftConfidenceCalibrator:
         nearest above). Optimistic 1.0 while no statistics are available, so sequential
         drafting keeps producing full windows (and labels) during the learning phase.
         """
+        # A non-finite drafter score is not evidence of confidence. Cut the
+        # window conservatively; the target verifier still decides acceptance.
+        if not math.isfinite(score):
+            self.invalid_estimates += 1
+            return 0.0
         if self.total < self.burn_in or not self.bins:
             return 1.0
         idx = math.floor(score / self.bin_width)

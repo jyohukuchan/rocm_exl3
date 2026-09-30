@@ -658,6 +658,12 @@ class Runtime:
             report["power_rank_syncs"] = self._power.rank_syncs
         sync_gen = getattr(self._agen, "generator", None) if self._agen is not None else None
         if sync_gen is not None:
+            calibrator = getattr(sync_gen, "draft_calibrator", None)
+            if calibrator is not None:
+                report["draft_confidence"] = {
+                    "invalid_estimates": getattr(calibrator, "invalid_estimates", 0),
+                    "skipped_nonfinite_labels": getattr(calibrator, "skipped_nonfinite_labels", 0),
+                }
             active_count = self._observe_active_jobs(sync_gen)
             current_peak = self._peak_active_jobs
             report["generator_runtime"] = {
