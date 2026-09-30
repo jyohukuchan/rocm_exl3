@@ -59,6 +59,20 @@ Environment switches (all default to the safe value for this backend):
                            useful row: ~half the decode speed). Default on =
                            the restored v1.4.4 per-token exl3_mgemm route,
                            which lands on the mgemv fast path
+  EXL3_ROCM_MOE_MGEMM_MAX_ROWS=N  opt-in decode-row cap of the mgemm route
+                           (default 8, valid 8..24, e.g. 20 for batch 4 x
+                           draft 4 MTP verify): raises the PYTHON
+                           block_sparse_mlp.MAX_BSZN once at patch time,
+                           before any load, so rows within the cap stay on
+                           the per-token exl3_mgemm route (scratch sized at
+                           load accordingly) instead of the fused exl3_moe
+                           fallback. Applies ONLY under the default steer
+                           above; other steers keep their semantics and
+                           report the knob ignored. mlp.MAX_BSZN and the
+                           compiled native cap stay 8. An invalid value
+                           aborts startup (ValueError at import), never
+                           log-and-fallthrough into the native coop stub.
+                           Diagnostic: rocm_tools/rdna2/moe_rows_probe.py
   EXL3_ROCM_QKV_SLICE=1    enable the one-launch sliced Q/K/V bundle
                            (SlicedMultiLinear, exl3_mgemm sliced mode). Ported
                            into the WMMA kernels, unvalidated on RDNA
@@ -84,6 +98,31 @@ def _env_on(name: str, default: bool = False) -> bool:
     if v is None:
         return default
     return v.strip() not in ("", "0", "false", "False")
+
+
+# This cap sizes Python MoE scratch and selects the ROCm per-token proxy.
+# It does not change the compiled native or shared-MLP row limits.
+MOE_MGEMM_MAX_ROWS_DEFAULT = 8
+MOE_MGEMM_MAX_ROWS_RANGE = (8, 24)
+
+
+def _env_int(name: str, default: int, lo: int, hi: int) -> int:
+    """Parse an integer setting and reject invalid values before patching."""
+    raw = os.environ.get(name)
+    if raw is None or not raw.strip():
+        return default
+    txt = raw.strip()
+    try:
+        val = int(txt)
+    except ValueError:
+        raise ValueError(
+            f"{name}={txt!r}: expected a whole number in {lo}..{hi} "
+            f"(or unset for the default {default})") from None
+    if not lo <= val <= hi:
+        raise ValueError(
+            f"{name}={txt}: out of range, expected a whole number in {lo}..{hi} "
+            f"(default {default})")
+    return val
 
 
 def is_rocm() -> bool:
@@ -491,6 +530,14 @@ def apply() -> list[str]:
     # exl3_moe kernel (correct per the 2026-08-08 fp32 comparison, half the
     # decode speed). EXL3_ROCM_MOE_BSZN=1 leaves upstream dispatch alone
     # (raises on ROCm) for the day exl3_moe_coop is ported.
+    #
+    # Raise only the Python per-token MoE proxy's row limit. Set it before
+    # loading so scratch allocation and dispatch agree; shared MLP and native
+    # BC limits remain unchanged. Twenty rows covers batch4 with four drafts.
+    # Parse outside the fallback handler so invalid configuration fails early.
+    moe_max_rows = _env_int(
+        "EXL3_ROCM_MOE_MGEMM_MAX_ROWS",
+        MOE_MGEMM_MAX_ROWS_DEFAULT, *MOE_MGEMM_MAX_ROWS_RANGE)
     if not _env_on("EXL3_ROCM_MOE_BSZN", False):
         try:
             from ..modules import block_sparse_mlp as _bsn
@@ -558,7 +605,20 @@ def apply() -> list[str]:
 
                 _bsn_cls.load_local = _load_mgemm_route
                 _bsn_cls.forward = _forward_mgemm_route
-                applied.append("MoE bsz<=MAX_BSZN decode -> per-token exl3_mgemm route (v1.4.4's; mgemv fast path; exl3_moe_coop not ported)")
+                # The row cap, set ONCE here (patch time runs from `import
+                # exllamav3`, before any module load) and only for this steer:
+                # g_tensor_cache is exact-shape-keyed and never evicts, so the
+                # cap must be final before the first load_local sizes scratch.
+                # At the default 8 this is a no-op write.
+                _bsn.MAX_BSZN = moe_max_rows
+                applied.append(
+                    f"MoE bsz<={moe_max_rows} decode -> per-token exl3_mgemm route "
+                    "(v1.4.4's; mgemv fast path; exl3_moe_coop not ported)")
+                if moe_max_rows != MOE_MGEMM_MAX_ROWS_DEFAULT:
+                    applied.append(
+                        f"MoE mgemm-route row cap {moe_max_rows} via "
+                        "EXL3_ROCM_MOE_MGEMM_MAX_ROWS (Python block_sparse_mlp.MAX_BSZN "
+                        "only; mlp.MAX_BSZN and the compiled native cap stay 8)")
 
             else:
 
@@ -578,8 +638,16 @@ def apply() -> list[str]:
                 _bsn_cls.load_local = _load_no_bszn
                 _bsn_cls.forward = _forward_no_bszn
                 applied.append("MoE bsz<=MAX_BSZN decode -> fused exl3_moe (EXL3_ROCM_MOE_MGEMM_ROUTE=0)")
+                if moe_max_rows != MOE_MGEMM_MAX_ROWS_DEFAULT:
+                    applied.append(
+                        f"!! EXL3_ROCM_MOE_MGEMM_MAX_ROWS={moe_max_rows} ignored: the row cap "
+                        "belongs to the mgemm route (inactive under EXL3_ROCM_MOE_MGEMM_ROUTE=0)")
         except Exception as e:
             applied.append(f"!! FAILED MoE bszN patch: {type(e).__name__}: {e}")
+    elif moe_max_rows != MOE_MGEMM_MAX_ROWS_DEFAULT:
+        applied.append(
+            f"!! EXL3_ROCM_MOE_MGEMM_MAX_ROWS={moe_max_rows} ignored: native "
+            "EXL3_ROCM_MOE_BSZN dispatch does not use the mgemm route")
 
     # ------------------------------------------------------------------
     # RDNA4 (gfx120x): fused MoE kernel unavailable -- per-expert fallback
