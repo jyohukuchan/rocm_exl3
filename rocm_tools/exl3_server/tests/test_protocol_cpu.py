@@ -153,6 +153,22 @@ def test_template_quoted_angle_string_and_required_tool_choice():
     assert templ[0]["tool_calls"][0]["function"]["arguments"] == {"s": "a < b"}
 
 
+def test_literal_parameter_closing_tag_survives_full_and_incremental_parse():
+    raw = '<tool_call><function=get_weather><parameter=city>"line1\\n東京\\n</parameter>"'
+    raw += '</parameter></function></tool_call>'
+    parsed = parse_assistant_output(raw)
+    assert json.loads(parsed["tool_calls"][0]["function"]["arguments"]) == {
+        "city": "line1\n東京\n</parameter>"}
+    parser = IncrementalAssistantParser()
+    events = []
+    for pos in range(0, len(raw), 4):
+        events.extend(parser.feed(raw[pos:pos + 4]))
+    final = parser.finish()
+    args = "".join(e["delta"] for e in events + final["events"]
+                    if e["type"] == "tool_call_arguments")
+    assert json.loads(args) == {"city": "line1\n東京\n</parameter>"}
+
+
 def test_schema_casting_preserves_declared_strings_and_required_arguments():
     tools = [{"type": "function", "function": {
         "name": "f", "parameters": {"type": "object", "required": ["s", "n"],

@@ -442,8 +442,9 @@ def prepare_constraints(
         generation_prefix=required_prefix, requires_tool_call=is_required,
         template_instructions=(
             "When calling a function, emit Qwen XML <tool_call> blocks. "
-            "Each parameter value must be a JSON value satisfying its schema; "
-            "do not append text after a tool call."
+            "For multiple requested calls, emit all blocks consecutively. "
+            "Encode string parameters as JSON strings including their quotes; "
+            "each parameter value must satisfy its schema, with no text after a call."
         ),
     )
     if compile_filters:

@@ -32,6 +32,7 @@ _JSON_CALL_RE = re.compile(
 )
 _FUNCTION_START_RE = re.compile(
     r"<tool_call\s*>\s*<function=([^>\s]+)\s*>", re.IGNORECASE | re.DOTALL)
+_FUNCTION_ONLY_RE = re.compile(r"<function=([^>\s]+)\s*>", re.IGNORECASE)
 _PARAM_STREAM_RE = re.compile(
     r"<parameter=([^>\s]+)\s*>(.*?)(?=</parameter\s*>|<parameter=|</function|</tool_call|$)",
     re.IGNORECASE | re.DOTALL)
@@ -142,6 +143,99 @@ def _remove_top_level_think(text: str) -> tuple[str, str]:
     reasoning = "\n".join(m.group(1).strip() for m in _THINK_RE.finditer(prefix)).strip()
     prefix = _THINK_RE.sub("", prefix)
     return reasoning, prefix + suffix
+
+
+def _find_tag_outside_quotes(text: str, marker: str, start: int = 0, end: int | None = None) -> int:
+    """Find an XML marker while ignoring quoted JSON/string contents."""
+    end = len(text) if end is None else end
+    lower, wanted = text.lower(), marker.lower()
+    quote, escaped = False, False
+    i = start
+    while i < end:
+        char = text[i]
+        if quote:
+            if char == '"' and not escaped:
+                quote = False
+            escaped = char == "\\" and not escaped
+            if char != "\\":
+                escaped = False
+            i += 1
+            continue
+        if char == '"':
+            quote = True
+            i += 1
+            continue
+        if lower.startswith(wanted, i):
+            return i
+        i += 1
+    return -1
+
+
+def _parse_qwen_xml_calls(text: str, id_factory: Callable[[int], str] | None = None) -> tuple[list[dict], list[tuple[int, int]]]:
+    calls, spans = [], []
+    cursor = 0
+    while True:
+        start = text.lower().find("<tool_call", cursor)
+        if start < 0:
+            break
+        open_end = text.find(">", start)
+        if open_end < 0:
+            break
+        close = _find_tag_outside_quotes(text, "</tool_call", open_end + 1)
+        if close < 0:
+            break
+        block_end = text.find(">", close)
+        if block_end < 0:
+            break
+        fn_match = _FUNCTION_ONLY_RE.search(text, open_end + 1, close)
+        if fn_match:
+            fn_close = _find_tag_outside_quotes(text, "</function", fn_match.end(), close)
+            if fn_close < 0:
+                cursor = block_end + 1
+                continue
+            body = text[fn_match.end():fn_close]
+            args = {}
+            ppos = 0
+            while True:
+                rel = _find_tag_outside_quotes(body, "<parameter=", ppos)
+                if rel < 0:
+                    break
+                name_end = body.find(">", rel)
+                if name_end < 0:
+                    break
+                pname = body[rel + len("<parameter="):name_end].strip()
+                pclose = _find_tag_outside_quotes(body, "</parameter", name_end + 1)
+                if pclose < 0:
+                    break
+                raw = body[name_end + 1:pclose].strip()
+                args[pname] = _decode_parameter_value(raw)
+                ptag_end = body.find(">", pclose)
+                ppos = len(body) if ptag_end < 0 else ptag_end + 1
+            call_id = id_factory(len(calls)) if id_factory else f"call_{len(calls)}"
+            calls.append(_tool_call({"id": call_id,
+                                     "function": {"name": fn_match.group(1),
+                                                   "arguments": args}}, len(calls)))
+        else:
+            call = _parse_json_call(text[open_end + 1:close], len(calls))
+            if call is not None:
+                if id_factory:
+                    call["id"] = id_factory(len(calls))
+                calls.append(call)
+        spans.append((start, block_end + 1))
+        cursor = block_end + 1
+    return calls, spans
+
+
+def _decode_parameter_value(raw: str) -> Any:
+    try:
+        return json.loads(raw)
+    except (TypeError, ValueError):
+        if len(raw) >= 2 and raw[0] == '"' and raw[-1] == '"':
+            try:
+                return json.loads(raw.replace("\n", "\\n").replace("\r", "\\r"))
+            except (TypeError, ValueError):
+                return raw[1:-1]
+        return raw
 
 
 def _tool_call(call: Any, index: int = 0) -> dict:
@@ -339,26 +433,7 @@ def parse_assistant_output(text: str, *, model_family: str = "qwen38",
     if not isinstance(text, str):
         raise ProtocolError("assistant output must be text")
     reasoning, visible = _remove_top_level_think(text)
-    calls, spans = [], []
-    for match in _QWEN_CALL_RE.finditer(visible):
-        name, body = match.group(1), match.group(2)
-        args = {}
-        for p in _PARAM_RE.finditer(body):
-            value = p.group(2).strip()
-            try:
-                value = json.loads(value)
-            except (TypeError, ValueError):
-                pass
-            args[p.group(1)] = value
-        call = _tool_call({"id": id_factory(len(calls)) if id_factory else f"call_{len(calls)}",
-                           "function": {"name": name, "arguments": args}}, len(calls))
-        calls.append(call); spans.append(match.span())
-    for match in _JSON_CALL_RE.finditer(visible):
-        call = _parse_json_call(match.group(1), len(calls))
-        if call is not None:
-            if id_factory:
-                call["id"] = id_factory(len(calls))
-            calls.append(call); spans.append(match.span())
+    calls, spans = _parse_qwen_xml_calls(visible, id_factory=id_factory)
     if not allow_partial and "<tool_call" in visible.lower() and not calls:
         raise ProtocolError("incomplete or malformed tool_call block")
     # Remove parsed blocks while preserving all ordinary assistant text.
@@ -578,14 +653,6 @@ class IncrementalAssistantParser:
             params = list(_PARAM_START_RE.finditer(body))
             for p in params:
                 pname = p.group(1)
-                tails = []
-                for marker in ("</parameter", "<parameter", "</function", "</tool_call"):
-                    pos = body.lower().find(marker, p.end())
-                    if pos >= 0:
-                        tails.append(pos)
-                # A closing tag may itself be split across UTF-8/input
-                # chunks (``</par`` then ``ameter>``); stop raw parameter
-                # capture at the first XML marker prefix as well.
                 typ = schemas.get(name, {}).get("properties", {}).get(pname, {}).get("type", "string")
                 if typ == "string" and body[p.end():].startswith('"'):
                     escaped = False
@@ -598,8 +665,16 @@ class IncrementalAssistantParser:
                         if char != "\\":
                             escaped = False
                     if quote >= 0:
-                        tails.append(quote + 1)
+                        tails = [quote + 1]
+                    else:
+                        tails = [len(body)]
                 else:
+                    tails = []
+                    for marker in ("</parameter", "<parameter", "</function", "</tool_call"):
+                        pos = body.lower().find(marker, p.end())
+                        if pos >= 0:
+                            tails.append(pos)
+                    # A closing tag may itself be split across chunks.
                     lt = body.find("<", p.end())
                     if lt >= 0:
                         tails.append(lt)
@@ -651,7 +726,8 @@ class IncrementalAssistantParser:
                         events.append({"type": "tool_call_arguments", "index": index,
                                        "delta": value})
                     pstate["seen"] = len(raw)
-            closed = "</tool_call" in body.lower() and "</function" in body.lower()
+            closed = (_find_tag_outside_quotes(body, "</tool_call") >= 0
+                      and _find_tag_outside_quotes(body, "</function") >= 0)
             if closed and not state["closed"]:
                 events.append({"type": "tool_call_arguments", "index": index, "delta": "}"})
                 state["closed"] = True
