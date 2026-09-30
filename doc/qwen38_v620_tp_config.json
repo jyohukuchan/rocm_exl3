@@ -13,15 +13,17 @@
     28,
     28
   ],
-  "native_directory": "/work/lib-qwen38-reduction",
-  "native_sha256": "12859e31a1bd03b61ef5a1ba6725d020dca3557e3c206dcd10f791662ae4767a",
+  "native_directory": "/work/lib-context-mr-bounds",
+  "native_sha256": "57afa48c9a61b9e7ba2721917bf011096d7cc947e43b2a8444ee8350f0820718",
   "rlimit_nofile_soft": 65536,
   "runtime_env": {
     "HSA_ENABLE_SDMA": "0",
-    "PYTHONPATH": "/work/lib-qwen38-reduction:/src",
+    "PYTHONPATH": "/work/lib-context-mr-bounds:/src",
     "LD_PRELOAD": "libhsa-runtime64.so",
     "LD_LIBRARY_PATH": "/opt/rocm/core-7.14/lib:/opt/venv/lib/python3.12/site-packages/torch/lib",
-    "EXL3_TP_REPLICATE_ROUTER": "1"
+    "EXL3_TP_REPLICATE_ROUTER": "1",
+    "EXL3_ROCM_MOE_MGEMM_MAX_ROWS": "20",
+    "EXL3_BATCH_RECURRENT_PRUNE": "1"
   },
   "batch1": {
     "draft_tokens": 4,
@@ -102,5 +104,19 @@
       "code": 11.99
     },
     "caveat": "MTP output/proposals and acceptance change with placement/numerics; code observed decode improves4.66%, not a universal12% communication-only gain."
+  },
+  "native_validation": {
+    "bounds_fix_commit": "ab1bc11",
+    "report": "doc/rdna2_multirow_bounds_fix.md",
+    "checks": "16 protected-page bit-pattern cases, 200 numeric cases, real batch4 MTP1..4 and prefix reuse pass",
+    "previous_native_is_historical": "/work/lib-qwen38-reduction"
+  },
+  "batch_optimization": {
+    "report": "doc/qwen38_v620_context_batch.md",
+    "status": "Final batch2..4 speed/context measurements pending; retain previous batch_gt1 recommendation until repeated measurements complete.",
+    "moe_rows": 20,
+    "prune": true,
+    "prune_generic_default": false,
+    "prune_evidence": "Same-input batch4 MTP1..4 sweep: 64/64 output rows unchanged; observed timed-group wall -5.2%, single repeat per condition, includes defrag/trim variance."
   }
 }
