@@ -20,7 +20,7 @@ def main():
         'named_tool', 'tool_history_and_none', 'auto_tool', 'parallel_tools',
         'json_schema', 'thinking_json_schema', 'json_schema_adversarial_enum',
         'thinking_json_schema_adversarial_enum', 'auto_tool_adversarial_enum',
-        'json_object', 'sse_tool_arguments', 'prefix_cache',
+        'json_object', 'sse_tool_arguments', 'sse_nullable_arguments', 'prefix_cache',
         'text_completion_sse',
         'invalid_tool_choice', 'unknown_model', 'oversized_context',
         'stream_cancellation_cleanup',
@@ -186,10 +186,9 @@ def main():
         return value
     check('json_object', json_object)
 
-    def streaming():
-        value = 'line1\n東京\n</parameter>'
+    def streaming(value='line1\n東京\n</parameter>', value_type='string'):
         tool = json.loads(json.dumps(echo))
-        tool['function']['parameters']['properties']['text']['enum'] = [value]
+        tool['function']['parameters']['properties']['text'] = {'type': value_type, 'enum': [value]}
         body = {'model': a.model, 'messages': [{'role': 'user', 'content': 'Echo the only permitted text.'}],
                 'tools': [tool], 'tool_choice': 'required', 'parallel_tool_calls': False,
                 'enable_thinking': False, 'max_tokens': 256, 'stream': True,
@@ -215,6 +214,7 @@ def main():
         assert len([c for c in chunks if c.get('choices', [{}])[0].get('delta', {}).get('tool_calls')]) > 2
         return {'chunks': len(chunks), 'arguments': args}
     check('sse_tool_arguments', streaming)
+    check('sse_nullable_arguments', lambda: streaming(None, ['string', 'null']))
 
     def text_completion_sse():
         body = {'model': a.model, 'prompt': 'Reply with one short sentence.',
