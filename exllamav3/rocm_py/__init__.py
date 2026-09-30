@@ -156,7 +156,7 @@ def _env_on(name: str, default: bool = False) -> bool:
 
 # This cap sizes Python MoE scratch and selects the ROCm per-token proxy.
 # It does not change the compiled native or shared-MLP row limits.
-MOE_MGEMM_MAX_ROWS_DEFAULT = 8
+MOE_MGEMM_MAX_ROWS_DEFAULT = 24
 MOE_MGEMM_MAX_ROWS_RANGE = (8, 24)
 
 
@@ -373,9 +373,6 @@ def moe_multi_token_supported(mod, y, selected_experts, routing_weights):
     if y.dtype != t.half or selected_experts.dtype != t.long \
             or routing_weights.dtype != t.half:
         return False, "unexpected dtypes (want half y, int64 selected, half weights)"
-    if not (y.is_contiguous() and selected_experts.is_contiguous()
-            and routing_weights.is_contiguous()):
-        return False, "non-contiguous input"
     if selected_experts.device != y.device or routing_weights.device != y.device \
             or cfg.out_d.device != y.device:
         return False, "input/cfg device mismatch"
@@ -482,9 +479,9 @@ def _moe_mt_run(mod, y, selected_experts, routing_weights, out_row_offset=0):
         t.lt(idx_buf, 0, out=mask_buf)
         idx_buf.masked_fill_(mask_buf, -1)
     # mgemv indexes A by SLOT j when bszm_in > 1: repeat each row's hidden k times.
-    a_slots.view(r, k, hi_).copy_(y.view(r, 1, hi_))
+    a_slots.view(r, k, hi_).copy_(y.reshape(r, 1, hi_))
     idx = idx_buf.view(1, slots)
-    w = routing_weights.view(1, slots)
+    w = routing_weights.reshape(1, slots)
 
     gated = bool(getattr(mod, "gated", False))
     mg, mu, md = mod.multi_gate, mod.multi_up, mod.multi_down
@@ -641,22 +638,26 @@ def _moe_mgemm_rowloop(mod, y, selected_experts, routing_weights):
     w = routing_weights.unsqueeze(1)         # (bsz, 1, top_k)
     width = cfg.out_bszn.shape[-1]
     out_row = cfg.out_d[0].view(-1)[:width]  # routed sum lands in row 0
+    top_k = selected_experts.shape[1]
+    g_slots = cfg.interm_g.narrow(0, 0, top_k)
+    u_slots = cfg.interm_u.narrow(0, 0, top_k)
+    a_slots = cfg.interm_a.narrow(0, 0, top_k)
     gated = bool(getattr(mod, "gated", False))
     mg, mu, md = mod.multi_gate, mod.multi_up, mod.multi_down
     for i in range(bsz):
         if mod.gated:
             ext.exl3_mgemm(
-                A[i], mg.ptrs_trellis, cfg.interm_g, mg.ptrs_suh, cfg.yh, mg.ptrs_svh,
+                A[i], mg.ptrs_trellis, g_slots, mg.ptrs_suh, cfg.yh, mg.ptrs_svh,
                 sel[i], None, mg.K, -1, mg.mcg, mg.mul1, mine, maxe, 0, 1, None, None)
         ext.exl3_mgemm(
-            A[i], mu.ptrs_trellis, cfg.interm_u, mu.ptrs_suh, cfg.yh, mu.ptrs_svh,
+            A[i], mu.ptrs_trellis, u_slots, mu.ptrs_suh, cfg.yh, mu.ptrs_svh,
             sel[i], None, mu.K, -1, mu.mcg, mu.mul1, mine, maxe, 0, 1, None, None)
-        act_g = cfg.interm_g if mod.gated else cfg.interm_u
-        mod.activation_fn_call(act_g, cfg.interm_u, cfg.interm_a, mod.act_limit)
+        act_g = g_slots if mod.gated else u_slots
+        mod.activation_fn_call(act_g, u_slots, a_slots, mod.act_limit)
         # A_had must not alias A (the autotuner relaunches on the first call);
         # the gate buffer is free after the activation
         ext.exl3_mgemm(
-            cfg.interm_a, md.ptrs_trellis, cfg.out_d, md.ptrs_suh, cfg.interm_g, md.ptrs_svh,
+            a_slots, md.ptrs_trellis, cfg.out_d, md.ptrs_suh, g_slots, md.ptrs_svh,
             sel[i], w[i], md.K, -1, md.mcg, md.mul1, mine, maxe, 0, 1, None, None)
         cfg.out_bszn[i].copy_(out_row)
 

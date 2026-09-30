@@ -345,6 +345,7 @@ if HAVE_TORCH:
             self.assertEqual(st["rows"], (2, 5))
             self.assertEqual(st["slots_max"], 128)
             self.assertFalse(st["require_cuda"])
+            self.assertEqual(rp.MOE_MGEMM_MAX_ROWS_DEFAULT, 24)
 
 
     class TestRowLoopUnchanged(MTBase):
@@ -466,7 +467,10 @@ if HAVE_TORCH:
                 self._reject(m, y, sel, rw.float(), "dtypes")
 
             with self.subTest("input layouts"):
-                self._reject(m, y, sel, rw.t().contiguous().t(), "non-contiguous")
+                rw_nc = rw.t().contiguous().t()
+                self.assertFalse(rw_nc.is_contiguous())
+                self.assertTrue(rp.moe_multi_token_step(m, y, sel, rw_nc))
+                self.ext.calls.clear()
                 self._reject(m, y[:, :100].contiguous(), sel, rw, "hidden width")
                 self._reject(m, y, sel.unsqueeze(0), rw, "2-D")
 
