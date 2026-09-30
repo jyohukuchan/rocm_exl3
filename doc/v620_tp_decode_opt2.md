@@ -53,6 +53,23 @@ profile_peak、CUDA events、warmup5・5sample×5repeatの単層proxy中央値�
 
 実モデルTP2でも8K入力・32生成・warm1+timed1の有限値検査を完了し、target32 forward/draft88 forward、両rankのmodule出力検査、RAM/quant/power監査・正常終了を確認。速度測定にはこの検査付きrunを使わない。同一code-only入力の通常A/Bで採用を判断する。MTP重みの学習・交換は今回行わない。
 
+### 通常推論のA/B（2026-09-30）
+
+同一source `e04cd643232ab1643b85e733243fa051a979d9e6` を固定し、feature OFF→ON→ON→OFFの順に4run。各runはcode-only 8K入力+256生成、warm1+timed2で、各設定のtimed4jobを集計。
+
+| 指標 | OFF | ON | 差 |
+|---|---:|---:|---:|
+| 終了処理込みdecode中央値 tok/s | 54.395 | 58.777 | +8.06% |
+| engine decode中央値 tok/s | 55.603 | 61.851 | +11.24% |
+| 終了処理込みdecode範囲 tok/s | 51.755–55.044 | 57.194–60.876 | |
+| conservative prefill中央値 tok/s | 486.739 | 484.559 | -0.45% |
+| draft採用率 | 74.25% | 77.36% | +3.11ポイント |
+| 本体検証回数（timed4job合計） | 280 | 286 | |
+
+モデル・MTP・native・入力・quant cache・router複製・RAM常駐・電力方針は共通。全run正常終了、監査/電力復帰を確認。OFF出力は公開済みsource基準とwarm/timed3jobとも同一。各設定を再測定した際の出力とdraft statsも再現する。
+
+ON/OFFではwarmの生成token列は同一だが、timed2jobは9/13token目から分岐する。単層誤差が小さくても後続argmaxやdraft confidenceが変わり得るため、8.06%を量子化kernel単独の改善率とは扱わない。通常A/Bの出力厳密一致checkerは不一致を報告し、実入力の全48 MoE/rankを基準経路と比較する追加診断で採用判断を補う。現時点ではdefault-offを維持する。
+
 設定の一時変更はprocess全体に及ぶ。今回のTP2はrankごとに別process、MTP draft/verifyも直列なのでrank間の環境変数競合はない。任意の別threadからのnative呼び出しとの並行利用は未対応。batch>1や長文の一般的な速度改善も、この単層proxyからは主張しない。
 
 GatedResidualは既にfused実装なので、単純なfusion提案ではなく実kernel geometryから判断する。HIP graph再有効化は現行の主要MoE proxyを通らず、過去のflat測定もあるため最初の候補には選ばない。
