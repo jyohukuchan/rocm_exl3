@@ -211,11 +211,34 @@ def _literal(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)
 
 
+def _llguidance_schema(schema: dict) -> dict:
+    """Copy a schema and disable unbounded JSON whitespace in LLGuidance.
+
+    Tool schemas and response schemas used for post-validation remain
+    untouched. The compiler-only extension prevents a malformed model from
+    spending the whole response emitting whitespace before a primitive value.
+    """
+    compiled = json.loads(json.dumps(schema, ensure_ascii=False))
+    guidance = compiled.get("x-guidance", {})
+    if not isinstance(guidance, dict):
+        guidance = {}
+    guidance["whitespace_flexible"] = False
+    guidance["lenient"] = False
+    guidance["coerce_one_of"] = False
+    guidance["item_separator"] = ","
+    guidance["key_separator"] = ":"
+    guidance.pop("whitespace_pattern", None)
+    compiled["x-guidance"] = guidance
+    return compiled
+
+
 def _json_fragment(schema: dict) -> str:
     # %json is a real llguidance Lark extension.  It delegates the fragment to
     # the JSON Schema compiler, so nested arrays, enums and object schemas are
     # constrained by the same engine as response_format.
-    return "%json " + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
+    return "%json " + json.dumps(
+        _llguidance_schema(schema), ensure_ascii=False, separators=(",", ":")
+    )
 
 
 def _parameter_fragment(parent: dict, name: str) -> dict:
@@ -266,7 +289,7 @@ def _parameter_variants(schema: dict) -> list[list[str]]:
     return variants
 
 
-def _tool_body_grammar(schema: dict) -> str:
+def _tool_body_expression(schema: dict) -> str:
     properties = schema.get("properties", {})
     alternatives = []
     for names in _parameter_variants(schema):
@@ -281,7 +304,12 @@ def _tool_body_grammar(schema: dict) -> str:
         # bare angle-bracket syntax is how llguidance matches such a token.
         chunks.extend([_literal("</function>\n"), "</tool_call>"])
         alternatives.append(" ".join(chunks) or "</tool_call>")
-    return "start: " + " | ".join(alternatives)
+    return " | ".join(alternatives)
+
+
+def _tool_body_grammar(schema: dict) -> str:
+    """Return a standalone body grammar for diagnostics and tests."""
+    return "start: " + _tool_body_expression(schema)
 
 
 def _tool_grammar(
@@ -300,11 +328,9 @@ def _tool_grammar(
     if not 1 <= max_calls <= _MAX_PARALLEL_TOOL_CALLS:
         raise _error(f"max_parallel_tool_calls must be between 1 and {_MAX_PARALLEL_TOOL_CALLS}")
     rules = []
-    side = []
     for index, name in enumerate(names):
-        body_name = f"tool_body_{index}"
-        rules.append(f"{_literal(f'<function={name}>\n')} @{body_name}")
-        side.append({"name": body_name, "lark_grammar": _tool_body_grammar(tool_map[name]["schema"])})
+        body = _tool_body_expression(tool_map[name]["schema"])
+        rules.append(f"{_literal(f'<function={name}>\n')} ( {body} )")
     choice = "(" + " | ".join(rules) + ")"
     start = ('<tool_call> "\\n" ' if include_marker else "") + choice
     if parallel and max_calls > 1:
@@ -313,8 +339,36 @@ def _tool_grammar(
         # completed call.
         tail = " ( <tool_call> " + choice + " )?"
         start += tail * (max_calls - 1)
-    side.insert(0, {"name": "tool_start", "lark_grammar": "start: " + start})
-    return json.dumps({"grammars": side}, ensure_ascii=False, separators=(",", ":"))
+    # Keep call bodies in the root grammar. A side grammar ending in the
+    # user-defined </tool_call> token cannot reliably hand its following
+    # newline back to the outer grammar in llguidance.
+    return json.dumps({"grammars": [{
+        "name": "tool_start", "lark_grammar": "start: " + start,
+    }]}, ensure_ascii=False, separators=(",", ":"))
+
+
+def _tool_call_grammar(tool_map: dict[str, dict], names: list[str]) -> str:
+    """Grammar for one call, restarted by the parallel wrapper per trigger."""
+    rules = []
+    for name in names:
+        body = _tool_body_expression(tool_map[name]["schema"])
+        rules.append(f"{_literal(f'<function={name}>\n')} ( {body} )")
+    choice = "(" + " | ".join(rules) + ")"
+    # The marker token itself is consumed by the wrapper. Qwen emits a newline
+    # before the function element; required/named calls may already have that
+    # newline in the generation prefix, so it remains optional here.
+    grammar = 'start: ( "\\n" | /[ \\t]+/ )? ' + choice
+    return json.dumps({"grammars": [{"name": "tool_start", "lark_grammar": grammar}]},
+                      ensure_ascii=False, separators=(",", ":"))
+
+
+def _eos_token_ids(tokenizer: Any) -> list[int]:
+    config = getattr(tokenizer, "config", None)
+    values = getattr(config, "eos_token_id_list", None) or []
+    if not values:
+        value = getattr(tokenizer, "eos_token_id", None)
+        values = [] if value is None else [value]
+    return [int(value) for value in values if value is not None]
 
 
 @dataclass
@@ -340,6 +394,18 @@ class ConstraintPlan:
         """Instantiate the native LLGuidanceFilter for this plan."""
         if not self.filter_spec:
             self.filters = []
+            return self.filters
+        if self.filter_spec.get("filter_type") == "parallel_tool_calls":
+            try:
+                from .structured_filter import ParallelToolCallFilter
+                self.filters = [ParallelToolCallFilter(tokenizer, **{
+                    key: value for key, value in self.filter_spec.items()
+                    if key not in {"filter_type", "llg_grammar"}
+                })]
+            except (ImportError, ModuleNotFoundError) as exc:
+                raise _error("structured generation requires the llguidance package") from exc
+            except Exception as exc:
+                raise _error(f"failed to compile structured-output grammar: {exc}") from exc
             return self.filters
         try:
             from exllamav3.generator.filter import LLGuidanceFilter
@@ -402,7 +468,7 @@ def prepare_constraints(
             max_parallel_tool_calls=max_parallel_tool_calls,
             thinking=thinking, trigger_token=trigger,
             filter_spec={"trigger_token": trigger, "eos_after_completed": True,
-                         "json_schema": normalized_response["schema"]},
+                         "json_schema": _llguidance_schema(normalized_response["schema"])},
             template_instructions="Emit only a JSON value satisfying the requested response schema after reasoning.",
         )
         if compile_filters:
@@ -424,16 +490,28 @@ def prepare_constraints(
     # <think>.  Close that region in the prompt before forcing a required call;
     # the filter itself consumes only the subsequent <tool_call> marker.
     required_prefix = (("</think>\n\n" if thinking else "") + "<tool_call>\n") if is_required else None
-    filter_spec = {
-        "trigger_token": None if is_required else trigger,
-        "prefix_str": "<tool_call>\n" if is_required else None,
-        "consume_prefix": is_required,
-        "eos_after_completed": not parallel_tool_calls,
-        "llg_grammar": _tool_grammar(
-            tool_map, selected, include_marker=is_required,
-            parallel=parallel_tool_calls, max_calls=max_parallel_tool_calls,
-        ),
-    }
+    if parallel_tool_calls:
+        call_grammar = _tool_call_grammar(tool_map, selected)
+        filter_spec = {
+            "filter_type": "parallel_tool_calls",
+            "trigger_token": trigger,
+            "call_grammar": call_grammar,
+            "llg_grammar": call_grammar,
+            "eos_token_ids": _eos_token_ids(tokenizer),
+            "max_calls": max_parallel_tool_calls,
+            "required_first": is_required,
+        }
+    else:
+        filter_spec = {
+            "trigger_token": None if is_required else trigger,
+            "prefix_str": "<tool_call>\n" if is_required else None,
+            "consume_prefix": is_required,
+            "eos_after_completed": True,
+            "llg_grammar": _tool_grammar(
+                tool_map, selected, include_marker=is_required,
+                parallel=False, max_calls=max_parallel_tool_calls,
+            ),
+        }
     plan = ConstraintPlan(
         kind="tools", tools=normalized_tools, tool_choice=choice,
         parallel_tool_calls=parallel_tool_calls, thinking=thinking,
