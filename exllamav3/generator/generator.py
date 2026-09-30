@@ -1211,7 +1211,15 @@ class Generator:
                     # draft acceptance so state can be stashed at an exact page boundary.
                     if draft_tokens is not None and i < batch_logits.shape[1] - 1:
                         cp_boundary = batch_states is not None and job.is_checkpoint_boundary()
-                        if draft_tokens[j, i].item() != sampled_token.item() or cp_boundary:
+                        # A trigger can activate a filter while this target-plus-draft window is being consumed.
+                        # Treat that position like a checkpoint boundary: the current target token is already
+                        # emitted, while the remaining precomputed logits must be rejected and regenerated with
+                        # the active grammar mask.
+                        filter_activated = any(
+                            not was_active and f.is_active
+                            for was_active, f in zip(filter_active_before, job.filters)
+                        )
+                        if draft_tokens[j, i].item() != sampled_token.item() or cp_boundary or filter_activated:
                             rejected = reject_remainder(job, j, i, batch_states)
                             break
 
@@ -1219,19 +1227,6 @@ class Generator:
                         else:
                             job.accepted_draft_tokens += 1
                             accepted_length += 1
-
-                            # A trigger can activate a filter while this target-plus-draft window is being
-                            # consumed. The remaining logits were produced before that state transition, so
-                            # discard the speculative suffix and start the next target step with a fresh mask.
-                            # This keeps MTP enabled while preventing a precomputed post-trigger token from
-                            # bypassing the newly active grammar.
-                            filter_activated = any(
-                                not was_active and f.is_active
-                                for was_active, f in zip(filter_active_before, job.filters)
-                            )
-                            if filter_activated:
-                                rejected = reject_remainder(job, j, i, batch_states)
-                                break
 
                             # Advance filters
                             for f in job.filters:
