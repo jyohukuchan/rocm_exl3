@@ -186,7 +186,7 @@ def main():
         return value
     check('json_object', json_object)
 
-    def streaming(value='line1\n東京\n</parameter>', value_type='string'):
+    def streaming(value='line1\n東京 "quote" \\\n</parameter>', value_type='string'):
         tool = json.loads(json.dumps(echo))
         tool['function']['parameters']['properties']['text'] = {'type': value_type, 'enum': [value]}
         body = {'model': a.model, 'messages': [{'role': 'user', 'content': 'Echo the only permitted text.'}],
