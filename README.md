@@ -28,7 +28,7 @@ branch.
 | Layer-split load (`use_per_device`) | 2× V620 | **Validated** (batch 1, placement-audited) | [doc/v620_pair_results.md](doc/v620_pair_results.md) |
 | Tensor-parallel load + RCCL collectives | 2× V620 | **Validated** — Qwen3.8-Flash-Next 3.05bpw + packed MTP3, K5/V4 KV, Engram CPU table, batches 1–4 | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md), [doc/v620_tp_decode_optimization.md](doc/v620_tp_decode_optimization.md) |
 | MTP draft windows 1–4 | 2× V620, TP2 | **Supported and exercised**; deeper drafts are *not* universally faster — acceptance is workload-dependent (screening table in the context/batch report) | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md) |
-| Multi-token MoE verification (`EXL3_ROCM_MOE_MULTI_TOKEN=1`) | 2× V620, TP2, batch 1 | **Opt-in, default off** — code-only 8K+256 decode median 54.40→58.78 tok/s (+8.1%); live-input numeric checks cover all 48 MoE layers on both ranks. Generated text and MTP acceptance can change with rounding. | [doc/v620_tp_decode_opt2.md](doc/v620_tp_decode_opt2.md) |
+| Common multi-token MoE route | RDNA2/3 native path; measured on 2× V620 | **Default enabled**, 2–24 rows with bounded chunks; grouped MTP/batch decode, gateless experts, and smaller R1 activation. TP2 batch4 code decode 55.83→73.09 aggregate tok/s (+30.9%). | [doc/v620_moe_common_paths.md](doc/v620_moe_common_paths.md) |
 | Engram single-owner CPU-RAM table + optional `EXL3_NGRAM_MLOCK=1` | 2× V620, TP2 | **Validated** — one 32,640,156,672-byte table, one owning rank, mlock/mincore residency audits | [doc/qwen38_v620_tp_config.json](doc/qwen38_v620_tp_config.json) |
 | K5/V4 quantized KV cache (QSA layers) | 2× V620, TP2 | **Validated** — default for the TP2 measurements; recurrent states keep their original FP32/BF16 types | [doc/v620_tp_decode_optimization.md](doc/v620_tp_decode_optimization.md) |
 | Max generated context | 2× V620, TP2, **batch 1 only** | 261,632 input + 256 output completed with fixed MTP4. **Batch 2–4 maximums are not established** — long-context tests were deferred by the operator | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md) |
@@ -158,11 +158,11 @@ batch 2–4 long-context maximums are not established.
 
 ### Additional inherited limitations
 
-- **MoE decode at bsz ≤ 8 runs the per-token `exl3_mgemm` route** (the parent's route,
-  steered by `rocm_py`). This branch added `EXL3_ROCM_MOE_MGEMM_MAX_ROWS` (accepted range
-  8–24; the V620 TP2 measurements use 20). The separate, default-off
-  `EXL3_ROCM_MOE_MULTI_TOKEN=1` path groups 2–5 verification rows on gfx1030;
-  see [the batch-1 measurements and scope](doc/v620_tp_decode_opt2.md).
+- **Small-row MoE uses the common grouped `exl3_mgemm` route on gfx10/gfx11**,
+  enabled by default. `EXL3_ROCM_MOE_MGEMM_MAX_ROWS` accepts 8–24 (default 24);
+  row-aligned chunks respect the 128-slot native bound. R1 keeps the compact
+  per-token fallback. `EXL3_ROCM_MOE_MULTI_TOKEN=0` disables grouping.
+  See [the implementation and representative measurements](doc/v620_moe_common_paths.md).
 - **The one-launch sliced Q/K/V bundle is off by default** (`EXL3_ROCM_QKV_SLICE=1` to
   enable): ported but unvalidated on RDNA.
 - **RDNA4 (gfx1200/gfx1201) runs MoE through the per-expert path**: the fused kernel's WMMA
