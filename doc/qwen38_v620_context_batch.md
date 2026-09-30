@@ -77,7 +77,7 @@ Values are full-span aggregate decode tok/s. More draft tokens increase draft an
 
 ## Interrupted measurement
 
-The initial final batch2 attempt failed the Engram residency audit (7,951,096 / 7,968,789 pages resident). Its supervisor state was incomplete when inspected; no benchmark process remained. Evidence is preserved in `interrupted-final-b2-ram-audit/` and excluded from performance results. The retry keeps the same RAM audit and does not alter OS, ARC, or swap settings.
+The initial final batch2 attempt failed the Engram residency audit (7,951,096 / 7,968,789 pages resident). Its supervisor state was incomplete when inspected; no benchmark process remained. Evidence is preserved in `interrupted-final-b2-ram-audit/` and excluded from performance results. The batch2 retry passed all final audits without changing OS, ARC, or swap settings. The initial final batch4 run completed generation but failed the post-inference residency audit (7,907,144 / 7,968,789 pages resident; about240.8MiB nonresident). It is preserved in `failed-final-b4-ram-audit/` and excluded from final performance results. Another R9700 workload was active on the same host at inspection; this is evidence of shared host activity, not proof of the exact paging trigger. An opt-in, table-only mlock implementation is being reviewed before further long runs.
 
 ## Reproduction
 
