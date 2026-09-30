@@ -29,11 +29,14 @@ Each language has one warmup and two timed groups. Input 8192 and output 256 tok
 |---|---|---:|---:|---:|
 | 1 | dynamic max4 | 38.88 | 50.52 | 476.76 / 479.41 |
 | 2 | fixed1 | 55.85 | 56.68 | 473.83 / 467.18 |
-| 3–4 | fixed1 | Pending | Pending | Pending |
+| 3 | fixed1 | 66.25 | 73.95 | 472.67 / 465.49 |
+| 4 | fixed1 | Pending | Pending | Pending |
 
 Batch1 run: `final-8k-b1-d4`; Japanese repetitions 38.74–39.02, code 50.45–50.58 tok/s. Do not infer a universal gain from a two-repeat median.
 
 Batch2 run: `final-8k-b2-d1`; per-sequence averages Japanese27.93/code28.34 tok/s. Common-window aggregate Japanese59.22/code61.04 tok/s. All final TP/KV/RAM audits and power restoration passed.
+
+Batch3 run: `final-8k-b3-d1`; per-sequence averages Japanese22.08/code24.65 tok/s. Common-window aggregate Japanese70.06/code78.92 tok/s. Final audits and power restoration passed. Earlier fixed-MTP2 baseline was Japanese34.71/code41.93 aggregate; the difference combines draft/history settings and code changes, not an isolated kernel speedup.
 
 ## Long context (partial)
 
