@@ -169,6 +169,37 @@ def test_literal_parameter_closing_tag_survives_full_and_incremental_parse():
     assert json.loads(args) == {"city": "line1\n東京\n</parameter>"}
 
 
+def test_stream_scanner_ignores_xml_openers_inside_nested_and_nullable_values():
+    tools = [{"type": "function", "function": {
+        "name": "complex", "parameters": {"type": "object",
+        "properties": {
+            "payload": {"type": "object", "properties": {
+                "text": {"type": "string"},
+                "items": {"type": "array", "items": {"type": "string"}},
+            }},
+            "maybe": {"type": ["string", "null"]},
+        }, "required": ["payload", "maybe"]}}}]
+    raw = (
+        '<tool_call><function=complex>\n'
+        '<parameter=payload>{"text":"literal <tool_call><function=decoy>'
+        '</function></tool_call> </parameter>","items":['
+        '"<parameter=decoy>","<function=decoy>"]}</parameter>\n'
+        '<parameter=maybe>"<think>literal</think> <parameter=decoy>"'
+        '</parameter></function></tool_call>'
+    )
+    full = parse_assistant_output(raw, tools=tools)
+    expected = json.loads(full["tool_calls"][0]["function"]["arguments"])
+    parser = IncrementalAssistantParser(tools=tools)
+    events = []
+    for pos in range(0, len(raw), 7):
+        events.extend(parser.feed(raw[pos:pos + 7]))
+    events.extend(parser.finish()["events"])
+    streamed = "".join(e["delta"] for e in events
+                         if e["type"] == "tool_call_arguments")
+    assert json.loads(streamed) == expected
+    assert len([e for e in events if e["type"] == "tool_call_start"]) == 1
+
+
 def test_incomplete_quoted_xml_is_buffered_and_rejected_only_at_finish():
     parser = IncrementalAssistantParser()
     events = parser.feed('<tool_call><function=get_weather><parameter=city>"line </para')

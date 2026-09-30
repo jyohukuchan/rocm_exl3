@@ -32,6 +32,7 @@ _JSON_CALL_RE = re.compile(
 )
 _FUNCTION_START_RE = re.compile(
     r"<tool_call\s*>\s*<function=([^>\s]+)\s*>", re.IGNORECASE | re.DOTALL)
+_TOOL_MARKER_RE = re.compile(r"<tool_call\b", re.IGNORECASE)
 _FUNCTION_ONLY_RE = re.compile(r"<function=([^>\s]+)\s*>", re.IGNORECASE)
 _PARAM_STREAM_RE = re.compile(
     r"<parameter=([^>\s]+)\s*>(.*?)(?=</parameter\s*>|<parameter=|</function|</tool_call|$)",
@@ -132,7 +133,8 @@ def _remove_top_level_think(text: str) -> tuple[str, str]:
     """Remove reasoning tags before the first tool block only."""
     lower = text.lower()
     marker = -1
-    for candidate in [m.start() for m in re.finditer(r"<tool_call\b", lower)]:
+    for candidate_match in _regex_finditer_outside_quotes(_TOOL_MARKER_RE, text):
+        candidate = candidate_match.start()
         inside = any(m.start() <= candidate < m.end()
                      for m in _THINK_RE.finditer(text))
         if not inside:
@@ -171,11 +173,74 @@ def _find_tag_outside_quotes(text: str, marker: str, start: int = 0, end: int | 
     return -1
 
 
+def _regex_finditer_outside_quotes(pattern: re.Pattern, text: str,
+                                   start: int = 0, end: int | None = None):
+    """Yield regex matches whose opening tag is outside JSON string quotes.
+
+    The Qwen XML wrapper is embedded in model text, and parameter values are
+    JSON strings.  A normal ``finditer`` therefore mistakes literal XML-looking
+    text in a quoted value for a new function or parameter.  Scan quote state
+    once while attempting the regex only at unquoted positions.
+    """
+    end = len(text) if end is None else min(end, len(text))
+    quote, escaped = False, False
+    i = 0
+    while i < end:
+        char = text[i]
+        if quote:
+            if char == '"' and not escaped:
+                quote = False
+            if char == "\\" and not escaped:
+                escaped = True
+            else:
+                escaped = False
+            i += 1
+            continue
+        if char == '"':
+            quote = True
+            i += 1
+            continue
+        if i >= start:
+            match = pattern.match(text, i)
+            if match is not None and match.end() <= end:
+                yield match
+                i = max(i + 1, match.end())
+                continue
+        i += 1
+
+
+def _schema_allows_string(schema: dict) -> bool:
+    """Whether a parameter schema can carry a JSON string value."""
+    if not isinstance(schema, dict):
+        return False
+    typ = schema.get("type")
+    if typ == "string" or (isinstance(typ, list) and "string" in typ):
+        return True
+    return any(_schema_allows_string(branch)
+               for key in ("anyOf", "oneOf")
+               for branch in schema.get(key, ())
+               if isinstance(branch, dict))
+
+
+def _quoted_value_end(text: str, start: int) -> int:
+    """Return the closing quote for a JSON string, or ``-1`` if incomplete."""
+    escaped = False
+    for pos in range(start + 1, len(text)):
+        char = text[pos]
+        if char == '"' and not escaped:
+            return pos
+        if char == "\\" and not escaped:
+            escaped = True
+        else:
+            escaped = False
+    return -1
+
+
 def _parse_qwen_xml_calls(text: str, id_factory: Callable[[int], str] | None = None) -> tuple[list[dict], list[tuple[int, int]]]:
     calls, spans = [], []
     cursor = 0
     while True:
-        start = text.lower().find("<tool_call", cursor)
+        start = _find_tag_outside_quotes(text, "<tool_call", cursor)
         if start < 0:
             break
         open_end = text.find(">", start)
@@ -187,7 +252,8 @@ def _parse_qwen_xml_calls(text: str, id_factory: Callable[[int], str] | None = N
         block_end = text.find(">", close)
         if block_end < 0:
             break
-        fn_match = _FUNCTION_ONLY_RE.search(text, open_end + 1, close)
+        fn_match = next(_regex_finditer_outside_quotes(
+            _FUNCTION_ONLY_RE, text, open_end + 1, close), None)
         if fn_match:
             fn_close = _find_tag_outside_quotes(text, "</function", fn_match.end(), close)
             if fn_close < 0:
@@ -434,7 +500,7 @@ def parse_assistant_output(text: str, *, model_family: str = "qwen38",
         raise ProtocolError("assistant output must be text")
     reasoning, visible = _remove_top_level_think(text)
     calls, spans = _parse_qwen_xml_calls(visible, id_factory=id_factory)
-    if not allow_partial and "<tool_call" in visible.lower() and not calls:
+    if not allow_partial and _find_tag_outside_quotes(visible, "<tool_call") >= 0 and not calls:
         raise ProtocolError("incomplete or malformed tool_call block")
     # Remove parsed blocks while preserving all ordinary assistant text.
     for start, end in sorted(spans, reverse=True):
@@ -602,8 +668,9 @@ class IncrementalAssistantParser:
         partial_think = any(lower.endswith("<think"[:i]) for i in range(1, 6))
         partial_think_close = any(lower.endswith("</think"[:i]) for i in range(1, 8))
         partial_tool = any(lower.endswith("<tool_call"[:i]) for i in range(1, 10))
-        marker_count = len(re.findall(r"<tool_call\b", lower))
-        completed_count = len(list(_QWEN_CALL_RE.finditer(self._text)))
+        marker_count = len(list(_regex_finditer_outside_quotes(
+            _TOOL_MARKER_RE, self._text)))
+        completed_count = len(parsed.get("tool_calls") or [])
         if think_open or partial_think or partial_think_close:
             safe_content = ""
         elif (marker_count > completed_count) or partial_tool:
@@ -613,7 +680,8 @@ class IncrementalAssistantParser:
             events.append({"type": "content", "delta": safe_content[self._emitted_content:]})
             self._emitted_content = len(safe_content)
         calls = parsed.get("tool_calls") or []
-        xml_count = len(list(_FUNCTION_START_RE.finditer(self._text)))
+        xml_count = len(list(_regex_finditer_outside_quotes(
+            _FUNCTION_START_RE, self._text)))
         for index in range(self._emitted_calls, len(calls)):
             if index < xml_count:
                 continue
@@ -636,7 +704,7 @@ class IncrementalAssistantParser:
             if source.lower().rfind("<think") > source.lower().rfind("</think"):
                 return []
             _, source = _remove_top_level_think(source)
-        starts = list(_FUNCTION_START_RE.finditer(source))
+        starts = list(_regex_finditer_outside_quotes(_FUNCTION_START_RE, source))
         for index, start in enumerate(starts):
             name = start.group(1)
             state = self._stream_calls.setdefault(index, {
@@ -650,34 +718,27 @@ class IncrementalAssistantParser:
                 state["prefix"] = True
             next_start = starts[index + 1].start() if index + 1 < len(starts) else len(source)
             body = source[start.end():next_start]
-            params = list(_PARAM_START_RE.finditer(body))
+            params = list(_regex_finditer_outside_quotes(_PARAM_START_RE, body))
             for p in params:
                 pname = p.group(1)
-                typ = schemas.get(name, {}).get("properties", {}).get(pname, {}).get("type", "string")
-                if typ == "string" and body[p.end():].lstrip().startswith('"'):
-                    escaped = False
-                    quote = -1
-                    leading = len(body[p.end():]) - len(body[p.end():].lstrip())
+                param_schema = (schemas.get(name, {}).get("properties", {})
+                                .get(pname, {}))
+                emit_string = _schema_allows_string(param_schema) or not param_schema
+                probe = body[p.end():].lstrip()
+                quoted_value = probe.startswith('"')
+                if quoted_value:
+                    leading = len(body[p.end():]) - len(probe)
                     opening = p.end() + leading
-                    for pos, char in enumerate(body[opening + 1:], opening + 1):
-                        if char == '"' and not escaped:
-                            quote = pos
-                            break
-                        escaped = (char == "\\" and not escaped)
-                        if char != "\\":
-                            escaped = False
-                    if quote >= 0:
-                        tails = [quote + 1]
-                    else:
-                        tails = [len(body)]
+                    quote = _quoted_value_end(body, opening)
+                    tails = [quote + 1] if quote >= 0 else [len(body)]
                 else:
                     tails = []
                     for marker in ("</parameter", "<parameter", "</function", "</tool_call"):
-                        pos = body.lower().find(marker, p.end())
+                        pos = _find_tag_outside_quotes(body, marker, p.end())
                         if pos >= 0:
                             tails.append(pos)
                     # A closing tag may itself be split across chunks.
-                    lt = body.find("<", p.end())
+                    lt = _find_tag_outside_quotes(body, "<", p.end())
                     if lt >= 0:
                         tails.append(lt)
                 end = min(tails) if tails else len(body)
@@ -694,14 +755,14 @@ class IncrementalAssistantParser:
                 complete = bool(re.match(r"\s*</parameter\b", body[end:], re.IGNORECASE))
                 if not pstate["started"]:
                     prefix = ("{" if state["param_count"] == 0 else ",") + json.dumps(pname) + ":"
-                    if typ == "string":
+                    if emit_string or quoted_value:
                         prefix += '"'
                     events.append({"type": "tool_call_arguments", "index": index,
                                    "delta": prefix})
                     pstate["started"] = True
                     state["param_count"] += 1
                 value = raw
-                if typ == "string":
+                if emit_string or quoted_value:
                     probe = value.lstrip()
                     if pstate["mode"] is None:
                         if not probe:
