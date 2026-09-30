@@ -1,5 +1,7 @@
 # V620×2 decode 分解・改善
 
+Subsequent context/batch work uses the bounds-fixed native and additional opt-in batch settings. See [context and MTP window measurements](qwen38_v620_context_batch.md) and [RDNA padded-row bounds fix](rdna2_multirow_bounds_fix.md). Native paths and measurements in this report describe the earlier configuration.
+
 2026-09-30。**std MoE routerを両GPUで計算して通知を省き、通常decodeを約10%改善した。** MTPは日本語がほぼ横ばい、コードはengine基準約12%・配送/終了処理込み約5%向上。ただしMTPの出力と採用率も変化したため、全差分を通信だけの効果とは解釈しない。
 
 以後のKVはKey5bit/Value4bit。元の配布済みMTP3パック、Engramの単一RAM表、batch1のprefill auto / draft・verify・decode peak / idle auto、batch>1の推論中peakを維持する。
