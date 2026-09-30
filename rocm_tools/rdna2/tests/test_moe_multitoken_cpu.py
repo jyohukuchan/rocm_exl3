@@ -139,6 +139,10 @@ class FakeExt:
         assert A.dtype == torch.half, "A must be half"
         assert not (mcg and mul1), "both codebook flags"
         assert A_had.data_ptr() != A.data_ptr(), "A_had must not alias A"
+        raw_bszm = max(A.size(0), C.size(0))
+        assert raw_bszm * A.size(1) * A.size(2) <= A_had.numel(), (
+            "native raw A_had capacity contract: "
+            f"need {raw_bszm * A.size(1) * A.size(2)}, have {A_had.numel()}")
         stage, tables = self.stage_of[B.data_ptr()]
         ni = indices.size(1)
         bszm_in = min(A.size(0), ni)
@@ -664,7 +668,7 @@ if HAVE_TORCH:
             idx = torch.tensor([list(idx_vals)])
             w = torch.full((1, 8), 0.5).half()
             A = (torch.randn(8, 1, self.I) * 0.2).half()
-            Ahad = torch.zeros(8, 1, self.I, dtype=torch.half)
+            Ahad = torch.zeros(C.shape[0], 1, self.I, dtype=torch.half)
             self.ext.exl3_mgemm(A, self.mod.multi_down.ptrs_trellis, C, None,
                                 Ahad, None, idx, w, 4, -1, False, False,
                                 -1, -1, 0, 2)

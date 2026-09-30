@@ -637,11 +637,12 @@ def _moe_mgemm_rowloop(mod, y, selected_experts, routing_weights):
     sel = selected_experts.unsqueeze(1)      # (bsz, 1, top_k)
     w = routing_weights.unsqueeze(1)         # (bsz, 1, top_k)
     width = cfg.out_bszn.shape[-1]
-    out_row = cfg.out_d[0].view(-1)[:width]  # routed sum lands in row 0
     top_k = selected_experts.shape[1]
     g_slots = cfg.interm_g.narrow(0, 0, top_k)
     u_slots = cfg.interm_u.narrow(0, 0, top_k)
     a_slots = cfg.interm_a.narrow(0, 0, top_k)
+    out_slots = cfg.out_d.narrow(0, 0, top_k)
+    out_row = out_slots[0].view(-1)[:width]  # routed sum lands in row 0
     gated = bool(getattr(mod, "gated", False))
     mg, mu, md = mod.multi_gate, mod.multi_up, mod.multi_down
     for i in range(bsz):
@@ -657,7 +658,7 @@ def _moe_mgemm_rowloop(mod, y, selected_experts, routing_weights):
         # A_had must not alias A (the autotuner relaunches on the first call);
         # the gate buffer is free after the activation
         ext.exl3_mgemm(
-            a_slots, md.ptrs_trellis, cfg.out_d, md.ptrs_suh, g_slots, md.ptrs_svh,
+            a_slots, md.ptrs_trellis, out_slots, md.ptrs_suh, g_slots, md.ptrs_svh,
             sel[i], w[i], md.K, -1, md.mcg, md.mul1, mine, maxe, 0, 1, None, None)
         cfg.out_bszn[i].copy_(out_row)
 
