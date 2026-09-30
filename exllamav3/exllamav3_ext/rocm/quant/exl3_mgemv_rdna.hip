@@ -56,9 +56,10 @@
 // and applies svh + Hadamard + scale to the segment in place, on the same
 // stored (fp16-rounded, for half C) values and with the same arithmetic as
 // exl3_mgemv_had_out_kernel. When the call carries routing weights, a second
-// counter per segment counts rotated slots, and the last of the packed slots
-// runs the grouped reduction for its 128 columns in exl3_mgemv_reduce_kernel's
-// exact order. Counters live in the per-device parameter block: zeroed at
+// counter per segment counts rotated slots; position-preserving -1 slots
+// contribute synthetic arrivals, and the last slot arrival runs the grouped
+// reduction for its 128 columns in exl3_mgemv_reduce_kernel's exact order while
+// skipping invalid rows. Counters live in the per-device parameter block: zeroed at
 // allocation, reset by their own last arriver, so no per-launch memset and no
 // graph patch site. This is the classic last-block pattern (release fence
 // before the increment, acquire fence after observing the final count); it is
@@ -180,6 +181,33 @@ static Exl3MgemvParams* exl3_mgemv_param_block(int device, bool allow_alloc)
 // Resolves the per-matrix inputs from the launch arguments. Shared by both dot
 // kernels; entered by the tile's warp.
 template <bool c_fp32>
+__device__ __forceinline__ void exl3_mgemv_masked_arrive
+(
+    void* __restrict__ C,
+    Exl3MgemvParams* __restrict__ pb,
+    const int size_n,
+    const int bszm,
+    const int min_index,
+    const int num_tokens,
+    const int tile_n,
+    const int lane,
+    const half* __restrict__ weights,
+    const int64_t* __restrict__ indices
+)
+{
+    // Position-preserving -1 slots have no dot block.  One synthetic arrival
+    // on the final tile of each 128-wide segment keeps red_target == bszm,
+    // including the all-invalid case, without touching seg_counters or C.
+    if (!weights || !indices || min_index >= 0 || (tile_n & 7) != 7)
+        return;
+    exl3_gemv_fused_reduce<c_fp32>
+    (
+        C, size_n, tile_n / 8, lane, pb->red_counters + tile_n / 8,
+        bszm, num_tokens, indices, bszm, min_index
+    );
+}
+
+template <bool c_fp32>
 __device__ __forceinline__ void exl3_mgemv_store_or_fuse
 (
     const float accum,
@@ -230,7 +258,8 @@ __device__ __forceinline__ void exl3_mgemv_store_or_fuse
     (
         accum, Cb, row_off, size_n, tile_n, lane,
         (const half*) svh_list[mat_index], scale,
-        seg_counter, red_counter, red_target, num_tokens
+        seg_counter, red_counter, red_target, num_tokens,
+        indices, bszm, min_index
     );
 }
 
@@ -284,10 +313,44 @@ void exl3_mgemv_dot_kernel
     const int lane = threadIdx.x % 32;
     const int j = blockIdx.y;
     const int n_tiles = size_n / 16;
+    const int tile_n = blockIdx.x * WARPS_PER_BLOCK + warp_id;
 
     int orig_pos;
     int mat_index = exl3_mgemv_mat_index(indices, j, bszm, min_index, max_index, &orig_pos);
-    if (mat_index < 0) return;   // block-uniform
+    if (mat_index < 0)
+    {
+        // Every warp in an invalid matrix block takes this branch, so it is
+        // safe to return before the active-matrix prologue barrier.  Check
+        // the partial final block here; active matrices retain the original
+        // post-barrier tile bound below.
+        if (tile_n >= n_tiles) return;
+        // Position-preserving masked calls still need one reduction arrival
+        // for this slot/segment.  The helper only acts on the final tile of
+        // each 128-wide segment, so one skipped slot contributes exactly one.
+        if (fuse_out && weights && min_index < 0)
+            exl3_mgemv_masked_arrive<c_fp32>(C, pb, size_n, bszm, min_index,
+                                             num_tokens, tile_n, lane, weights, indices);
+
+        // A compacted range with zero valid experts has no dot block to reach
+        // the fused reduction.  Zero C row 0 directly and clear its red
+        // counter on the final segment; this covers packed==0 without an
+        // environment toggle.  Weighted range calls are single-token here.
+        if (weights && min_index >= 0 && num_tokens == 1 && j == 0
+                && exl3_mgemv_packed_count(indices, bszm, min_index, max_index) == 0)
+        {
+            if (lane < 16)
+            {
+                const int64_t out_idx = (int64_t) tile_n * 16 + lane;
+                if constexpr (c_fp32)
+                    ((float*) C)[out_idx] = 0.0f;
+                else
+                    ((half*) C)[out_idx] = __float2half(0.0f);
+            }
+            if (fuse_out && (tile_n & 7) == 7 && lane == 0)
+                pb->red_counters[tile_n / 8] = 0;
+        }
+        return;   // block-uniform
+    }
 
     // Dynamic shared memory -- the single-matrix carve, then the rotated input
     extern __shared__ char shared_mem[];
@@ -306,7 +369,6 @@ void exl3_mgemv_dot_kernel
     }
     __syncthreads();
 
-    const int tile_n = blockIdx.x * WARPS_PER_BLOCK + warp_id;
     if (tile_n >= n_tiles) return;
 
     // Per-matrix width (the cooperative kernel's n_j): the grid covers the
@@ -385,7 +447,28 @@ void exl3_mgemv_dot_kernel_splitk
 
     int orig_pos;
     int mat_index = exl3_mgemv_mat_index(indices, j, bszm, min_index, max_index, &orig_pos);
-    if (mat_index < 0) return;   // whole block exits together; no sync hazard
+    if (mat_index < 0)
+    {
+        if (fuse_out && weights && min_index < 0 && warp_id == 0)
+            exl3_mgemv_masked_arrive<c_fp32>(C, pb, size_n, bszm, min_index,
+                                             num_tokens, tile_n, lane, weights, indices);
+        if (weights && min_index >= 0 && num_tokens == 1 && j == 0
+                && warp_id == 0
+                && exl3_mgemv_packed_count(indices, bszm, min_index, max_index) == 0)
+        {
+            if (lane < 16)
+            {
+                const int64_t out_idx = (int64_t) tile_n * 16 + lane;
+                if constexpr (c_fp32)
+                    ((float*) C)[out_idx] = 0.0f;
+                else
+                    ((half*) C)[out_idx] = __float2half(0.0f);
+            }
+            if (fuse_out && (tile_n & 7) == 7 && lane == 0)
+                pb->red_counters[tile_n / 8] = 0;
+        }
+        return;   // whole block exits together; no sync hazard
+    }
 
     // Per-matrix width: tile_n and mat_index are block-uniform, so the whole
     // block exits together here too and the __syncthreads below are safe
@@ -529,7 +612,9 @@ void exl3_mgemv_reduce_kernel
             float sum = 0.0f;
             for (int jj = 0; jj < stride; ++jj)
             {
-                sum += *C_;
+                const int slot = t * stride + jj;
+                if (!pb->indices || min_index >= 0 || pb->indices[slot] >= 0)
+                    sum += *C_;
                 C_ += size_n;
             }
             ((float*) pb->C)[(int64_t) t * size_n + col] = sum;
@@ -540,7 +625,9 @@ void exl3_mgemv_reduce_kernel
             half sum = {};
             for (int jj = 0; jj < stride; ++jj)
             {
-                sum = __hadd(sum, *C_);
+                const int slot = t * stride + jj;
+                if (!pb->indices || min_index >= 0 || pb->indices[slot] >= 0)
+                    sum = __hadd(sum, *C_);
                 C_ += size_n;
             }
             ((half*) pb->C)[(int64_t) t * size_n + col] = sum;

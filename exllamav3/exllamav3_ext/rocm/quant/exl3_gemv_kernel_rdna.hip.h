@@ -698,6 +698,85 @@ __device__ __forceinline__ void exl3_gemv_had_out_128_f
     ((float4*) io)[lane] = v;
 }
 
+// The weighted reduction tail is shared by real and synthetic arrivals.  A
+// position-preserving masked slot (-1) has no dot block, so the multi-matrix
+// kernel sends one synthetic arrival on that slot's final 128-wide tile.  The
+// target remains the full bszm and the grouped stride remains bszm/num_tokens;
+// active-count/num_tokens would regroup tokens incorrectly when masks differ
+// by row.  Invalid slots are skipped while reading C, so stale inactive C rows
+// cannot contribute.
+template <bool c_fp32>
+__device__ __forceinline__ void exl3_gemv_fused_reduce
+(
+    void* Cb,
+    const int size_n,
+    const int seg,
+    const int lane,
+    int* red_counter,
+    const int red_target,
+    const int num_tokens,
+    const int64_t* __restrict__ indices,
+    const int bszm,
+    const int min_index
+)
+{
+    if (!red_counter || red_target <= 0 || num_tokens <= 0) return;
+
+    // The stores/rotation from the active slot are complete before this
+    // release fence. Synthetic masked arrivals have no C store, but sharing
+    // this helper keeps the final arrival/reset ordering identical.
+    __threadfence();
+    int old = 0;
+    if (lane == 0) old = atomicAdd(red_counter, 1);
+    old = __shfl(old, 0, 32);
+    if (old != red_target - 1) return;
+
+    __threadfence();
+    if (lane == 0) *red_counter = 0;
+    const int stride = (indices && min_index < 0)
+        ? bszm / num_tokens : red_target / num_tokens;
+    const int col0 = seg * 128 + lane;
+    for (int t = 0; t < num_tokens; ++t)
+    {
+        if constexpr (c_fp32)
+        {
+            const float* C_ = ((const float*) Cb) + (int64_t) t * stride * size_n + col0;
+            float sum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            for (int jj = 0; jj < stride; ++jj)
+            {
+                const int slot = t * stride + jj;
+                if (!indices || min_index >= 0 || indices[slot] >= 0)
+                {
+                    #pragma unroll
+                    for (int c = 0; c < 4; ++c) sum[c] += C_[c * 32];
+                }
+                C_ += size_n;
+            }
+            #pragma unroll
+            for (int c = 0; c < 4; ++c)
+                ((float*) Cb)[(int64_t) t * size_n + col0 + c * 32] = sum[c];
+        }
+        else
+        {
+            const half* C_ = ((const half*) Cb) + (int64_t) t * stride * size_n + col0;
+            half sum[4] = {};
+            for (int jj = 0; jj < stride; ++jj)
+            {
+                const int slot = t * stride + jj;
+                if (!indices || min_index >= 0 || indices[slot] >= 0)
+                {
+                    #pragma unroll
+                    for (int c = 0; c < 4; ++c) sum[c] = __hadd(sum[c], C_[c * 32]);
+                }
+                C_ += size_n;
+            }
+            #pragma unroll
+            for (int c = 0; c < 4; ++c)
+                ((half*) Cb)[(int64_t) t * size_n + col0 + c * 32] = sum[c];
+        }
+    }
+}
+
 // The fused epilogue proper (see exl3_mgemv_rdna.hip, "Launch-count fusion",
 // for the design). Entered by the warp holding one N-tile's 16
 // outputs in accum (lanes 0-15); all 32 lanes enter. Stores the tile, arrives
@@ -723,7 +802,10 @@ __device__ __forceinline__ void exl3_gemv_fused_epilogue
     int* seg_counter,            // this (slot, segment)'s arrival counter
     int* red_counter,            // this segment's rotated-slot counter, or nullptr
     const int red_target,        // packed slot count (read only with red_counter)
-    const int num_tokens
+    const int num_tokens,
+    const int64_t* __restrict__ indices = nullptr,
+    const int bszm = 0,
+    const int min_index = -1
 )
 {
     // 1. Store this tile, exactly as the unfused form does
@@ -755,52 +837,14 @@ __device__ __forceinline__ void exl3_gemv_fused_epilogue
 
     if (!red_counter) return;
 
-    // 4. Arrive at the segment's reduction
-    __threadfence();
-    if (lane == 0) old = atomicAdd(red_counter, 1);
-    old = __shfl(old, 0, 32);
-    if (old != red_target - 1) return;
-
-    // 5. Last rotated slot: acquire, reset, grouped weighted sum. Four columns
-    //    per lane with the row loop outside, so a row's four loads are in
-    //    flight together (this runs in the kernel's tail, where latency is
-    //    exposed); each column's chain is still kernel 3's exact order, and
-    //    the in-place write of row t follows every read of that column for t.
-    __threadfence();
-    if (lane == 0) *red_counter = 0;
-    const int stride = red_target / num_tokens;
-    const int col0 = seg * 128 + lane;
-    for (int t = 0; t < num_tokens; ++t)
-    {
-        if constexpr (c_fp32)
-        {
-            const float* C_ = ((const float*) Cb) + (int64_t) t * stride * size_n + col0;
-            float sum[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            for (int jj = 0; jj < stride; ++jj)
-            {
-                #pragma unroll
-                for (int c = 0; c < 4; ++c) sum[c] += C_[c * 32];
-                C_ += size_n;
-            }
-            #pragma unroll
-            for (int c = 0; c < 4; ++c)
-                ((float*) Cb)[(int64_t) t * size_n + col0 + c * 32] = sum[c];
-        }
-        else
-        {
-            const half* C_ = ((const half*) Cb) + (int64_t) t * stride * size_n + col0;
-            half sum[4] = {};
-            for (int jj = 0; jj < stride; ++jj)
-            {
-                #pragma unroll
-                for (int c = 0; c < 4; ++c) sum[c] = __hadd(sum[c], C_[c * 32]);
-                C_ += size_n;
-            }
-            #pragma unroll
-            for (int c = 0; c < 4; ++c)
-                ((half*) Cb)[(int64_t) t * size_n + col0 + c * 32] = sum[c];
-        }
-    }
+    // 4-5. Arrive/reset and perform the grouped reduction.  For a
+    // position-preserving masked call, bszm/num_tokens is the fixed token
+    // stride; the helper ignores -1 C rows rather than compacting groups.
+    exl3_gemv_fused_reduce<c_fp32>
+    (
+        Cb, size_n, seg, lane, red_counter, red_target, num_tokens,
+        indices, bszm, min_index
+    );
 }
 
 // Above this many N-tiles the single-warp form is kept; below it, split-K

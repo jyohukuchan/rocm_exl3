@@ -151,6 +151,19 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def("had_r_128_batch", &had_r_128_batch, "had_r_128_batch");
     m.def("exl3_gemm", &exl3_gemm, "exl3_gemm");
     m.def("exl3_gemv", &exl3_gemv, "exl3_gemv");
+#ifdef USE_ROCM
+    // The ROCm GEMV fused weighted epilogue accounts for position-preserving
+    // masked slots and skips their C rows in both fused and fallback reduces.
+    // Python keeps the experimental route on its old fallback when an older
+    // binary does not expose this capability.
+    m.def("exl3_mgemv_masked_reduce_supported", []() { return true; },
+          "exl3_mgemv_masked_reduce_supported");
+    m.attr("EXL3_MGEMV_MASKED_REDUCE_SUPPORTED") = py::bool_(true);
+#else
+    m.def("exl3_mgemv_masked_reduce_supported", []() { return false; },
+          "exl3_mgemv_masked_reduce_supported");
+    m.attr("EXL3_MGEMV_MASKED_REDUCE_SUPPORTED") = py::bool_(false);
+#endif
     m.def("exl3_gemm_num_kernel_shapes", &exl3_gemm_num_kernel_shapes, "exl3_gemm_num_kernel_shapes");
     m.def("exl3_gemm_shape_compat", &exl3_gemm_shape_compat, "exl3_gemm_shape_compat");
     m.def("g_get_cc", &g_get_cc, "g_get_cc");
