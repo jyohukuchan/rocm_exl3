@@ -125,3 +125,9 @@ Its "Verification tools" table covers every script here, not just the four above
 
 [ROCM_PORT_MAP.md](ROCM_PORT_MAP.md) is the original porting log. Its pass counts
 (31 / 43 of 50) are historical; the current baseline is above.
+
+## R9700起動前診断
+
+`python3 rocm_tools/r9700_preflight.py --json`でgfx番号・LDS・ROCm版torchと
+ビルド対象/危険なfused-MoE設定を確認できます。[使い方と実機確認](../doc/r9700_preflight.md)。
+モデルやnative extensionをロードしない診断です。
