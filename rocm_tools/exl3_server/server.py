@@ -318,7 +318,12 @@ def stop_conditions_for(req_stop: str | list[str] | None, ignore_eos: bool = Fal
 def token_budget(prompt_len: int, requested: int | None) -> int:
     """Largest completion length that still fits the cache (jobs occupy whole pages)."""
     usable = state.context_length // PAGE_SIZE * PAGE_SIZE
-    budget = usable - prompt_len - 1
+    # Job reserves a complete speculative window past max_new_tokens. Use
+    # the configured maximum, including when drafting adapts to a shorter
+    # window, so enqueue cannot require a page beyond the physical cache.
+    generator = getattr(state.generator, "generator", state.generator)
+    draft_tokens = int(getattr(generator, "num_draft_tokens", 0) or 0)
+    budget = usable - prompt_len - 1 - draft_tokens
     if budget <= 0:
         raise HTTPException(
             400,

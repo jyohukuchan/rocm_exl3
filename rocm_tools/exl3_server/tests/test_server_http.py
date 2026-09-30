@@ -106,6 +106,35 @@ async def request_json(method, path, payload):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("draft_tokens", [0, 1, 4])
+async def test_near_full_cache_reserves_speculative_window(http_state, monkeypatch, draft_tokens):
+    server.state.generator = SimpleNamespace(generator=SimpleNamespace(num_draft_tokens=draft_tokens))
+    captured = []
+
+    def checked_job(req, ids, max_new, *_args, **_kwargs):
+        # Model the same page capacity enforced by the real enqueue path.
+        reserved = ids.shape[-1] + max_new + 1 + draft_tokens
+        assert (reserved + 255) // 256 <= server.state.context_length // 256
+        captured.append(max_new)
+        return FakeJob(http_state.events)
+
+    monkeypatch.setattr(server, "make_job", checked_job)
+    response = await request_json("POST", "/v1/completions", {
+        "model": "fake-model", "prompt": "x" * (4094 - draft_tokens),
+        "add_bos": False, "max_tokens": 32,
+    })
+    assert response.status_code == 200
+    assert captured == [1]
+    response = await request_json("POST", "/v1/completions", {
+        "model": "fake-model", "prompt": "x" * (4095 - draft_tokens),
+        "add_bos": False, "max_tokens": 1,
+    })
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "context_length_exceeded"
+    assert captured == [1]  # Rejected before allocating/enqueuing another job.
+
+
+@pytest.mark.asyncio
 async def test_ordinary_chat_nonstream_usage_and_limits(http_state):
     response = await request_json("POST", "/v1/chat/completions", {
         "model": "fake-model", "messages": [{"role": "user", "content": "hi"}],
