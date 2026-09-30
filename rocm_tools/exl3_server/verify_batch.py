@@ -14,7 +14,7 @@ async def verify(a):
                 'requests': [], 'complete': False}
     def save():
         Path(a.output).write_text(json.dumps(evidence,ensure_ascii=False,indent=2)+'\n')
-    async with httpx.AsyncClient(base_url=a.base_url, headers=headers, timeout=180) as c:
+    async with httpx.AsyncClient(base_url=a.base_url, headers=headers, timeout=a.timeout) as c:
         evidence['startup'] = (await c.get('/props')).json()['runtime']
         save()
         configured = evidence['startup']['generator_runtime']['configured_max_batch_size']
@@ -65,5 +65,6 @@ if __name__ == '__main__':
     p.add_argument('--base-url',default='http://127.0.0.1:3953')
     p.add_argument('--model',default='qwen38-local')
     p.add_argument('--batch',type=int,default=4)
+    p.add_argument('--timeout',type=float,default=180,help='HTTP timeout in seconds')
     p.add_argument('--output',required=True)
     asyncio.run(verify(p.parse_args()))
