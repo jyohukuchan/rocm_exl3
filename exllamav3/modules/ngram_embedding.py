@@ -118,6 +118,9 @@ class NGramEmbedding(Module):
         self._pending = []          # queued prefetches, oldest first: {"history", "pin", "future"}
         self._executor = None
         self.prefetch_stats = {"hit": 0, "miss": 0, "retired": 0}
+        self._ram_lock = None       # util.mlock.MlockedRanges when EXL3_NGRAM_MLOCK=1: owns the
+                                    # mlock on self.tables' pages; released in unload() BEFORE
+                                    # the table references drop (see util/mlock.py)
         self._row_dtype = None      # stored row dtype of the unquantized table
         self._table_keys = None     # table tensor keys, recorded by load(); tp_export reads
                                     # their file locations from the collection's metadata
@@ -287,10 +290,31 @@ class NGramEmbedding(Module):
             self.rows_per_shard = self.num_rows
         if not self.mode.startswith("trellis"):
             self._row_dtype = self.tables[0].dtype
+        # EXL3_NGRAM_MLOCK=1 (default off, Linux-only, plain mlock - no copies, no GPU
+        # mapping): pin these pages so host memory pressure cannot page the table out
+        # between the benchmark's before/after mincore audits. Both RAM importers share
+        # this hook (regular loader and TP owner rank); disk modes and the tp_parent_defer
+        # placeholder never reach here. A failure raises - continuing unlocked is exactly
+        # the unproven-residency state the audit rejects (util/mlock.py carries the
+        # RLIMIT_MEMLOCK hint).
+        if self._ram_lock is not None:
+            self._ram_lock.unlock()     # reload without unload(): retire the stale lock on
+            self._ram_lock = None       # the replaced tables before it could outlive them
+        if os.environ.get("EXL3_NGRAM_MLOCK", "0") == "1":
+            from ..util.mlock import lock_tables_if_requested
+            self._ram_lock = lock_tables_if_requested(self.tables, f"n-gram table {self.key}")
 
     @override
     def unload(self):
         self._drain_prefetch()      # queued workers still read the table; first
+        # Release EXL3_NGRAM_MLOCK after the prefetch drained but BEFORE the table
+        # references drop: the lock holds its own references, so the munlock always
+        # addresses the pages it locked, never freed memory. A raise here keeps the
+        # tables and the lock owned, so a repeated unload() retries - idempotent
+        # either way (util.mlock.MlockedRanges.unlock never re-unlocks).
+        if self._ram_lock is not None:
+            self._ram_lock.unlock()
+            self._ram_lock = None
         # Streaming handles cache an open fd per shard and DiskTensorHandle has no
         # destructor: close them here (idempotent, so the parent's stc.close() may
         # still close the very same objects afterwards). The TP owner's disk-mode
@@ -430,14 +454,28 @@ class NGramEmbedding(Module):
             module.handles = handles
             if not mode.startswith("trellis"):
                 module._row_dtype = handles[0].dtype
-        module.head_offsets = consumer.recv(exported["head_offsets"], cuda = False).long().contiguous()
-        module.head_vocab_sizes = consumer.recv(exported["head_vocab_sizes"], cuda = False).long().contiguous()
-        module.layer_multipliers = consumer.recv(exported["layer_multipliers"], cuda = False).long().contiguous()
-        module.head_bias = consumer.recv(exported["head_bias"], cuda = True) if exported.get("head_bias") is not None else None
-        assert module.head_offsets.shape[0] == module.num_heads, \
-            f"NGramEmbedding.tp_import: head_offsets mismatch for {key}"
-        if mode.startswith("trellis"):
-            module.codebook = mul1_codebook(device)
+        try:
+            module.head_offsets = consumer.recv(exported["head_offsets"], cuda = False).long().contiguous()
+            module.head_vocab_sizes = consumer.recv(exported["head_vocab_sizes"], cuda = False).long().contiguous()
+            module.layer_multipliers = consumer.recv(exported["layer_multipliers"], cuda = False).long().contiguous()
+            module.head_bias = consumer.recv(exported["head_bias"], cuda = True) if exported.get("head_bias") is not None else None
+            assert module.head_offsets.shape[0] == module.num_heads, \
+                f"NGramEmbedding.tp_import: head_offsets mismatch for {key}"
+            if mode.startswith("trellis"):
+                module.codebook = mul1_codebook(device)
+        except BaseException as exc:
+            # If the import dies after the owner rank locked its RAM table
+            # (EXL3_NGRAM_MLOCK), retire the lock before dropping the module: an
+            # abandoned mlock would outlive the tensors it described. unload()
+            # drains nothing and closes nothing on this half-built owner (no
+            # prefetch, no handles); if that cleanup itself fails, attach it to
+            # the ORIGINAL error instead of replacing it.
+            if module._ram_lock is not None:
+                try:
+                    module.unload()
+                except BaseException as cleanup_error:
+                    exc.tp_ngram_cleanup_error = str(cleanup_error)
+            raise
         return module
 
     def _fetch_packed(self, uids_cpu: torch.Tensor) -> torch.Tensor:
