@@ -124,6 +124,23 @@ def test_partial_second_tool_call_never_leaks_raw_xml():
     assert any(e["type"] == "tool_call_start" and e["index"] == 1 for e in events)
 
 
+def test_stream_xml_boundary_newline_and_literal_think_markup_in_string():
+    parser = IncrementalAssistantParser(tools=TOOLS)
+    chunks = [
+        '<tool_call>\n<function=get_weather>\n<parameter=city>\n',
+        '"Tokyo"\n</parameter>\n</function>\n</tool_call>',
+    ]
+    events = sum((parser.feed(chunk) for chunk in chunks), [])
+    result = parser.finish()
+    args = "".join(e["delta"] for e in events + result["events"]
+                    if e["type"] == "tool_call_arguments")
+    assert json.loads(args) == {"city": "Tokyo"}
+    parsed = parse_assistant_output(
+        '<tool_call><function=get_weather><parameter=city>"<think>x</think>"'
+        '</parameter></function></tool_call>')
+    assert json.loads(parsed["tool_calls"][0]["function"]["arguments"])["city"] == "<think>x</think>"
+
+
 def test_template_quoted_angle_string_and_required_tool_choice():
     tools = [{"type": "function", "function": {
         "name": "f", "parameters": {"type": "object", "required": ["s"],

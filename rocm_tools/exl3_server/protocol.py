@@ -127,6 +127,23 @@ def _text_content(content: Any) -> str:
     return str(content)
 
 
+def _remove_top_level_think(text: str) -> tuple[str, str]:
+    """Remove reasoning tags before the first tool block only."""
+    lower = text.lower()
+    marker = -1
+    for candidate in [m.start() for m in re.finditer(r"<tool_call\b", lower)]:
+        inside = any(m.start() <= candidate < m.end()
+                     for m in _THINK_RE.finditer(text))
+        if not inside:
+            marker = candidate
+            break
+    prefix = text if marker < 0 else text[:marker]
+    suffix = "" if marker < 0 else text[marker:]
+    reasoning = "\n".join(m.group(1).strip() for m in _THINK_RE.finditer(prefix)).strip()
+    prefix = _THINK_RE.sub("", prefix)
+    return reasoning, prefix + suffix
+
+
 def _tool_call(call: Any, index: int = 0) -> dict:
     if not isinstance(call, dict):
         raise ProtocolError("tool_calls entries must be objects")
@@ -321,8 +338,7 @@ def parse_assistant_output(text: str, *, model_family: str = "qwen38",
     """Parse Qwen ``<think>`` and function XML without executing tools."""
     if not isinstance(text, str):
         raise ProtocolError("assistant output must be text")
-    reasoning = "\n".join(m.group(1).strip() for m in _THINK_RE.finditer(text)).strip()
-    visible = _THINK_RE.sub("", text)
+    reasoning, visible = _remove_top_level_think(text)
     calls, spans = [], []
     for match in _QWEN_CALL_RE.finditer(visible):
         name, body = match.group(1), match.group(2)
@@ -542,11 +558,9 @@ class IncrementalAssistantParser:
             source = self._text[self._initial_reasoning_cursor:]
         else:
             # Explicit <think> blocks are excluded from tool scanning.
-            think_matches = list(_THINK_RE.finditer(source))
-            if think_matches:
-                source = source[think_matches[-1].end():]
-            elif source.lower().rfind("<think") > source.lower().rfind("</think"):
+            if source.lower().rfind("<think") > source.lower().rfind("</think"):
                 return []
+            _, source = _remove_top_level_think(source)
         starts = list(_FUNCTION_START_RE.finditer(source))
         for index, start in enumerate(starts):
             name = start.group(1)
@@ -591,7 +605,8 @@ class IncrementalAssistantParser:
                         tails.append(lt)
                 end = min(tails) if tails else len(body)
                 raw = body[p.end():end]
-                pstate = state["params"].setdefault(pname, {"seen": 0, "started": False})
+                pstate = state["params"].setdefault(
+                    pname, {"seen": 0, "started": False, "mode": None})
                 complete = body[end:].lower().startswith("</parameter")
                 if not pstate["started"]:
                     prefix = ("{" if state["param_count"] == 0 else ",") + json.dumps(pname) + ":"
@@ -603,13 +618,24 @@ class IncrementalAssistantParser:
                     state["param_count"] += 1
                 value = raw
                 if typ == "string":
-                    normalized = value[1:] if value.startswith('"') else value
-                    if complete and normalized.endswith('"'):
-                        normalized = normalized[:-1]
-                    elif not complete and normalized.endswith('"'):
-                        # The model's closing JSON quote often arrives before
-                        # the XML parameter close; hold it until completion.
-                        normalized = normalized[:-1]
+                    probe = value.lstrip()
+                    if pstate["mode"] is None:
+                        if not probe:
+                            continue
+                        pstate["mode"] = "quoted" if probe.startswith('"') else "plain"
+                    if pstate["mode"] == "quoted":
+                        normalized = probe[1:] if probe.startswith('"') else probe
+                        if complete:
+                            normalized = normalized.rstrip()
+                        if complete and normalized.endswith('"'):
+                            normalized = normalized[:-1]
+                        elif not complete and normalized.endswith('"'):
+                            # The model's closing JSON quote often arrives
+                            # before the XML parameter close; hold it until
+                            # completion.
+                            normalized = normalized[:-1]
+                    else:
+                        normalized = probe.rstrip() if complete else probe.rstrip()
                     value_delta = normalized[pstate["seen"]:]
                     if value_delta:
                         events.append({"type": "tool_call_arguments", "index": index,
