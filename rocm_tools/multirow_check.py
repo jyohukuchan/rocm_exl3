@@ -16,8 +16,21 @@ independent reference, so a bitwise match cannot hide a shared wrong result.
 
 Covers the single-matrix entry (ext.exl3_gemm) and the multi-matrix entry
 (ext.exl3_mgemm: broadcast and per-slot inputs, indices, expert-range
-packing, per-matrix width/output lists) at m in {2, 3, 5, 8}, K in {2, 4, 6},
-both C dtypes. Exits nonzero on any failure.
+packing, per-matrix width/output lists) at m in {1..8}, K in {2, 4, 6},
+both C dtypes, including the exact-tight (m, k) and (2, m, k) rotated-input
+slabs that BC_GatedMLP::run_bszN_gr lazily allocates (the num_tokens 5 /
+M-tile 8 shape that page-faulted on GPU0 on 2026-09-30). Exits nonzero on
+any failure.
+
+LIMITS OF COVERAGE -- padded-row reads: at m not in {1,2,4,8} the dot tile
+computes M - m extra rows before the tile M chosen by row_tile. Those rows
+are never stored, so the bitwise checks above CANNOT observe an invalid
+padded read; this numeric harness would pass even with the clamp removed
+(no fake coverage: do not read a green run as proof of in-bounds padding).
+Catching that class needs guard pages (HIP VMM around a page-terminal slab)
+or the model-level reproduction (reuse-legacy sync-debug workload, shared
+GatedMLP at num_tokens = 5). The tight A_had shapes below are kept for
+bit-identity, not as a bounds detector.
 """
 
 import os
@@ -168,15 +181,25 @@ def main():
             for K in (2, 4, 6):
                 for fp32 in (False, True):
                     ok &= single(m, k, n, K, fp32, False, g)
+        # Padded tiles (m = 6/7 at M = 8) and the no-padding controls (1/4)
+        # at K = 4; xh is the exact (m, k) down_xh_n shape
+        for m in (1, 4, 6, 7):
+            for fp32 in (False, True):
+                ok &= single(m, k, n, 4, fp32, False, g)
     ok &= single(3, 3072, 3072, 4, False, True, g)
     ok &= single(3, 2048, 100352, 4, False, False, g)   # lm_head scale: single-warp m=1 shape
     print("multi-matrix (ext.exl3_mgemm)")
-    for m in (2, 3, 8):
+    for m in (1, 2, 3, 4, 5, 6, 7, 8):
         for fp32 in (False, True):
             ok &= multi(m, 3072, 1024, 4, fp32, 16, 10, True, False, False, g)
             ok &= multi(m, 1024, 3072, 4, fp32, 16, 10, False, False, False, g)
             ok &= multi(m, 3072, 1024, 4, fp32, 16, 10, False, True, False, g)
             ok &= multi(m, 3072, 1024, 4, fp32, 4, 4, True, False, True, g)
+    # BC_GatedMLP run_bszN_gr fused gate/up shape: bszm = 2 packed slots over
+    # a broadcast input (bszm_in = 1), A_had exactly (2, m, k) -- the shape
+    # that faulted at m = 5 (tile M = 8). Padded m = 5/6/7, controls m = 4/8.
+    for m in (4, 5, 6, 7, 8):
+        ok &= multi(m, 2560, 5120, 4, False, 2, 2, True, False, False, g)
     ok &= multi(5, 3072, 1024, 6, False, 16, 10, True, False, False, g)
     print("PASS" if ok else "FAIL")
     sys.stdout.flush()

@@ -17,7 +17,14 @@
 // pairs of fdot2 accumulators, and each row's chain is exactly the m == 1
 // chain, so row r of an m-row call is bit-identical to a separate m == 1 call
 // on that row (rocm_tools/multirow_check.py is the gate). Rows past m are
-// computed on row m - 1's data and never stored.
+// computed on row m - 1's data and never stored -- the clamp lives inside
+// the dot core (exl3_gemv_dot_tile_direct_mr) ahead of EVERY A access,
+// because callers' rotated-input slabs can be exactly m rows: the lazily
+// sized BC_GatedMLP guh_n/gu_n/down_xh_n are (2/1, num_tokens, width)
+// packed slabs and the mgemm A_had contract is (bszm, size_m, size_k). An
+// unclamped padded read walked off the last slab's end into unmapped pages
+// (GPU0 page-not-present fault at the shared-expert num_tokens = 5 / M = 8
+// shape, 2026-09-30).
 //
 // Structure is the pre-fusion three-kernel form, deliberately. The fused
 // m == 1 kernels rotate the input into LDS in their prologue, which does not
@@ -142,7 +149,9 @@ void exl3_gemv_multirow_prewarm(int device)
 // =============================================================================
 // Same B path, same per-row fdot2 chain and the same quad reduction as the
 // m == 1 core, so each row is bit-identical to it. A is the slab's rotated
-// rows, lda halves apart. out[r] is row r's column-lane value (lanes 0-15).
+// rows, lda halves apart; only rows_valid (<= M) of them exist and padded
+// r reads are clamped to row rows_valid - 1 BEFORE touching A (tight-slab
+// note in the clamp). out[r] is row r's column-lane value (lanes 0-15).
 
 template <int bits, int cb, int M>
 __device__ __forceinline__ void exl3_gemv_dot_tile_direct_mr
@@ -155,6 +164,7 @@ __device__ __forceinline__ void exl3_gemv_dot_tile_direct_mr
     const int lane,
     const int kb_begin,
     const int kb_end,
+    const int rows_valid,     // m <= M, >= 1; padded rows read row m - 1
     float* out
 )
 {
@@ -176,7 +186,17 @@ __device__ __forceinline__ void exl3_gemv_dot_tile_direct_mr
         #pragma unroll
         for (int r = 0; r < M; ++r)
         {
-            const half2* a2 = (const half2*) (A + r * lda + k_tile * 16);
+            // Padded rows (r >= rows_valid) are computed on the last valid
+            // row's data and never stored (see the epilogue). The clamp must
+            // precede EVERY A access: callers' rotated slabs can be exactly
+            // rows_valid rows -- BC_GatedMLP's lazily sized guh_n/gu_n are
+            // (2, num_tokens, width) packed slabs, down_xh_n is (1,
+            // num_tokens, width), and the mgemm A_had contract is (bszm,
+            // size_m, size_k) -- so an unclamped A + r * lda read past the
+            // LAST slab's end. Valid rows read exactly as before, so the
+            // bit-identity with the m == 1 chain is unchanged.
+            const int r_src = r < rows_valid ? r : rows_valid - 1;
+            const half2* a2 = (const half2*) (A + r_src * lda + k_tile * 16);
             half2 a01 = a2[r0 >> 1];
             half2 a89 = a2[(r0 >> 1) + 4];
             accA[r] = __builtin_amdgcn_fdot2(a01, frag0[0], accA[r], false);
@@ -213,6 +233,7 @@ __device__ __forceinline__ void exl3_gemv_dot_tile_splitk_mr
     const int tile_n,
     const int warp_id,
     const int lane,
+    const int rows_valid,     // m <= M, >= 1; forwarded to the direct core
     float* sh_red,
     float* out
 )
@@ -226,7 +247,8 @@ __device__ __forceinline__ void exl3_gemv_dot_tile_splitk_mr
     #pragma unroll
     for (int r = 0; r < M; ++r) acc[r] = 0.0f;
     if (kb0 < kb1)
-        exl3_gemv_dot_tile_direct_mr<bits, cb, M>(A, lda, B, n_tiles, tile_n, lane, kb0, kb1, acc);
+        exl3_gemv_dot_tile_direct_mr<bits, cb, M>(A, lda, B, n_tiles, tile_n, lane, kb0, kb1,
+                                                   rows_valid, acc);
 
     if (lane < 16)
     {
@@ -427,7 +449,7 @@ __device__ __forceinline__ void exl3_gemv_mr_body
     float acc[M];
     exl3_gemv_dot_tile_splitk_mr<bits, cb, WARPS_PER_BLOCK, M>
     (
-        A, lda, B, size_k, n_tiles_j, tile_n, warp_id, lane, sh_red, acc
+        A, lda, B, size_k, n_tiles_j, tile_n, warp_id, lane, rows_valid, sh_red, acc
     );
     if (warp_id != 0) return;
     exl3_gemv_fused_epilogue_mr<c_fp32, M>
