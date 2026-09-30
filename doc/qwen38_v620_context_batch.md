@@ -1,6 +1,6 @@
 # Qwen3.8 Flash Next: V620 TP2 context / batch / MTP measurements
 
-Status: measurements in progress, 2026-09-30. Only completed runs below are usable evidence. Capacity allocation alone is not an inference result.
+Status: batch4 speed confirmation in progress, 2026-09-30. Further long-context tests are deferred at the user's request. Only completed runs below are usable evidence. Capacity allocation alone is not an inference result.
 
 ## Configuration and artifacts
 
@@ -30,7 +30,7 @@ Each language has one warmup and two timed groups. Input 8192 and output 256 tok
 | 1 | dynamic max4 | 38.88 | 50.52 | 476.76 / 479.41 |
 | 2 | fixed1 | 55.85 | 56.68 | 473.83 / 467.18 |
 | 3 | fixed1 | 66.25 | 73.95 | 472.67 / 465.49 |
-| 4 | fixed1 | Pending | Pending | Pending |
+| 4 | fixed1 | 66.89 | 58.81 | 436.01 / 460.61 |
 
 Batch1 run: `final-8k-b1-d4`; Japanese repetitions 38.74–39.02, code 50.45–50.58 tok/s. Do not infer a universal gain from a two-repeat median.
 
@@ -38,14 +38,16 @@ Batch2 run: `final-8k-b2-d1`; per-sequence averages Japanese27.93/code28.34 tok/
 
 Batch3 run: `final-8k-b3-d1`; per-sequence averages Japanese22.08/code24.65 tok/s. Common-window aggregate Japanese70.06/code78.92 tok/s. Final audits and power restoration passed. Earlier fixed-MTP2 baseline was Japanese34.71/code41.93 aggregate; the difference combines draft/history settings and code changes, not an isolated kernel speedup.
 
-## Long context (partial)
+Batch4 run: `final-8k-b4-d1`; all24 jobs and final audits passed with RAM locking. These initial two-repeat medians need confirmation: Japanese66.56–67.21, code48.61–69.01 aggregate tok/s. Common-window medians Japanese70.86/code71.03. A separate three-repeat batch4-only measurement is queued after external quantization/evaluation load subsides. The prior failed RAM-audit run is excluded; all24 generated token sequences are identical between that run and the successful mlocked run.
+
+## Long context (partial; further tests deferred)
 
 The model configuration allows 262144 positions. Cache capacity is per sequence in this table; the CLI `--cache-tokens` takes the sum across the batch. A 512-token margin leaves room for 256 generated tokens and speculative/cache bookkeeping.
 
 | Batch | Cache capacity per sequence | Actual input + output | Fixed draft | Chunk | Load budgets GiB | Status |
 |---|---:|---:|---:|---:|---|---|
 | 1 | 262144 | 261632 + 256 | 4 | 2048 | 30 / 29 | Complete |
-| 2–4 | Pending | Pending | 4 | Pending | Pending | Full-input tests pending |
+| 2–4 | Pending | Pending | 4 | Pending | Pending | Deferred by user |
 
 `long-b1-c262144-d4`: prefill 463.54 tok/s, first delivery 564.43 s, observed decode 33.82 tok/s (engine 31.24), acceptance 43.82%. Sampled device-global VRAM peaks 29.22/29.72 GiB. These include allocations outside Torch; Torch peak alone underestimates physical usage. Sampling interval is 1 s and may miss short spikes.
 
