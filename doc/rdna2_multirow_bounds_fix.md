@@ -42,7 +42,7 @@ const int r_src = r < rows_valid ? r : rows_valid - 1;
 PYTHONPATH=/work/lib-context-mr-bounds:/src
 ```
 
-記録は `/home/homelab1/datapool/rocm-exl3-rdna2/runs/context-batch/`。
+記録は `/path/to/rocm-exl3-data/runs/context-batch/`。
 
 - `mr_guard_probe.py`, `guard-old-m5-multi-verdict.json`: 境界検出用の小さな再現テスト。
 - `native-bits-gates.json`, `guard-fixed-bits-*.json`: 厳密な bit pattern 比較を含む guard 結果。

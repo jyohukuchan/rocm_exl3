@@ -82,14 +82,14 @@ indexer/projection/TP集約を含まない値で、通常1行decodeの利得は�
 host側の検証済みrunner例（未使用tagを指定）。明示的な`--replicate-router`で選択する。native/modelは再ダウンロードしない。
 
 ```bash
-python3 /home/homelab1/datapool/rocm-exl3-rdna2/runs/tp-decode-opt/run_bench.py \
+python3 /path/to/rocm-exl3-data/runs/tp-decode-opt/run_bench.py \
   --tag q-tp-selected-retest --source /src \
   --model /work/models/qwen38-flash-next-exl3-3.05bpw \
   --execution tp --mode mtp --replicate-router \
   --prompts /work/runs/qwen38-mtp/formal8k-prompts.json
 ```
 
-artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp-decode-opt`。
+artifact root: `/path/to/rocm-exl3-data/runs/tp-decode-opt`。
 
 - `ar-replicated-paired-comparison.json`, `mtp-replicated-paired-comparison.json`: 入力/native/モデル一致を検査したclean比較。
 - `teacher-replicated-comparison.json`, `q-tp-mtp-router-agreement-r2*`: 数値/両rank routing。

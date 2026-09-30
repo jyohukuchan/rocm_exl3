@@ -75,7 +75,7 @@ derivation, which re-computes h_blocks from the ORIGINAL formula.
 EXL3_ROCM_GQA_TUNE=0 opts out (default on for eligible shapes; set it
 before model load / configure, switches are read per configure).
 
-Prototype: /home/homelab1/datapool/rocm-exl3-rdna2/bench_aot_tune.py wrapped
+Prototype: /path/to/rocm-exl3-data/bench_aot_tune.py wrapped
 bc_attn._compile_kernel and rewrote the constexprs on the way in -- correct
 results at 47.2 tok/s but the host scratch buffers stayed sized for the
 untuned 16-row tile. This helper is the same tuning expressed at

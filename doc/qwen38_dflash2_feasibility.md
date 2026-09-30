@@ -74,7 +74,7 @@ K5/V4、電力方針、入力、生成長を揃え、日本語・コードの pr
 
 ## 保存した根拠
 
-ローカル資料: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/dflash2-feasibility/`
+ローカル資料: `/path/to/rocm-exl3-data/runs/dflash2-feasibility/`
 
 - `local-bit-inventory.json`, `memory-scenario.json`: 重み集計と容量試算。
 - `official-config.json`, `official-model-info.json`, `official-README.md`: 公開 27B DFlash2。revision `015e795645c74b1a0eeef3b570031fb62e769bc5`。

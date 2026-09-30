@@ -1,0 +1,45 @@
+{
+  "date": "2026-09-30",
+  "host": {
+    "cpu": "AMD Ryzen Threadripper PRO 3995WX 64-Cores",
+    "physical_cores": 64,
+    "logical_cpus": 128,
+    "usable_ram_bytes": 117933981696,
+    "kernel": "6.17.0-35-generic"
+  },
+  "devices": [
+    "AMD Radeon Pro V620 gfx1030 32GiB",
+    "AMD Radeon Pro V620 gfx1030 32GiB"
+  ],
+  "userspace": "Ubuntu24.04.4 LTS / Python3.12.3, locally assembled container; no prebuilt image distributed",
+  "packages": {
+    "torch": "2.12.0+rocm7.2",
+    "triton-rocm": "3.7.0",
+    "numpy": "2.4.4",
+    "transformers": "5.17.0",
+    "safetensors": "0.8.0",
+    "tokenizers": "0.23.2"
+  },
+  "hipcc": "7.14.60850-0000000",
+  "compiler": "AMD clang23.0.0git",
+  "native_sha256": "57afa48c9a61b9e7ba2721917bf011096d7cc947e43b2a8444ee8350f0820718",
+  "runtime_libraries": {
+    "libhsa-runtime64": [
+      "/opt/rocm/core-7.14/lib/libhsa-runtime64.so.1.21.0"
+    ],
+    "libamdhip64": [
+      "/opt/venv/lib/python3.12/site-packages/torch/lib/libamdhip64.so"
+    ],
+    "librccl": [
+      "/opt/venv/lib/python3.12/site-packages/torch/lib/librccl.so"
+    ],
+    "librocprofiler-sdk": [
+      "/opt/venv/lib/python3.12/site-packages/torch/lib/librocprofiler-sdk.so"
+    ]
+  },
+  "notes": [
+    "Compiler SDK7.14 and Torch wheel ROCm7.2 labels differ; this records the actual mixed tested stack, not a guarantee for every ROCm version.",
+    "Benchmarks retain the original packed MTP3 weights; no5-bit MTP replacement.",
+    "Batch4 allowed external R9700 evaluation/quantization work; it ended during the run."
+  ]
+}

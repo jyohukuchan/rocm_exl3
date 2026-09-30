@@ -6,8 +6,8 @@
 
 ## 環境と再現範囲
 
-- 作業repo: `/home/homelab1/coding-local/rocm_exl3`。
-- artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2`。以下の `runs/` はこの配下。
+- 作業repo: `/path/to/rocm_exl3`。
+- artifact root: `/path/to/rocm-exl3-data`。以下の `runs/` はこの配下。
 - container: `rocm-exl3-rdna2`、repoを `/src`、artifact rootを `/work` にmount。
 - GPU: V620、gfx1030、72 CU、約31.98 GiB。PCI `0000:43:00.0`、
   UUID `GPU-08b2ddcbd6e6b36c`、renderD128。GPU処理は直列実行。
@@ -174,7 +174,7 @@ swapは0。RSS/PSSはhost側使用量でありGPUの全割当量ではない。
 既存containerは停止せず待機状態で残す。GPU workloadを1つずつ実行する。
 
 ```bash
-cd /home/homelab1/coding-local/rocm_exl3
+cd /path/to/rocm_exl3
 python3 -m unittest discover -s rocm_tools/rdna2/tests
 
 docker exec -e MAX_JOBS=12 rocm-exl3-rdna2 \

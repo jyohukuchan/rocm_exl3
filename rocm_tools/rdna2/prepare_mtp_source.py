@@ -71,7 +71,7 @@ Usage (host, CPU-only, network read of pinned artifacts only):
     python3 rocm_tools/rdna2/prepare_mtp_source.py \
         --repo Qwen/Qwen3.8-Flash-Next \
         --revision de4b8e4d43b917e7706784d8bb445c9af86a3540 \
-        --output-dir /home/homelab1/coding-local/rocm_exl3/models/mtp_source_qwen38flashnext
+        --output-dir /path/to/rocm_exl3/models/mtp_source_qwen38flashnext
 
 Inspection only (fetches the index, prints the selection, writes nothing to
 the output dir): add ``--list``.

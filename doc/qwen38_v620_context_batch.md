@@ -11,7 +11,7 @@ Status: batch4 speed confirmation complete, 2026-09-30. Further long-context tes
 - Final batch1–3 source `/work/runs/context-batch/source-prune-native-fixed`; batch4 confirmation uses `/work/runs/context-batch/source-mlock-fixed` with the reviewed RAM-lock addition. Manifests record source hashes and validated commits; snapshots do not contain `.git`.
 - Explicit environment: `EXL3_TP_REPLICATE_ROUTER=1`, `EXL3_ROCM_MOE_MGEMM_MAX_ROWS=20`, `EXL3_BATCH_RECURRENT_PRUNE=1`, `HSA_ENABLE_SDMA=0`, `LD_PRELOAD=libhsa-runtime64.so`.
 - Batch1: auto prefill, profile_peak draft/verify/decode, auto idle. Batch>1: profile_peak inference, auto after exit.
-- Host artifacts: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/context-batch` (container `/work/runs/context-batch`). JSON files contain prompts/hashes, actual cache/RAM/TP audits, delivery events, and per-rank memory data. `*-process.json` contains command/exit/power restoration and sampled board VRAM peaks.
+- Host artifacts: `/path/to/rocm-exl3-data/runs/context-batch` (container `/work/runs/context-batch`). JSON files contain prompts/hashes, actual cache/RAM/TP audits, delivery events, and per-rank memory data. `*-process.json` contains command/exit/power restoration and sampled board VRAM peaks.
 
 ## Measurement definitions
 
@@ -102,15 +102,6 @@ For these runs, the launcher grants only the benchmark process and inherited chi
 
 ## Reproduction
 
-The artifact `run_bench.py` starts/stops the local power helper and serializes one container invocation. Run V620 benchmarks serially; the final confirmation explicitly allowed the separate R9700 workload. For example, from the host artifact directory (choose a fresh tag):
+The public, portable entry point is [reproduce_v620.md](reproduce_v620.md). It uses the tracked power helper and direct TP runner rather than the original private `run_bench.py` container supervisor. No locally named container image, private artifact directory, or prebuilt native extension is required; install the documented ROCm dependencies and build this source.
 
-```bash
-python3 run_bench.py --tag verify-b4-8k --source /work/runs/context-batch/source-mlock-fixed \
-  --native /work/lib-context-mr-bounds --model /work/models/qwen38-flash-next-exl3-3.05bpw \
-  --execution tp --mode mtp --prompts /work/runs/context-batch/prompts-8192-b4-r3.json \
-  --cache-tokens 34816 --batch-size 4 --draft-tokens 1 --fixed-draft \
-  --replicate-router --env EXL3_ROCM_MOE_MGEMM_MAX_ROWS=20 --env EXL3_BATCH_RECURRENT_PRUNE=1 \
-  --env EXL3_NGRAM_MLOCK=1 --memlock-gib 34 --env EXL3_HOST_MEM_RESERVE_MB=0
-```
-
-The JSON configuration is documentation, not automatically loaded by EXL3. The runner records the exact generated command in `TAG-process.json`; preserve both process completion and main report completion, final audits, and power restoration before treating a run as successful. For long-context reproduction also pass the recorded per-device load budgets, chunk size, total cache tokens, and the frozen long-prompt file.
+The [dated evidence bundle](../benchmarks/2026-09-30/README.md) contains the exact frozen prompts, normalized raw successful reports, timing-event summaries, environment and provenance. The public summarizer can recalculate the metrics without loading a model. Paths earlier in this historical report describe the original environment; use the public guide for current commands. Failed/exploratory local run tags remain historical notes rather than shipped artifacts.

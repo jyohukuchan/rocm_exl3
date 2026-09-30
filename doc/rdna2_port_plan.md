@@ -208,7 +208,7 @@ TPはモデル分割と通信backendの二層に分けて実装する。
 
 ## Phase 0–2 実行記録
 
-- 作業領域: `/home/homelab1/datapool/rocm-exl3-rdna2`。container: `rocm-exl3-rdna2`。
+- 作業領域: `/path/to/rocm-exl3-data`。container: `rocm-exl3-rdna2`。
 - GPU: PCI `43:00.0`, renderD128, `GPU-08b2ddcbd6e6b36c` の V620 1枚のみ可視。別V620の既存workloadは触らない。
 - 既存image `rocm-exl3-investigation:tested` を再利用。Torch `2.12.0+rocm7.2`、Triton `3.7.0`、host HIP compiler `7.14`、host ROCr preload。FP16 128×128 matmul、device gfx1030を実行確認済み。
 - image由来のR9700用ROCR_VISIBLE_DEVICESをV620 UUIDへ上書き済み。最初の委任はこの前提訂正のため停止し、差分なしを確認して再dispatch。
@@ -262,7 +262,7 @@ TPはモデル分割と通信backendの二層に分けて実装する。
 - クロック低下をprofile_peak、SDMA経路で再現した長い同期待ちをHSA_ENABLE_SDMA=0で回避。専用containerをSDMA無効のデフォルトへ切替済み。性能設定は実行中だけ適用し、現在はautoへ復元。
 - 8K prefillはD約1269/M約745t/s、decodeはD約47.8/M約56.7t/s。D prefillは固定1GPU基準の約1.40倍、decodeは両モデルともほぼ同等。24区間・768decode tokensのtraceと無観測controlを監査。
 - SDK終了不具合は診断上の制約として保持。採用traceはworkloadとcleanup完了後に保存を要求し、保存完了後に停止(exit137)。通常推論は全てexit0。
-- [結果・再現手順](v620_pair_results.md)、[固定設定](v620_pair_config.json)。各stageのmanifest/metrics/correctness/summaryは `/home/homelab1/datapool/rocm-exl3-rdna2/runs/two-gpu/phase3` と `phase4` に保存。
+- [結果・再現手順](v620_pair_results.md)、[固定設定](v620_pair_config.json)。各stageのmanifest/metrics/correctness/summaryは `/path/to/rocm-exl3-data/runs/two-gpu/phase3` と `phase4` に保存。
 - 次はPhase5。大型モデルの開始予算は1枚28GiB程度とし、新しいcache/scratch/native割当は別途検証する。Phase5/6の完了を意味しない。
 
 ## Phase 6 実装・検証記録（2026-09-29）
@@ -272,7 +272,7 @@ TPはモデル分割と通信backendの二層に分けて実装する。
 - Qの8K+256×12 AR連続実行、8K MTPの最終LS/TP各warm1+timed5×2課題、32K+256、batch2各8K+256、worker異常検出・再ロード、両rankのGPU kernel/演算overlapを検証した。
 - GDN sigmoid設定のTP受け渡し漏れと、idle defragの非同期H2D指示を共有arena再利用で壊す競合を修正した。後者は旧コードで実GPU再現→最小修正で解消→同じ12job完走を確認。CPU591 tests＋53 subtests合格。
 - Q MTPの最終結果はprefill約1.54–1.56倍、観測decodeは約0.99–1.04倍、8K+256全体時間は26.5–30.6%短縮。D/Mの2KではTPでdecodeが低下するため層分割を残す。D/Mの新しい自然入力セットでの1GPU再測定は含まず、1GPU基準はPhase1/2の記録を保持する。
-- [詳細・再現手順](rdna2_tp2.md)、[TP2固定設定](qwen38_v620_tp_config.json)。artifactは `/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp2`。
+- [詳細・再現手順](rdna2_tp2.md)、[TP2固定設定](qwen38_v620_tp_config.json)。artifactは `/path/to/rocm-exl3-data/runs/tp2`。
 
 ## 参照
 

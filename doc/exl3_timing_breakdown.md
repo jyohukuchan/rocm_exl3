@@ -144,7 +144,7 @@ SIGTERMでprofilerに保存を要求した。SDKは保存完了後もsignal hand
 
 ## ファイルと再現
 
-artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2`。
+artifact root: `/path/to/rocm-exl3-data`。
 
 - `runs/timing-breakdown/final-breakdown.json`: 全値、監査、CSV/JSON SHA256。
 - `runs/timing-breakdown/{d,m}-{v620,r9700}-summary.json`: window別/全kernel別内訳。

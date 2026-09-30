@@ -36,7 +36,7 @@ GPU0はPCI 43:00.0、GPU1は03:00.0。平均は同じ時間区間で積算した
 
 ## 集計方法と精度
 
-- 元データ: artifact root `/home/homelab1/datapool/rocm-exl3-rdna2/runs/qwen38` の `formal-auto-36.json`, `formal-peak-36.json` と各 `*-telemetry.json`。実測間隔中央値はauto0.501265秒、peak0.501016秒、最大0.538070/0.504920秒。ロードとwarmupを除外。
+- 元データ: artifact root `/path/to/rocm-exl3-data/runs/qwen38` の `formal-auto-36.json`, `formal-peak-36.json` と各 `*-telemetry.json`。実測間隔中央値はauto0.501265秒、peak0.501016秒、最大0.538070/0.504920秒。ロードとwarmupを除外。
 - 電力源: `gpu_metrics` v1.3の`average_socket_power`（offset22のuint16、W）。ローカルのamdgpuドライバ `sienna_cichlid_ppt.c` におけるSMU `AverageSocketPower`からの転記、`kgd_pp_interface.h`の配置を確認。GPU activity値は区間選択に使っていない（GPU1のactivity99%固定という既知の観測上の制約を回避）。
 - prefill: 専用prefill jobのwall開始から報告されたtime_prefillまで。内部のprefill開始はwall開始と完全同時ではないため境界に微小なずれがあり、1 token目のforwardと終了処理は対象外となる近似区間。
 - decode: 最初のtoken受取から最後から2番目のtoken受取まで。256生成の各runから254個のITLを用い、最初のtokenと最終iterate全体を除外。最終iterateはdecodeと終了処理が混ざるため、両者を不正確に分割して含めない。

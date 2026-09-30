@@ -98,7 +98,7 @@
     "gdn_state": "GDN recurrent state is not KV; stays FP32/BF16",
     "diagnostic_override": "--cache-fp16 only; never the default",
     "evidence": "Actual target12 + draft1 QSA quant layers K5/V4; 8K repeated AR/MTP, batch2 8K+256 and batch1 32K+256 validated.",
-    "evidence_directory": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp-decode-opt"
+    "evidence_directory": "/path/to/rocm-exl3-data/runs/tp-decode-opt"
   },
   "validation": {
     "batch1": "K5/V4 and replicated router: 8K+256 AR/MTP repeated jobs; 32K+256 JA/code finite with fixed4.",
@@ -148,7 +148,7 @@
     "warmup_groups_per_language": 1,
     "timed_groups_per_language": 3,
     "condition": "Other host work allowed concurrently by user; external jobs ended during run. Not an isolated or constant-load benchmark.",
-    "artifact_directory": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/context-batch",
+    "artifact_directory": "/path/to/rocm-exl3-data/runs/context-batch",
     "load_time_env_override": {
       "EXL3_HOST_MEM_RESERVE_MB": "0"
     },

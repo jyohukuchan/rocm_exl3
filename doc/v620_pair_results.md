@@ -164,7 +164,7 @@ Python APIではCacheを先に作り、設定JSONの`models.M.load_kwargs`を`mo
 SDMA無効でも通常profile終了はexit139でCSV保存前に落ちたため不採用。採用traceは全ROI・model cleanup・JSON保存完了後にSIGTERMで保存を要求し、
 `tool finalization`完了後も残った当該PIDのみ停止した（exit137）。これは正常終了とは報告しない。停止は計測区間外で、全区間を別途監査した。
 
-Artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/two-gpu`。
+Artifact root: `/path/to/rocm-exl3-data/runs/two-gpu`。
 
 - `phase3/`、`phase4/`: 各manifest.json / metrics.json / correctness.json / summary.md。
 - `completion-evidence.json`, `final-pair-audit.json`: 要件別監査、主要artifact SHA256、24区間の整合検査。

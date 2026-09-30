@@ -73,11 +73,11 @@ batch1の推奨は**MTP上限4＋動的調整＋confidence0.6**。設定を[JSON
 以下はホスト側supervisor。専用Unix socket helperを一時起動し、container内のCLIを実行、終了時に両GPUをautoへ戻す。
 
 ```bash
-python3 /home/homelab1/datapool/rocm-exl3-rdna2/runs/qwen38-mtp/run_cli.py \
+python3 /path/to/rocm-exl3-data/runs/qwen38-mtp/run_cli.py \
   --tag my-mtp-run --mode mtp --prompts formal8k-prompts.json \
   --batch 1 --draft 4 --dynamic --confidence 0.6
 ```
 
 `--tag`は新しい名前を使う。batch>1の入力は同じtimedフラグでバッチを組めるように用意する。`--arc-guard-override`は上記の回収可能RAMを確認した診断用であり、通常の既定値にはしない。内部CLIは `python -m rocm_tools.rdna2.qwen_mtp_run --help`。`--validate-finite`は検証用でGPU同期を加えるため性能値と混ぜない。
 
-artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/qwen38-mtp`。smoke/validate各JSON、`sweep-mtp.json`、`tune-mtp.json`、`formal8k-*`、OpenCode結果とCPUテストログを保持。既存ARのみのPhase5結果は[こちら](qwen38_v620_results.md)。
+artifact root: `/path/to/rocm-exl3-data/runs/qwen38-mtp`。smoke/validate各JSON、`sweep-mtp.json`、`tune-mtp.json`、`formal8k-*`、OpenCode結果とCPUテストログを保持。既存ARのみのPhase5結果は[こちら](qwen38_v620_results.md)。

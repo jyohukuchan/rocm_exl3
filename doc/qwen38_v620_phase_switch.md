@@ -44,7 +44,7 @@ power_dpm_force_performance_levelはGPU全体への設定。複数requestのpref
 
 一時helper/benchmarkは全て終了、両GPUとも元のautoへ復元済み。OS設定・sysfs権限・推論エンジン既定動作への恒久変更なし。本実験は自動切替を運用コードへ恒久導入したものではない。
 
-artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/qwen38`。
+artifact root: `/path/to/rocm-exl3-data/runs/qwen38`。
 - `power_switch_server.py`, `benchmark_phase_switch.py`, `run_phase_switch.py`: 実行用の診断スクリプト。
 - `phase-switch-idle.json`, `power-switch-server.json`: 各sysfs書込み、readback、通信の生時間。
 - `phase-switch-benchmark.json`, `phase-switch-summary.json`: stage別境界・速度・token interval。

@@ -1036,8 +1036,7 @@ class FnPatchPayloadTest(unittest.TestCase):
     vocab_size positionally and depends on the argmax hunk being live."""
 
     PATCH_CANDIDATES = (
-        Path("/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp2/qwen-tp-fn.patch"),
-        Path("/work/runs/tp2/qwen-tp-fn.patch"),   # same file inside the v620 pair container
+        REPO / "rocm_tools/rdna2/tests/fixtures/qwen_tp_fn.patch",
     )
     FN = REPO / "exllamav3/model/model_tp_fn.py"
 
@@ -1050,7 +1049,7 @@ class FnPatchPayloadTest(unittest.TestCase):
     def test_patch_covers_prefetch_and_vocab(self):
         text = self._patch_text()
         if text is None:
-            self.skipTest("qwen-tp-fn.patch not visible at host or /work paths")
+            self.fail("tracked TP provenance fixture is missing")
         self.assertIn('module.caps.get("prefetch_ids")', text)
         self.assertIn("single_idx is None", text)
         self.assertIn("vocab_size: int = -1", text)

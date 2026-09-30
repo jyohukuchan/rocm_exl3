@@ -85,14 +85,14 @@ MTPロード後のtorch allocatedは3bitで1,179,183,104B、5bitで1,858,136,064
 
 ## 保存先と再現
 
-data root: `/home/homelab1/datapool/rocm-exl3-rdna2`
+data root: `/path/to/rocm-exl3-data`
 
 artifact root: `runs/qwen38-mtp5`。主な証拠は `comparison-summary.json`、3群の正式JSON、`self{3,5}-smoke8k.json`、各 `*-process.json` / `*-power.json`、source/output/weight reconstructionの各audit JSON。`summarize.py` が比較条件と候補数の帳尻を検査して再集計する。
 
 正式5bit比較を別tagで再実行する例（ホストから）:
 
 ```bash
-python3 /home/homelab1/datapool/rocm-exl3-rdna2/runs/qwen38-mtp5/run_cli.py \
+python3 /path/to/rocm-exl3-data/runs/qwen38-mtp5/run_cli.py \
   --tag my-self5-comparison --mode mtp \
   --mtp-model /work/models/qwen38-flash-next-mtp-self5-hq \
   --prompts formal8k-prompts.json --batch 1 --draft 4 --dynamic --confidence 0.6

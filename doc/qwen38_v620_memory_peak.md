@@ -29,7 +29,7 @@ profile_peakから直接manualへ移ると、以前のコア制限を引き継�
 
 保存済みauto/profile_peakとの同一入力比較。電力はGPU報告値の時間積分から算出し、CPU/RAM/電源損失を含まない。decode電力は最初のtoken受取〜最後から2番目の受取（終了処理除外）。結果は以下に記載。
 
-artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/qwen38`。runner `run_memory_peak_benchmark.py`、状態/復元記録 `memory-peak-process.json`、driver source fingerprint `memory-peak-driver-evidence.json`、集計 `analyze_memory_peak.py`。
+artifact root: `/path/to/rocm-exl3-data/runs/qwen38`。runner `run_memory_peak_benchmark.py`、状態/復元記録 `memory-peak-process.json`、driver source fingerprint `memory-peak-driver-evidence.json`、集計 `analyze_memory_peak.py`。
 
 [Linux公式のクロック段指定仕様](https://docs.kernel.org/gpu/amdgpu/thermal.html#pp-dpm)と、インストール済み `/usr/src/amdgpu-6.16.13-2303411.24.04/amd/pm/swsmu/smu11/sienna_cichlid_ppt.c` のforce_clk_levels、`smu_v11_0.c` のset_performance_levelを照合した。
 

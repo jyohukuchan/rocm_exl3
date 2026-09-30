@@ -55,7 +55,7 @@
     "gdn_state": "GDN recurrent state is not KV; stays FP32/BF16",
     "diagnostic_override": "--cache-fp16 only; never the default",
     "evidence": "Layer split: 8K+256 x12 original MTP jobs with actual K5/V4 layers, RAM audit and normal cleanup. Earlier32K/batch evidence remains historicalFP16.",
-    "evidence_directory": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp-decode-opt"
+    "evidence_directory": "/path/to/rocm-exl3-data/runs/tp-decode-opt"
   },
   "energy_policy": "User-selected energy saving; not a response to cooling or 400W capability limits.",
   "caveats": [

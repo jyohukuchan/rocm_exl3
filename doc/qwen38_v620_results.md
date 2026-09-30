@@ -30,7 +30,7 @@ cached prefill/decodeのtop-1一致率97.75%前後は既知事項として残す
 - 元repo HEAD `9d32c69`、作業開始時clean。既存の2GPU D/M検証済み環境を再使用。
 - 既存GDNテストの小規模参照一致2件・ビット再現性3件が実V620で成功（5 passed、19 deselected）。Qwen3.8全体の正確性は未証明。
 - 重みの取得と専用検証harnessを準備中。現行top1 collectorは再帰モデルを拒否していたため、GDN状態とPLE履歴を正しく引き継ぐ検証経路が必要。
-- artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/qwen38`。取得metadataは`model-source.json`、GPU小規模検証は`gdn-existing.log`。
+- artifact root: `/path/to/rocm-exl3-data/runs/qwen38`。取得metadataは`model-source.json`、GPU小規模検証は`gdn-existing.log`。
 
 ### GDN prefillのRDNA2問題と候補比較
 
@@ -117,7 +117,7 @@ rootによる切り分け:
 
 ### 再現用起動条件
 
-コンテナ `rocm-exl3-v620-pair` はV620の2枚だけを公開し、`/src`が本repo、`/work`が `/home/homelab1/datapool/rocm-exl3-rdna2`。コンテナ既定の旧binary/nofileに依存せず、次のように明示する。GPU power policyは外から変更せず現在値を利用する（測定時のpolicyは結果と併記）。
+コンテナ `rocm-exl3-v620-pair` はV620の2枚だけを公開し、`/src`が本repo、`/work`が `/path/to/rocm-exl3-data`。コンテナ既定の旧binary/nofileに依存せず、次のように明示する。GPU power policyは外から変更せず現在値を利用する（測定時のpolicyは結果と併記）。
 
 ```bash
 docker exec -e PYTHONPATH=/work/lib-qwen38-reduction:/src \

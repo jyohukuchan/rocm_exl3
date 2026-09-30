@@ -1,0 +1,62 @@
+{
+  "date": "2026-09-30",
+  "timezone": "Asia/Tokyo",
+  "baseline_parent": "CarouselAether/rocm_exl3",
+  "baseline_commit": "dd7a670065f37943f09a5eeb53818f38e9751472",
+  "engine_native_fix_commit": "ab1bc110d09754564c50946e26224b939ff4a5d5",
+  "engine_prune_commit": "3a6313a76e5aa04794769e385c26bc45be7030e5",
+  "engine_mlock_commit": "cecfba70fe30cce2de6f60b0ab50b56d4e4ee166",
+  "sanitization": "Filesystem locations and GPU UUIDs replaced with symbolic placeholders in reports; measured numeric fields, token IDs, generated text, hashes and audits retained. Prompt manifests are byte-for-byte originals after decompression. Raw original-file SHA256 is provenance, not the hash of normalized JSON.",
+  "files": [
+    {
+      "file": "prompts-8192-b1-r2.json.gz",
+      "decompressed_sha256": "7e11e664a1a915143eddb31996afa1f3326f30b98139095e89174164139b3169",
+      "kind": "exact frozen input"
+    },
+    {
+      "file": "reports/final-8k-b1-d4.json.gz",
+      "original_sha256": "6d268de822005abd222ed2bca4390c6e6b813370d04d7d83fff97d0ff0fda964",
+      "decompressed_sha256": "2c420d45add0c26f3fc4a0e398bfb7df1ae5a81f729091f60e562269af467dad",
+      "kind": "normalized raw report"
+    },
+    {
+      "file": "prompts-8192-b2-r2.json.gz",
+      "decompressed_sha256": "52be6173082b25d1c04bab83d7ca531cd61f4da8345e682f1449b406f989e6ac",
+      "kind": "exact frozen input"
+    },
+    {
+      "file": "reports/final-8k-b2-d1.json.gz",
+      "original_sha256": "f18d6866fa6d8ac13f0b4b91bbe89f5343f99a5cf116704115ca3b2fa3810a29",
+      "decompressed_sha256": "ccbcda10153bee3a6f2825fbf85075ecc7c891091ce25f0c00b4289181e45072",
+      "kind": "normalized raw report"
+    },
+    {
+      "file": "prompts-8192-b3-r2.json.gz",
+      "decompressed_sha256": "5ff9d9366c87233284e2aad31841ba9258f4529766caa30e2f23e8ef06a9e022",
+      "kind": "exact frozen input"
+    },
+    {
+      "file": "reports/final-8k-b3-d1.json.gz",
+      "original_sha256": "c353aa718fe3d8c0bb80d9c7f1c814d369506e114d6ebb9ec850e85d549ac6be",
+      "decompressed_sha256": "b7a7398eed3796632f4aaeb6520c398d0413807bf9d50bb053d1f2426d7033e6",
+      "kind": "normalized raw report"
+    },
+    {
+      "file": "prompts-8192-b4-r3.json.gz",
+      "decompressed_sha256": "e790d6401f5ee95ad6e6b2e1b0e720583ef435e2bc99861cbed0bea73bff7a1e",
+      "kind": "exact frozen input"
+    },
+    {
+      "file": "reports/confirm-concurrent-8k-b4-d1-r3.json.gz",
+      "original_sha256": "c732ec007fa6d84927fe973aa255721d2dcb2462f5283f6e6d7d9ab4fb95868a",
+      "decompressed_sha256": "edf20def1c3852865d72859f3a026d12bde29ca292634fde432460306ee62ab8",
+      "kind": "normalized raw report"
+    },
+    {
+      "file": "reports/long-b1-c262144-d4.json.gz",
+      "original_sha256": "0554e3bcc3319f0f870f5a7ec36b2cd9d2442cf1922c1fdd44092bbee4847d82",
+      "decompressed_sha256": "9166dec5449e0dad91a7a1a36311a313e0a6543a616b97713e9966020b7fe92d",
+      "kind": "normalized raw long-context report"
+    }
+  ]
+}

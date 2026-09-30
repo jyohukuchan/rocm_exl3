@@ -40,7 +40,7 @@ MoEの2 broadcastをTorch/RCCL coalescingでまとめる候補は、実通信の
 
 ## 記録
 
-artifact: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp2`。
+artifact: `/path/to/rocm-exl3-data/runs/tp2`。
 
 - `rccl-backend-rank{0,1}.json`: 実RCCL、strided FP32/非参加NaN/順序変更/uneven subset gather。
 - `d-logits-initial.json`, `m-logits-initial.json`, `q-logits-gatefix.json`: 同じ量子化重みのLS/TP比較。
@@ -86,7 +86,7 @@ ROCmでは`tp_backend="nccl"`を指定する。`native` backendのCUDA専用通�
 このworkspaceの検証を再実行するhost側コマンド例（モデル再取得は不要、未使用のtagを指定）。helperの起動・電力設定の復帰まで含む。
 
 ```bash
-python3 /home/homelab1/datapool/rocm-exl3-rdna2/runs/tp2/run_tp_single_hsa.py \
+python3 /path/to/rocm-exl3-data/runs/tp2/run_tp_single_hsa.py \
   --tag q-tp-local-retest --source /src \
   --model /work/models/qwen38-flash-next-exl3-3.05bpw \
   --execution tp --mode mtp \
