@@ -30,8 +30,9 @@ OpenCode v2.0.12 uses an OpenAI-compatible provider definition. Copy
 `opencode.jsonc`, then change only the local key if the server was started with
 one. The example points to `http://127.0.0.1:3953/v1`, advertises a
 32,768-token context, reserves 24,576 input tokens and 8,192 output tokens, and
-uses `enable_thinking: true` with `reasoning_effort: low`, matching the
-OpenCode coding sample. Set `enable_thinking: false` for text-only smoke checks.
+uses `enable_thinking: true` with `reasoning_effort: xhigh`. The original
+OpenCode coding sample was validated with `low`; future coding tasks use `xhigh`.
+Set `enable_thinking: false` for text-only smoke checks.
 
 Start OpenCode from the project containing that configuration:
 
