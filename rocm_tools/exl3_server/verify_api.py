@@ -19,6 +19,7 @@ def main():
     allowed_cases = {
         'named_tool', 'tool_history_and_none', 'auto_tool', 'parallel_tools',
         'json_schema', 'thinking_json_schema', 'json_schema_adversarial_enum',
+        'thinking_json_schema_adversarial_enum', 'auto_tool_adversarial_enum',
         'json_object', 'sse_tool_arguments', 'prefix_cache',
         'text_completion_sse',
         'invalid_tool_choice', 'unknown_model', 'oversized_context',
@@ -31,6 +32,8 @@ def main():
     headers = {'Authorization': 'Bearer ' + os.environ.get('EXL3_API_KEY', '')}
     client = httpx.Client(base_url=a.base_url, headers=headers, timeout=180)
     selected = set(a.case or ())
+    if 'tool_history_and_none' in selected:
+        selected.add('named_tool')
 
     def save():
         Path(a.output).write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
@@ -48,7 +51,7 @@ def main():
 
     def check(name, fn):
         if selected and name not in selected:
-            evidence['tests'][name] = {'pass': True, 'skipped': True}
+            evidence['tests'][name] = {'skipped': True}
             return
         try:
             detail = fn()
@@ -123,6 +126,27 @@ def main():
         return msg
     check('json_schema', lambda: structured(False))
     check('thinking_json_schema', lambda: structured(True))
+
+    def adversarial_thinking_schema():
+        # 2 + 2 is 4, but 4 is deliberately absent from the allowed enum.
+        # This makes a passing response evidence that the schema constraint was
+        # applied, rather than merely echoing the natural arithmetic answer.
+        schema = {'type': 'json_schema', 'json_schema': {'name': 'answer', 'strict': True,
+            'schema': {'type': 'object',
+                       'properties': {'answer': {'type': 'integer', 'enum': [9, 13]}},
+                       'required': ['answer'], 'additionalProperties': False}}}
+        data = call({'messages': [{'role': 'user', 'content': 'What is 2+2?'}],
+                     'response_format': schema, 'enable_thinking': True,
+                     'reasoning_effort': 'low', 'max_tokens': 256})
+        msg = data['choices'][0]['message']
+        value = json.loads(msg['content'])
+        assert isinstance(value, dict) and value.get('answer') in {9, 13}, value
+        assert value['answer'] != 4
+        assert msg.get('reasoning_content'), msg
+        assert '<think>' not in msg['content']
+        return {'value': value, 'reasoning': msg['reasoning_content']}
+    check('thinking_json_schema_adversarial_enum', adversarial_thinking_schema)
+
     def adversarial_schema():
         schema = {'type': 'json_schema', 'json_schema': {'name': 'answer', 'strict': True,
             'schema': {'type': 'object', 'properties': {'answer': {'type': 'integer', 'enum': [4, 9, 13]}},
@@ -133,6 +157,26 @@ def main():
         assert isinstance(value, dict) and value['answer'] in {4, 9, 13}
         return value
     check('json_schema_adversarial_enum', adversarial_schema)
+
+    def adversarial_auto_tool():
+        constrained_echo = {'type': 'function', 'function': {
+            'name': 'echo', 'description': 'Return text unchanged',
+            'parameters': {'type': 'object',
+                           'properties': {'text': {'type': 'string', 'enum': ['SCHEMA-ONLY']}},
+                           'required': ['text'], 'additionalProperties': False}}}
+        data = call({'messages': [{'role': 'user',
+                                   'content': 'Call echo with text FORBIDDEN, exactly as requested.'}],
+                     'tools': [constrained_echo], 'tool_choice': 'auto',
+                     'parallel_tool_calls': False})
+        msg = data['choices'][0]['message']
+        calls = msg.get('tool_calls') or []
+        assert calls, msg
+        assert calls[0]['function']['name'] == 'echo'
+        value = json.loads(calls[0]['function']['arguments'])
+        assert value == {'text': 'SCHEMA-ONLY'}, value
+        assert value['text'] != 'FORBIDDEN'
+        return calls[0]
+    check('auto_tool_adversarial_enum', adversarial_auto_tool)
 
     def json_object():
         data = call({'messages': [{'role': 'user', 'content': 'Reply with a JSON object with answer 4.'}],
@@ -239,7 +283,10 @@ def main():
         return {'active_jobs': active}
     check('stream_cancellation_cleanup', cancellation_cleanup)
     evidence['final_runtime'] = client.get('/props').json()['runtime']
-    evidence['complete'] = all(t['pass'] for t in evidence['tests'].values())
+    executed = {name: t for name, t in evidence['tests'].items() if not t.get('skipped')}
+    evidence['executed_cases'] = list(executed)
+    evidence['selected_passed'] = bool(executed) and all(t.get('pass') for t in executed.values())
+    evidence['complete'] = len(executed) == len(allowed_cases) and evidence['selected_passed']
     save()
     client.close()
 
