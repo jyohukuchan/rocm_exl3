@@ -654,10 +654,12 @@ class IncrementalAssistantParser:
             for p in params:
                 pname = p.group(1)
                 typ = schemas.get(name, {}).get("properties", {}).get(pname, {}).get("type", "string")
-                if typ == "string" and body[p.end():].startswith('"'):
+                if typ == "string" and body[p.end():].lstrip().startswith('"'):
                     escaped = False
                     quote = -1
-                    for pos, char in enumerate(body[p.end() + 1:], p.end() + 1):
+                    leading = len(body[p.end():]) - len(body[p.end():].lstrip())
+                    opening = p.end() + leading
+                    for pos, char in enumerate(body[opening + 1:], opening + 1):
                         if char == '"' and not escaped:
                             quote = pos
                             break
@@ -682,7 +684,14 @@ class IncrementalAssistantParser:
                 raw = body[p.end():end]
                 pstate = state["params"].setdefault(
                     pname, {"seen": 0, "started": False, "mode": None})
-                complete = body[end:].lower().startswith("</parameter")
+                # Qwen's template commonly places a newline (or indentation)
+                # between the JSON value's closing quote and the XML boundary.
+                # Treat that whitespace as part of the boundary so the final
+                # JSON quote is emitted in the same chunk as the completed
+                # parameter.  The boundary is checked after quote-aware
+                # scanning, so a literal ``</parameter>`` inside a JSON string
+                # cannot complete the parameter early.
+                complete = bool(re.match(r"\s*</parameter\b", body[end:], re.IGNORECASE))
                 if not pstate["started"]:
                     prefix = ("{" if state["param_count"] == 0 else ",") + json.dumps(pname) + ":"
                     if typ == "string":

@@ -169,6 +169,32 @@ def test_literal_parameter_closing_tag_survives_full_and_incremental_parse():
     assert json.loads(args) == {"city": "line1\n東京\n</parameter>"}
 
 
+def test_incomplete_quoted_xml_is_buffered_and_rejected_only_at_finish():
+    parser = IncrementalAssistantParser()
+    events = parser.feed('<tool_call><function=get_weather><parameter=city>"line </para')
+    assert not any("<tool_call" in e.get("delta", "") for e in events)
+    with pytest.raises(ProtocolError):
+        parser.finish()
+
+
+def test_sse_arguments_match_full_parse_with_newline_before_quote():
+    raw = ('<tool_call>\n<function=get_weather>\n<parameter=city>\n'
+           '"SPEC.md"\n</parameter>\n</function>\n</tool_call>')
+    full = parse_assistant_output(raw, tools=TOOLS)
+    parser = IncrementalAssistantParser(tools=TOOLS)
+    events = []
+    # Boundary chunks intentionally isolate the XML newline from the opening
+    # quote and split the escaped argument stream into tiny fragments.
+    for chunk in ('<tool_call>\n<function=get_weather>\n<parameter=city>\n',
+                  '"SPE', 'C.md"\n</parameter>\n</function>\n</tool_call>'):
+        events.extend(parser.feed(chunk))
+    events.extend(parser.finish()["events"])
+    streamed = "".join(e["delta"] for e in events
+                         if e["type"] == "tool_call_arguments")
+    assert json.loads(streamed) == json.loads(
+        full["tool_calls"][0]["function"]["arguments"])
+
+
 def test_schema_casting_preserves_declared_strings_and_required_arguments():
     tools = [{"type": "function", "function": {
         "name": "f", "parameters": {"type": "object", "required": ["s", "n"],
