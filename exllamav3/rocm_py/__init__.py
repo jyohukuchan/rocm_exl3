@@ -74,9 +74,10 @@ Environment switches (all default to the safe value for this backend):
                            log-and-fallthrough into the native coop stub.
                            Diagnostic: rocm_tools/rdna2/moe_rows_probe.py
   EXL3_ROCM_MOE_MULTI_TOKEN=1  EXPERIMENTAL, default off; the r3 single-layer
-                           probe covers masked numerics on full and TP-half
-                           pointer-table views (R1..5), while E2E validation
-                           remains pending (rocm_tools/rdna2/moe_multitoken_probe.py):
+                           probe and a 96-sample actual-model TP2/MTP gate
+                           validate the measured batch-1 route, while general
+                           batch shapes remain unvalidated
+                           (rocm_tools/rdna2/moe_multitoken_probe.py):
                            decode rows 2..5 take ONE slot-major exl3_mgemm
                            triple (gate, up, down with num_tokens=R) instead
                            of the per-token loop, so bsz>1 MoE decode pays
@@ -104,8 +105,13 @@ Environment switches (all default to the safe value for this backend):
                            slots contribute exact +0.0 to the fp32 chain;
                            the r3 probe measured the masked route (maximum
                            candidate relative-L2 9.644e-5 and scaled absolute
-                           error 1.1775e-4 across its 15 full/TP-half cases);
-                           these are single-layer results, not an E2E claim --
+                           error 1.1775e-4 across its 15 full/TP-half cases),
+                           and the actual-model gate covered 96 live-input
+                           cases (48 per rank; maximum relative-L2 3.9123e-4,
+                           scaled absolute error 6.6285e-4, all finite with
+                           restored env/output); measured batch-1 TP2/MTP
+                           throughput improved +8.055% observed / +11.236%
+                           engine, while general batch shapes remain unvalidated --
                            and their weighted launch runs with
                            EXL3_GEMV_FUSE_OUT=0, set and restored around that
                            one call only (the env is re-read per launch, the
@@ -512,10 +518,11 @@ def _moe_mt_run(mod, y, selected_experts, routing_weights):
         # ext; gate/up keep the fused form because they carry no weights and
         # no reduction. A_had is the gate buffer, free after the activation
         # and never aliasing A = interm_a (the row loop's note).
-        # NOTE: the r3 single-layer probe covered this zeroed-slot sum on full
-        # and TP-half pointer-table views (15 cases, maximum candidate
-        # relative-L2 9.644e-5; scaled absolute error 1.1775e-4). That is
-        # probe evidence only; E2E model validation remains pending.
+        # NOTE: the r3 single-layer probe and 96-sample actual-model TP2/MTP
+        # gate covered this zeroed-slot sum (actual maximum relative-L2
+        # 3.9123e-4; scaled absolute error 6.6285e-4; all finite with env and
+        # output restoration). The measured batch-1 route is supported as an
+        # opt-in; general batch shapes remain unvalidated.
         # The EXL3_GEMV_FUSE_OUT toggle below is process-global and is an
         # experimental limitation: candidate callers are serialized and the
         # value is restored on every path, exception included, but arbitrary
@@ -1065,10 +1072,13 @@ def apply() -> list[str]:
                             f"launches zero the slot scratch and toggle "
                             f"{MOE_MT_FUSE_ENV}=0 around that call; R==1 and every "
                             "unsupported shape keep the unchanged row loop; "
-                            "EXPERIMENTAL, default off; r3 single-layer full/TP-half "
-                            "probe covers masked numerics (max candidate relative-L2 "
-                            "9.644e-5, scaled absolute error 1.1775e-4), but E2E "
-                            "validation remains pending; process/thread env toggle "
+                            "EXPERIMENTAL, default off; validated for the measured "
+                            "batch-1 TP2/MTP route by the r3 full/TP-half probe and "
+                            "96 actual-model live-input cases (max candidate "
+                            "relative-L2 3.9123e-4, scaled absolute error "
+                            "6.6285e-4; all finite with env/output restoration), "
+                            "with +8.055% observed / +11.236% engine throughput; "
+                            "general batch shapes remain unvalidated; process/thread env toggle "
                             "is serialized only for candidate callers, arbitrary "
                             "concurrent native callers are unsupported, and TP2 rank "
                             "processes have separate environments -- gate: "
