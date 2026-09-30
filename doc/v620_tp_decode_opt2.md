@@ -34,11 +34,26 @@ engine source `dff0b5b8d0965aecb7b3a4bbc27e3dec530b276c` を固定。native SHA2
 
 98collective/target forwardを両rankで実測。Engram CPU stageは0.01285ms/出力、内包されるRAM gatherは0.00525ms/出力。量子化Linearは復号と行列積が融合しているので、MoE列を「dequantだけ」とは呼ばない。
 
-## 次の実験
+## MoE multi-token実験
 
 MoEの小行数経路は現在、各候補tokenについてgate/up/down・activation・copyを繰り返す。検証3–5行では複数候補をまとめ、position-preservingなローカルexpert indexをGPUで作ることにより、TP range filtering時のcooperative fallbackを避けつつnative mgemvのmulti-token経路を試す。
 
-候補はdefault-offの実験として準備中。単体の実重み・TP半分ずつのexpert範囲・全候補が範囲外の行・連続scratch再利用で数値確認を行い、その後同一code-only入力の実モデルA/Bで採用判断する。数値条件や本体速度を満たさなければ採用しない。MTP重みの学習・交換は今回行わない。
+`EXL3_ROCM_MOE_MULTI_TOKEN=1` を明示して使うdefault-offの実験として実装。gfx1030のgated MoE・2–5行・最大128 expert slotに限定し、それ以外は既存row loopへ戻す。slot位置を維持してTPのlocal expert IDへ変換し、入力をslotごとに配置する。native bufferは全て実際のslot数のviewを渡し、必要ならmoduleごとの上限付きscratchを一度確保する。範囲外slotはゼロへ初期化し、sharded downの1呼び出しだけfused epilogueを無効にして、masked slotによる到着counterの不成立を避ける。
+
+実重み1層、full/TP片側ずつ、行数1–5の15条件で検証済み。候補とcooperative referenceの最大relative L2は9.644e-5、最大絶対誤差/reference最大値は1.178e-4。出力は有限、全expertが範囲外の行は厳密なゼロ、A→B→Aのscratch再利用はbit一致。native呼び出しも3回、各引数のactive slot数を確認。環境変数は呼び出し前後で復帰する。
+
+profile_peak、CUDA events、warmup5・5sample×5repeatの単層proxy中央値。router/shared expert/通信は含まない。
+
+| 行数 | 既存 TP片側 ms | 候補 TP片側 ms | 傾向 |
+|---|---:|---:|---|
+| 2 | 0.147–0.148 | 0.173–0.178 | 遅くなる |
+| 3 | 0.249–0.250 | 0.238–0.240 | 小幅短縮 |
+| 4 | 0.361 | 0.302–0.303 | 約16%短縮 |
+| 5 | 0.395–0.396 | 0.300–0.304 | 約23–24%短縮 |
+
+実モデルTP2でも8K入力・32生成・warm1+timed1の有限値検査を完了し、target32 forward/draft88 forward、両rankのmodule出力検査、RAM/quant/power監査・正常終了を確認。速度測定にはこの検査付きrunを使わない。同一code-only入力の通常A/Bで採用を判断する。MTP重みの学習・交換は今回行わない。
+
+設定の一時変更はprocess全体に及ぶ。今回のTP2はrankごとに別process、MTP draft/verifyも直列なのでrank間の環境変数競合はない。任意の別threadからのnative呼び出しとの並行利用は未対応。batch>1や長文の一般的な速度改善も、この単層proxyからは主張しない。
 
 GatedResidualは既にfused実装なので、単純なfusion提案ではなく実kernel geometryから判断する。HIP graph再有効化は現行の主要MoE proxyを通らず、過去のflat測定もあるため最初の候補には選ばない。
 
