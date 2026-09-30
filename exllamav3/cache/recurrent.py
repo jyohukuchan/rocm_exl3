@@ -1,4 +1,6 @@
 from collections import OrderedDict
+import os
+
 from ..constants import PAGE_SIZE
 from ..util.memory import malloc_trim
 
@@ -9,6 +11,13 @@ from ..util.memory import malloc_trim
 # in the child processes)
 _TRIM_THRESHOLD = 256 * 1024**2
 _freed_bytes = 0
+
+# Opt-in batched prune (EXL3_BATCH_RECURRENT_PRUNE=1; default off keeps the legacy per-entry
+# path for fair A/B). When on, prune_stranded() collects every stranded checkpoint first and
+# sends one picklable bulk-delete per rank instead of one TP dispatch per entry, and memory
+# release is aggregated so malloc_trim only ever fires after the strong references to the
+# dropped states are gone. tp_run captures the environment, so runs stay traceable.
+_BATCH_PRUNE_ENV = "EXL3_BATCH_RECURRENT_PRUNE"
 
 def note_freed(nbytes: int):
     global _freed_bytes
@@ -97,18 +106,66 @@ class RecurrentCache(OrderedDict):
         never be restored by an allocation, and if its conversation returns, the replay prefill recreates it at
         no extra cost, so this only frees system RAM that would otherwise sit dead until LRU pressure reaches it.
         Intended to be called when the generator goes idle.
+
+        With EXL3_BATCH_RECURRENT_PRUNE=1 the work is aggregated: one bulk delete dispatch per rank holding
+        every deduplicated handle, and the byte accounting (parent-side for the local path, worker-side for
+        TP) happens once the dropped states' strong references are released. Return count and metrics are
+        unchanged from the legacy path; put/eviction keeps dispatching per entry.
         """
         if self.pagetable is None:
             return 0
         stranded = [k for k in self if not self.pagetable.is_resumable(k)]
-        for k in stranded:
-            popped = self.pop(k)
-            self.metrics["stash_pruned"] += 1
-            note_freed(popped["checkpoint_size"])
-            if self.model.loaded_tp:
-                self.model.tp_dispatch_all(mp_cache_recurrent_del, (id(self), popped["tp_handle"]))
-        if stranded:
+        if not stranded:
+            return 0
+
+        if os.environ.get(_BATCH_PRUNE_ENV, "0") != "1":
+            for k in stranded:
+                popped = self.pop(k)
+                self.metrics["stash_pruned"] += 1
+                note_freed(popped["checkpoint_size"])
+                if self.model.loaded_tp:
+                    self.model.tp_dispatch_all(mp_cache_recurrent_del, (id(self), popped["tp_handle"]))
             self.update_total_size()
+            return len(stranded)
+
+        # Batch path. Pop first so the resumable-anchored entries, and any handle that a survivor still
+        # shares with a stranded alias, remain visible while deciding what workers may delete: two keys can
+        # reference the same stashed dict/handle, and dropping the stranded alias must not pull the handle
+        # out from under a live checkpoint.
+        popped = [self.pop(k) for k in stranded]
+        self.metrics["stash_pruned"] += len(stranded)
+        if self.model.loaded_tp:
+            # Parent entries are metadata only under TP; the worker ranks own the host tensors and do
+            # their own note_freed accounting, so the parent must not add the reported bytes here.
+            live = {v["tp_handle"] for v in self.values()}
+            handles = []
+            seen = set()
+            for st in popped:
+                h = st["tp_handle"]
+                if h in live or h in seen:
+                    continue
+                seen.add(h)
+                handles.append(h)
+            del popped, live, seen, st
+            if handles:
+                self.model.tp_dispatch_all(mp_cache_recurrent_del_bulk, (id(self), handles))
+        else:
+            # Local path: the popped dicts hold the actual state until released, so aggregate the bytes
+            # (deduplicated by object identity, like update_total_size, and excluding any dict a
+            # surviving key still references), drop the references, and only then account the release
+            # so any resulting malloc_trim sees the memory as freed.
+            live = {id(v) for v in self.values()}
+            seen = set()
+            total = 0
+            for st in popped:
+                i = id(st)
+                if i in live or i in seen:
+                    continue
+                seen.add(i)
+                total += st["checkpoint_size"]
+            del popped, live, seen, st
+            note_freed(total)
+        self.update_total_size()
         return len(stranded)
 
 
@@ -176,3 +233,23 @@ def mp_cache_recurrent_del(local_context: dict, cache_id: int, cp_handle: int):
     recurrent_cache = local_context["recurrent_cache"]
     stashed = recurrent_cache.pop(cp_handle)
     note_freed(_stashed_bytes(stashed))
+
+
+def mp_cache_recurrent_del_bulk(local_context: dict, cache_id: int, cp_handles: list):
+    """
+    Batched counterpart of mp_cache_recurrent_del for a whole prune_stranded(): pop every selected handle,
+    sum the actual host bytes, release the local strong references, then account the release in a single
+    note_freed call. The legacy per-entry shape keeps each popped stash bound while note_freed runs, so a
+    threshold-triggered malloc_trim can fire while the worker still pins the very pages it asks the OS to
+    return; here the trim only ever sees memory that is genuinely unreachable. Preconditions are checked
+    before any pop so a bad handle list cannot leave the worker cache partially deleted.
+    """
+    recurrent_cache = local_context["recurrent_cache"]
+    missing = [h for h in cp_handles if h not in recurrent_cache]
+    assert not missing, f"bulk recurrent delete: handles {missing} not in worker cache of {cache_id}"
+    assert len(set(cp_handles)) == len(cp_handles), \
+        f"bulk recurrent delete: duplicate handles in {cp_handles}"
+    stashed = [recurrent_cache.pop(h) for h in cp_handles]
+    total = sum(_stashed_bytes(s) for s in stashed)
+    del stashed
+    note_freed(total)
