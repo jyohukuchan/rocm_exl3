@@ -211,15 +211,43 @@ def _regex_finditer_outside_quotes(pattern: re.Pattern, text: str,
 
 def _schema_allows_string(schema: dict) -> bool:
     """Whether a parameter schema can carry a JSON string value."""
+    return "string" in _schema_types(schema)
+
+
+def _schema_types(schema: dict) -> set[str]:
     if not isinstance(schema, dict):
-        return False
+        return set()
     typ = schema.get("type")
-    if typ == "string" or (isinstance(typ, list) and "string" in typ):
-        return True
-    return any(_schema_allows_string(branch)
-               for key in ("anyOf", "oneOf")
-               for branch in schema.get(key, ())
-               if isinstance(branch, dict))
+    types = set(typ) if isinstance(typ, list) else ({typ} if isinstance(typ, str) else set())
+    for key in ("anyOf", "oneOf"):
+        for branch in schema.get(key, ()):
+            types.update(_schema_types(branch))
+    return types
+
+
+def _stream_value_mode(probe: str, schema: dict, complete: bool) -> str | None:
+    """Choose JSON-primitive versus legacy XML-string serialization."""
+    token = probe.strip()
+    if not token:
+        return None
+    if token[0] in "[{":
+        return "json"
+    types = _schema_types(schema)
+    if token[0].isdigit() or token[0] == "-":
+        if types.intersection({"integer", "number"}):
+            return "json"
+        return "plain"
+    lower = token.lower()
+    if "null" in types and lower and "null".startswith(lower):
+        if lower == "null" or not complete:
+            return "json" if lower == "null" else None
+        return "plain"
+    for literal in ("true", "false"):
+        if "boolean" in types and lower and literal.startswith(lower):
+            if lower == literal or not complete:
+                return "json" if lower == literal else None
+            return "plain"
+    return "plain"
 
 
 def _quoted_value_end(text: str, start: int) -> int:
@@ -723,7 +751,6 @@ class IncrementalAssistantParser:
                 pname = p.group(1)
                 param_schema = (schemas.get(name, {}).get("properties", {})
                                 .get(pname, {}))
-                emit_string = _schema_allows_string(param_schema) or not param_schema
                 probe = body[p.end():].lstrip()
                 quoted_value = probe.startswith('"')
                 if quoted_value:
@@ -755,21 +782,34 @@ class IncrementalAssistantParser:
                 complete = bool(re.match(r"\s*</parameter\b", body[end:], re.IGNORECASE))
                 if not pstate["started"]:
                     prefix = ("{" if state["param_count"] == 0 else ",") + json.dumps(pname) + ":"
-                    if emit_string or quoted_value:
-                        prefix += '"'
                     events.append({"type": "tool_call_arguments", "index": index,
                                    "delta": prefix})
                     pstate["started"] = True
                     state["param_count"] += 1
                 value = raw
-                if emit_string or quoted_value:
-                    probe = value.lstrip()
-                    if pstate["mode"] is None:
-                        if not probe:
+                value_probe = value.lstrip()
+                if pstate["mode"] is None:
+                    if not value_probe:
+                        continue
+                    if quoted_value:
+                        pstate["mode"] = "quoted"
+                    else:
+                        selected = _stream_value_mode(value_probe, param_schema, complete)
+                        if selected is None:
                             continue
-                        pstate["mode"] = "quoted" if probe.startswith('"') else "plain"
+                        if selected == "plain":
+                            pstate["mode"] = (
+                                "string" if _schema_allows_string(param_schema) or not param_schema
+                                else "json")
+                        else:
+                            pstate["mode"] = selected
+                if pstate["mode"] in {"quoted", "string"}:
+                    if not pstate.get("quote_opened"):
+                        events.append({"type": "tool_call_arguments", "index": index,
+                                       "delta": '"'})
+                        pstate["quote_opened"] = True
                     if pstate["mode"] == "quoted":
-                        normalized = probe[1:] if probe.startswith('"') else probe
+                        normalized = value_probe[1:] if value_probe.startswith('"') else value_probe
                         if complete:
                             normalized = normalized.rstrip()
                         if complete and normalized.endswith('"'):
@@ -780,7 +820,7 @@ class IncrementalAssistantParser:
                             # completion.
                             normalized = normalized[:-1]
                     else:
-                        normalized = probe.rstrip() if complete else probe.rstrip()
+                        normalized = value_probe.rstrip()
                     value_delta = normalized[pstate["seen"]:]
                     if value_delta:
                         events.append({"type": "tool_call_arguments", "index": index,

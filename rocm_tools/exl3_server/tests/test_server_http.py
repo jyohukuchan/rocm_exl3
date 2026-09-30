@@ -112,6 +112,16 @@ async def test_ordinary_chat_nonstream_usage_and_limits(http_state):
         "max_tokens": 4,
     })
     assert response.status_code == 200
+    body = response.json()
+    assert body["choices"][0]["message"]["content"] == "hello"
+    assert body["choices"][0]["finish_reason"] == "stop"
+    assert body["usage"]["total_tokens"] == 4
+    server.state.max_output_tokens = 2
+    response = await request_json("POST", "/v1/chat/completions", {
+        "model": "fake-model", "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 99,
+    })
+    assert response.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -124,16 +134,6 @@ async def test_raw_completion_n_choices_aggregates_usage(http_state):
     assert usage["prompt_tokens"] == 3
     assert usage["completion_tokens"] == 2
     assert usage["total_tokens"] == 5
-    body = response.json()
-    assert body["choices"][0]["message"]["content"] == "hello"
-    assert body["choices"][0]["finish_reason"] == "stop"
-    assert body["usage"]["total_tokens"] == 4
-    server.state.max_output_tokens = 2
-    response = await request_json("POST", "/v1/chat/completions", {
-        "model": "fake-model", "messages": [{"role": "user", "content": "hi"}],
-        "max_tokens": 99,
-    })
-    assert response.status_code == 200
 
 
 @pytest.mark.asyncio

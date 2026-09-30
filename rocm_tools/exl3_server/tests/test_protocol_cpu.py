@@ -178,14 +178,15 @@ def test_stream_scanner_ignores_xml_openers_inside_nested_and_nullable_values():
                 "items": {"type": "array", "items": {"type": "string"}},
             }},
             "maybe": {"type": ["string", "null"]},
-        }, "required": ["payload", "maybe"]}}}]
+            "choice": {"anyOf": [{"type": "string"}, {"type": "number"}]},
+        }, "required": ["payload", "maybe", "choice"]}}}]
     raw = (
         '<tool_call><function=complex>\n'
         '<parameter=payload>{"text":"literal <tool_call><function=decoy>'
         '</function></tool_call> </parameter>","items":['
         '"<parameter=decoy>","<function=decoy>"]}</parameter>\n'
-        '<parameter=maybe>"<think>literal</think> <parameter=decoy>"'
-        '</parameter></function></tool_call>'
+        '<parameter=maybe>null</parameter>\n'
+        '<parameter=choice>7</parameter></function></tool_call>'
     )
     full = parse_assistant_output(raw, tools=tools)
     expected = json.loads(full["tool_calls"][0]["function"]["arguments"])
