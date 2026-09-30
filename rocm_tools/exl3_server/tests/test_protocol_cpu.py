@@ -125,6 +125,43 @@ def test_incremental_parser_handles_split_utf8_escaped_json_and_reasoning():
     assert final["finish_reason"] == "tool_calls"
 
 
+def test_incremental_quoted_json_source_matches_full_args_for_code_string():
+    value = '"""docstring"""\nquoted "inner" and \\ path\\'
+    raw_value = json.dumps(value, ensure_ascii=False)
+    raw = ('<tool_call><function=get_weather><parameter=city>\n' + raw_value
+           + '\n</parameter></function></tool_call>')
+    full = parse_assistant_output(raw)
+    full_args = full["tool_calls"][0]["function"]["arguments"]
+    parser = IncrementalAssistantParser(tools=TOOLS)
+    events = []
+    for char in raw:
+        events.extend(parser.feed(char))
+    events.extend(parser.finish()["events"])
+    streamed_args = "".join(e["delta"] for e in events
+                              if e["type"] == "tool_call_arguments")
+    assert streamed_args == full_args
+    assert json.loads(streamed_args) == {"city": value}
+
+
+def test_tool_start_after_unbalanced_prose_quote_is_not_hidden_by_quote_scanner():
+    prose = 'The explanation mentions an escaped quote: \\" before the call.\n'
+    raw = prose + (
+        '<tool_call><function=get_weather><parameter=city>\n"Tokyo"\n'
+        '</parameter></function></tool_call>'
+    )
+    full = parse_assistant_output(raw, tools=TOOLS)
+    parser = IncrementalAssistantParser(tools=TOOLS)
+    events = []
+    for char in raw:
+        events.extend(parser.feed(char))
+    events.extend(parser.finish()["events"])
+    streamed_args = "".join(e["delta"] for e in events
+                              if e["type"] == "tool_call_arguments")
+    assert len(full["tool_calls"]) == 1
+    assert streamed_args == full["tool_calls"][0]["function"]["arguments"]
+    assert json.loads(streamed_args) == {"city": "Tokyo"}
+
+
 def test_incremental_metadata_and_arguments_arrive_before_close_and_initial_reasoning():
     parser = IncrementalAssistantParser(
         tools=TOOLS, initial_reasoning=True, id_factory=lambda i: f"req_{i}")
