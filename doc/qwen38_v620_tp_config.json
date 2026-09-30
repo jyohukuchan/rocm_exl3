@@ -23,7 +23,8 @@
     "LD_LIBRARY_PATH": "/opt/rocm/core-7.14/lib:/opt/venv/lib/python3.12/site-packages/torch/lib",
     "EXL3_TP_REPLICATE_ROUTER": "1",
     "EXL3_ROCM_MOE_MGEMM_MAX_ROWS": "20",
-    "EXL3_BATCH_RECURRENT_PRUNE": "1"
+    "EXL3_BATCH_RECURRENT_PRUNE": "1",
+    "EXL3_NGRAM_MLOCK": "1"
   },
   "batch1": {
     "draft_tokens": 4,
@@ -53,7 +54,8 @@
   "caveats": [
     "Speculative verification still uses the unchanged target model; acceptance and speed depend on prompt/sampling.",
     "Default host memory reserve guard stays enabled; ZFS ARC can trigger it despite reclaimable cache. Diagnostic guard overrides are recorded per run.",
-    "Use the bare HSA library name in LD_PRELOAD on this container; the absolute .so.1 spelling also loaded the Torch-bundled HSA runtime. Loaded paths are audited by tp_run."
+    "Use the bare HSA library name in LD_PRELOAD on this container; the absolute .so.1 spelling also loaded the Torch-bundled HSA runtime. Loaded paths are audited by tp_run.",
+    "EXL3_NGRAM_MLOCK=1 requires sufficient per-process RLIMIT_MEMLOCK; the library fails explicitly instead of silently allowing paging. The artifact runner sets only its own benchmark process limit; OS/ARC/swap settings are unchanged."
   ],
   "target_load": {
     "tensor_p": true,
@@ -69,7 +71,17 @@
     "mode": "RAM",
     "physical_copies": 1,
     "table_bytes": 32640156672,
-    "owner": "selected by TP plan; one rank only"
+    "owner": "selected by TP plan; one rank only",
+    "mlock": {
+      "selected": true,
+      "generic_default": false,
+      "process_memlock_limit_GiB": 34,
+      "runner_flag": "--memlock-gib 34",
+      "scope": "Engram CPU table ranges only; no copy or CUDA host registration; limit applied only to benchmark parent and inherited children",
+      "locked_bytes_observed": 32640159744,
+      "validation": "mlock-b4-d4-finite: TP2 batch4 MTP4, finite + before/after RAM audits, unlock and auto power restore pass",
+      "commit": "cecfba7"
+    }
   },
   "cache_kv": {
     "layer_type": "CacheLayer_quant",

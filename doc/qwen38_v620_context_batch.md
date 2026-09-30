@@ -8,7 +8,7 @@ Status: measurements in progress, 2026-09-30. Only completed runs below are usab
 - Model revision `69e33439ae950f17bcbe95c98f117d80f759ab6d`, `/work/models/qwen38-flash-next-exl3-3.05bpw`.
 - Engram: one physical CPU RAM table (32,640,156,672 bytes), per-table mincore residency audit; no disk streaming. K5/V4 for both target and draft QSA cache; recurrent states retain their original types.
 - New native `/work/lib-context-mr-bounds`, SHA256 `57afa48c9a61b9e7ba2721917bf011096d7cc947e43b2a8444ee8350f0820718`.
-- Final frozen source `/work/runs/context-batch/source-prune-native-fixed`; manifest records source hashes and validated commits. Snapshots do not contain `.git`.
+- Final batch1–3 source `/work/runs/context-batch/source-prune-native-fixed`; batch4 retry and subsequent long runs use `/work/runs/context-batch/source-mlock-fixed` with the reviewed RAM-lock addition. Manifests record source hashes and validated commits; snapshots do not contain `.git`.
 - Explicit environment: `EXL3_TP_REPLICATE_ROUTER=1`, `EXL3_ROCM_MOE_MGEMM_MAX_ROWS=20`, `EXL3_BATCH_RECURRENT_PRUNE=1`, `HSA_ENABLE_SDMA=0`, `LD_PRELOAD=libhsa-runtime64.so`.
 - Batch1: auto prefill, profile_peak draft/verify/decode, auto idle. Batch>1: profile_peak inference, auto after exit.
 - Host artifacts: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/context-batch` (container `/work/runs/context-batch`). JSON files contain prompts/hashes, actual cache/RAM/TP audits, delivery events, and per-rank memory data. `*-process.json` contains command/exit/power restoration and sampled board VRAM peaks.
@@ -77,18 +77,21 @@ Values are full-span aggregate decode tok/s. More draft tokens increase draft an
 
 ## Interrupted measurement
 
-The initial final batch2 attempt failed the Engram residency audit (7,951,096 / 7,968,789 pages resident). Its supervisor state was incomplete when inspected; no benchmark process remained. Evidence is preserved in `interrupted-final-b2-ram-audit/` and excluded from performance results. The batch2 retry passed all final audits without changing OS, ARC, or swap settings. The initial final batch4 run completed generation but failed the post-inference residency audit (7,907,144 / 7,968,789 pages resident; about240.8MiB nonresident). It is preserved in `failed-final-b4-ram-audit/` and excluded from final performance results. Another R9700 workload was active on the same host at inspection; this is evidence of shared host activity, not proof of the exact paging trigger. An opt-in, table-only mlock implementation is being reviewed before further long runs.
+The initial final batch2 attempt failed the Engram residency audit (7,951,096 / 7,968,789 pages resident). Its supervisor state was incomplete when inspected; no benchmark process remained. Evidence is preserved in `interrupted-final-b2-ram-audit/` and excluded from performance results. The batch2 retry passed all final audits without changing OS, ARC, or swap settings. The initial final batch4 run completed generation but failed the post-inference residency audit (7,907,144 / 7,968,789 pages resident; about240.8MiB nonresident). It is preserved in `failed-final-b4-ram-audit/` and excluded from final performance results. Another R9700 workload was active on the same host at inspection; this is evidence of shared host activity, not proof of the exact paging trigger. `cecfba7` adds opt-in `EXL3_NGRAM_MLOCK=1`: ordinary mlock on existing CPU table pages, no copy or CUDA registration, default off, explicit failure if locking cannot be granted. Unload drains prefetch then unlocks before dropping tensors. Root verification: 721 CPU tests +79 subtests; a real three-page mlock/mincore/munlock and insufficient-limit probe; `mlock-b4-d4-finite` with 8 real jobs and per-rank finite checks (3527/3934), all final audits passed. Exactly one process held32,640,159,744 locked bytes and returned to0 on unload.
+
+For these runs, the launcher grants only the benchmark process and inherited children a34GiB MEMLOCK limit using a PID/namespace-checked handshake before model import (`--memlock-gib 34`). It changes no global OS/ARC/swap settings or persistent container configuration. Batch1–3 earlier runs passed both boundary residency audits without mlock; later runs additionally hold the table locked throughout. Locking stabilizes the RAM condition; it is not claimed as a compute optimization.
 
 ## Reproduction
 
 The artifact `run_bench.py` starts/stops the local power helper and serializes one container invocation. Do not run GPU benchmarks concurrently. For example, from the host artifact directory (choose a fresh tag):
 
 ```bash
-python3 run_bench.py --tag verify-b2-8k --source /work/runs/context-batch/source-prune-native-fixed \
+python3 run_bench.py --tag verify-b2-8k --source /work/runs/context-batch/source-mlock-fixed \
   --native /work/lib-context-mr-bounds --model /work/models/qwen38-flash-next-exl3-3.05bpw \
   --execution tp --mode mtp --prompts /work/runs/context-batch/prompts-8192-b2-r2.json \
   --cache-tokens 17408 --batch-size 2 --draft-tokens 1 --fixed-draft \
-  --replicate-router --env EXL3_ROCM_MOE_MGEMM_MAX_ROWS=20 --env EXL3_BATCH_RECURRENT_PRUNE=1
+  --replicate-router --env EXL3_ROCM_MOE_MGEMM_MAX_ROWS=20 --env EXL3_BATCH_RECURRENT_PRUNE=1 \
+  --env EXL3_NGRAM_MLOCK=1 --memlock-gib 34
 ```
 
 The JSON configuration is documentation, not automatically loaded by EXL3. The runner records the exact generated command in `TAG-process.json`; preserve both process completion and main report completion, final audits, and power restoration before treating a run as successful. For long-context reproduction also pass the recorded per-device load budgets, chunk size, total cache tokens, and the frozen long-prompt file.
