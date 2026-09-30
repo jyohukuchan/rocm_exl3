@@ -766,6 +766,10 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 audit_chat(body, cmpl_id, parsed, final, streamed=True)
                 log_request("chat (stream)", final)
             except protocol.ProtocolError as e:
+                if state.audit_log:
+                    with Path(state.audit_log).open("a", encoding="utf-8") as f:
+                        f.write(json.dumps({"id": cmpl_id, "error": str(e),
+                                            "raw_output": parser._text}, ensure_ascii=False) + "\n")
                 yield sse({"error": {"message": str(e), "type": "server_error",
                                       "code": "invalid_model_output"}})
                 yield "[DONE]"
@@ -795,6 +799,10 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             audit_chat(body, cmpl_id, parsed, final, streamed=False)
             log_request("chat", final)
     except protocol.ProtocolError as e:
+        if state.audit_log:
+            with Path(state.audit_log).open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"id": cmpl_id, "error": str(e),
+                                    "raw_output": prefix + text}, ensure_ascii=False) + "\n")
         raise HTTPException(502, f"Invalid model output: {e}") from e
     usage = usage_dict(finals[0])
     usage["completion_tokens"] = sum(f.get("new_tokens", 0) for f in finals)

@@ -1091,7 +1091,12 @@ class Generator:
         # launch-to-readback round trip per job. Sampler launch order (and with it each job's
         # RNG draw) matches the serial loop exactly. Per-job constraints (filters, penalties)
         # are unaffected because no job's token depends on another job's result.
-        if draft_tokens is None and batch_logits.shape[1] == 1:
+        # A filter may be inactive until a trigger token is emitted. Keep constrained jobs on the serial
+        # path even in that state: the fast batch sampler resolves every job before any receive_sample()
+        # callback can advance a trigger/filter state, so it cannot safely carry a newly active mask into
+        # another token in the same sampling round. Draft/MTP verification remains on the serial path below.
+        has_filters = any(job.filters for job in batch_jobs)
+        if draft_tokens is None and batch_logits.shape[1] == 1 and not has_filters:
             # Single-token results stage through one pinned buffer and one synchronize, so the
             # batch pays one launch-to-readback round trip instead of one per job
             pinned = self.sample_pinned
@@ -1148,6 +1153,7 @@ class Generator:
 
                 for i in range(batch_logits.shape[1]):
                     token_logits = job_logits[:, i:i + 1, :]
+                    filter_active_before = tuple(f.is_active for f in job.filters)
                     next_token, next_k_tokens, next_k_probs, next_prob = job.receive_logits(
                         token_logits,
                     )
@@ -1213,6 +1219,19 @@ class Generator:
                         else:
                             job.accepted_draft_tokens += 1
                             accepted_length += 1
+
+                            # A trigger can activate a filter while this target-plus-draft window is being
+                            # consumed. The remaining logits were produced before that state transition, so
+                            # discard the speculative suffix and start the next target step with a fresh mask.
+                            # This keeps MTP enabled while preventing a precomputed post-trigger token from
+                            # bypassing the newly active grammar.
+                            filter_activated = any(
+                                not was_active and f.is_active
+                                for was_active, f in zip(filter_active_before, job.filters)
+                            )
+                            if filter_activated:
+                                rejected = reject_remainder(job, j, i, batch_states)
+                                break
 
                             # Advance filters
                             for f in job.filters:
