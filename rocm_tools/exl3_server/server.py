@@ -494,13 +494,62 @@ def chat_controls(req: ChatCompletionRequest) -> tuple[list, Any, dict]:
     return tools, choice, kwargs
 
 
+def _qwen_xml_template_source(tokenizer: Any) -> str | None:
+    """Return a Qwen XML template source when the tokenizer declares one."""
+    config = getattr(tokenizer, "tokenizer_config_dict", None)
+    source = config.get("chat_template") if isinstance(config, dict) else None
+    if isinstance(source, list):
+        candidates = []
+        for entry in source:
+            if isinstance(entry, str):
+                candidates.append(entry)
+            elif isinstance(entry, dict) and isinstance(entry.get("template"), str):
+                candidates.append(entry["template"])
+        source = next((candidate for candidate in candidates
+                       if "<tool_call>" in candidate and "<parameter=" in candidate), None)
+    if not isinstance(source, str):
+        hf_tokenizer = getattr(tokenizer, "hf_tokenizer", None)
+        source = getattr(hf_tokenizer, "chat_template", None)
+    if (isinstance(source, str) and "<tool_call>" in source
+            and "<parameter=" in source):
+        return source
+    return None
+
+
+def _qwen_xml_template_kwargs(tokenizer: Any, kwargs: dict) -> tuple[dict, bool]:
+    """Patch only Qwen's native tool example to match JSON parameter grammar."""
+    out = dict(kwargs)
+    source = out.get("chat_template") or _qwen_xml_template_source(tokenizer)
+    if not isinstance(source, str) or "<tool_call>" not in source \
+            or "<parameter=" not in source:
+        return out, False
+    if "chat_template" in out:
+        return out, True
+    old = (
+        "<parameter=example_parameter_1>\\nvalue_1\\n</parameter>\\n"
+        "<parameter=example_parameter_2>\\nThis is the value for the second parameter\\n"
+        "that can span\\nmultiple lines\\n</parameter>"
+    )
+    new = (
+        "<parameter=example_parameter_1>\\n\"value_1\"\\n</parameter>\\n"
+        "<parameter=example_parameter_2>\\n\"This is the value for the second parameter"
+        "\\\\nthat can span\\\\nmultiple lines\"\\n</parameter>"
+    )
+    patched = source.replace(old, new, 1)
+    if patched != source:
+        out["chat_template"] = patched
+    return out, True
+
+
 def chat_prompt_ids(req: ChatCompletionRequest, *, instructions: str = "",
                     generation_prefix: str = "") -> torch.Tensor:
     if not state.has_chat_template:
         raise HTTPException(400, "Model has no chat template; use /v1/completions")
     _tools, _choice, kwargs = chat_controls(req)
+    kwargs, qwen_xml = _qwen_xml_template_kwargs(state.tokenizer, kwargs)
     try:
-        messages = protocol.messages_for_template(req.messages)
+        messages = protocol.messages_for_template(
+            req.messages, _tools, json_parameter_values=qwen_xml)
         if instructions:
             if messages[0]["role"] == "system":
                 messages[0]["content"] += "\n\n" + instructions
@@ -949,13 +998,15 @@ async def apply_template(request: Request, body: ApplyTemplateRequest):
     check_auth(request)
     if not state.has_chat_template:
         raise HTTPException(400, "Model has no chat template")
-    try:
-        messages = protocol.messages_for_template(body.messages)
-    except protocol.ProtocolError as e:
-        raise HTTPException(400, str(e)) from e
     kwargs = dict(state.default_template_kwargs)
     if body.chat_template_kwargs:
         kwargs.update(body.chat_template_kwargs)
+    kwargs, qwen_xml = _qwen_xml_template_kwargs(state.tokenizer, kwargs)
+    try:
+        messages = protocol.messages_for_template(
+            body.messages, json_parameter_values=qwen_xml)
+    except protocol.ProtocolError as e:
+        raise HTTPException(400, str(e)) from e
     try:
         rendered = state.tokenizer.hf_render_chat_template(
             messages, add_generation_prompt = body.add_generation_prompt, **kwargs

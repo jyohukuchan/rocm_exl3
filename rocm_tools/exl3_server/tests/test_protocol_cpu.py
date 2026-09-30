@@ -67,6 +67,33 @@ def test_history_preserves_tool_ids_reasoning_and_json_arguments():
         normalize_chat_messages([{"role": "tool", "tool_call_id": "missing", "content": "x"}])
 
 
+def test_qwen_template_mode_quotes_multiline_strings_but_keeps_typed_values():
+    tools = [{"type": "function", "function": {
+        "name": "write", "parameters": {"type": "object", "properties": {
+            "text": {"type": "string"}, "count": {"type": "integer"}}}}}]
+    messages = [{"role": "user", "content": "write it"},
+                {"role": "assistant", "content": None, "tool_calls": [{
+                    "id": "call_keep", "type": "function", "function": {
+                        "name": "write",
+                        "arguments": json.dumps({"text": "line1\n東京", "count": 7},
+                                                  ensure_ascii=False)}}]}]
+    templ = messages_for_template(messages, tools, json_parameter_values=True)
+    args = templ[1]["tool_calls"][0]["function"]["arguments"]
+    assert templ[1]["tool_calls"][0]["id"] == "call_keep"
+    assert args["text"] == '"line1\\n東京"'
+    assert args["count"] == 7
+    # The transformed values are valid Qwen parameter source and recover the
+    # same semantic arguments through the normal assistant-output parser.
+    rendered = ('<tool_call><function=write><parameter=text>\n' + args["text"]
+                + '\n</parameter><parameter=count>\n' + str(args["count"])
+                + '\n</parameter></function></tool_call>')
+    parsed = parse_assistant_output(rendered, tools=tools)
+    assert json.loads(parsed["tool_calls"][0]["function"]["arguments"]) == {
+        "text": "line1\n東京", "count": 7}
+    assert json.loads(messages[1]["tool_calls"][0]["function"]["arguments"]) == {
+        "text": "line1\n東京", "count": 7}
+
+
 def test_tool_choice_and_parallel_validation():
     assert validate_tool_choice("auto", TOOLS) == "auto"
     assert validate_tool_choice("none", TOOLS) == "none"

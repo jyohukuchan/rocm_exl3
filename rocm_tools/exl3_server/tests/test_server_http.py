@@ -166,6 +166,35 @@ async def test_tool_nonstream_and_template_history(http_state):
     assert isinstance(history[1]["tool_calls"][0]["function"]["arguments"], dict)
 
 
+def test_qwen_template_adapter_canonicalizes_json_parameter_history(http_state):
+    source = (
+        "HEAD<tool_call>\n<parameter=example_parameter_1>\\nvalue_1\\n</parameter>\\n"
+        "<parameter=example_parameter_2>\\nThis is the value for the second parameter\\n"
+        "that can span\\nmultiple lines\\n</parameter>TAIL"
+    )
+    http_state.tokenizer.tokenizer_config_dict = {"chat_template": source}
+    write_tool = {"type": "function", "function": {
+        "name": "write", "parameters": {"type": "object", "properties": {
+            "text": {"type": "string"}, "count": {"type": "integer"}}}}}
+    request = server.ChatCompletionRequest(
+        model="fake-model", tools=[write_tool], max_tokens=4,
+        messages=[{"role": "user", "content": "write it"},
+                  {"role": "assistant", "content": None, "tool_calls": [{
+                      "id": "call_keep", "type": "function", "function": {
+                          "name": "write",
+                          "arguments": json.dumps({"text": "line1\n東京", "count": 7},
+                                                    ensure_ascii=False)}}]}])
+    server.chat_prompt_ids(request)
+    messages, kwargs = http_state.tokenizer.calls[-1]
+    args = messages[1]["tool_calls"][0]["function"]["arguments"]
+    assert messages[1]["tool_calls"][0]["id"] == "call_keep"
+    assert args == {"text": '"line1\\n東京"', "count": 7}
+    patched = kwargs["chat_template"]
+    assert '<parameter=example_parameter_1>\\n"value_1"\\n' in patched
+    assert '"This is the value for the second parameter\\\\nthat can span' in patched
+    assert source not in patched
+
+
 @pytest.mark.asyncio
 async def test_tool_controls_and_streaming_partial_arguments(http_state):
     http_state.events[:] = [{"text": "</think><tool_call><function=get_weather>"

@@ -441,13 +441,20 @@ def normalize_chat_messages(messages: Iterable[dict]) -> list[dict]:
     return out
 
 
-def messages_for_template(messages: Iterable[dict], tools: Iterable[dict] | None = None) -> list[dict]:
+def messages_for_template(messages: Iterable[dict], tools: Iterable[dict] | None = None,
+                          *, json_parameter_values: bool = False) -> list[dict]:
     """Return HF-template messages with assistant arguments as typed objects.
 
     ``normalize_chat_messages`` intentionally keeps OpenAI's JSON argument
     strings. Qwen's actual template iterates ``tool_call.arguments|items``, so
     this separate helper decodes and schema-coerces those strings only at the
     template boundary while retaining IDs, names, reasoning and tool results.
+
+    With ``json_parameter_values=True``, string argument values are represented
+    as JSON source strings (including their surrounding quotes and escaped
+    control characters). This is for Qwen XML templates whose parameter grammar
+    expects JSON-quoted strings; generic HF templates retain typed values by
+    default.
     """
     normalized = normalize_chat_messages(messages)
     schemas = _tool_schemas(tools)
@@ -467,6 +474,10 @@ def messages_for_template(messages: Iterable[dict], tools: Iterable[dict] | None
                 if not isinstance(args, dict):
                     raise ProtocolError(f"tool {name} arguments must be a JSON object")
                 args = _coerce_schema(args, schemas.get(name, {}))
+                if json_parameter_values:
+                    args = {key: (json.dumps(value, ensure_ascii=False)
+                                  if isinstance(value, str) else value)
+                            for key, value in args.items()}
                 calls.append({"id": call["id"], "type": "function",
                               "function": {"name": name, "arguments": args}})
             item["tool_calls"] = calls
