@@ -23,6 +23,17 @@ Current baseline on gfx1151 / ROCm 7.2.4: **all 117 ROCm-built sources pass**
 step with `ROCM_EXCLUDE` in `setup.py`. Any failure after a toolchain change
 means the shim needs attention.
 
+## `r9700_preflight.py`
+
+Read-only pre-build environment diagnostic for the R9700 (gfx1201): torch/HIP
+versions, device arch / 64 KiB LDS facts, build-target and fused-MoE env checks.
+It diagnoses the environment; it does not prove inference works. Usage and the
+JSON snapshot schema: [`../doc/r9700_preflight.md`](../doc/r9700_preflight.md).
+
+```bash
+python3 rocm_tools/r9700_preflight.py --json   # live query (lazy torch import)
+```
+
 ## `attn_check.py`
 
 Checks upstream's in-tree Triton paged attention against an independent fp32
