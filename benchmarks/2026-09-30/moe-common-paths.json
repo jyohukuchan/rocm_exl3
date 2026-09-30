@@ -1,0 +1,171 @@
+{
+  "format": "rdna2-moe-common-paths/1",
+  "date": "2026-09-30",
+  "source_commit": "9bc8251ea9e7fb9043d95146085b260971463b32",
+  "native_sha256": "25b536e7486ca2ac9a00e274f4efdbbc7e7435d64e96a20c604a44b5533ca57f",
+  "model_revision": "69e33439ae950f17bcbe95c98f117d80f759ab6d",
+  "default_enabled_arches": [
+    "gfx10",
+    "gfx11"
+  ],
+  "default_row_cap": 24,
+  "native_slot_cap": 128,
+  "masked_fused_reduce_capability": true,
+  "representative_validation_only": true,
+  "settings": {
+    "model": "Qwen3.8-Flash-Next EXL3 3.05bpw",
+    "mtp": "original packed3bit",
+    "kv": "K5/V4",
+    "prompt_tokens": 8192,
+    "generated_tokens": 256,
+    "draft_max": 4,
+    "dynamic": true,
+    "draft_confidence": 0.6,
+    "gpu_budgets_gib": [
+      28,
+      28
+    ],
+    "max_chunk_size": 2048,
+    "replicate_router": true,
+    "engram": "single RAM owner, mlock",
+    "process_memlock_gib": 34,
+    "host_mem_reserve_mb": 0,
+    "power": "batch1 prefillauto/decodeprofile_peak; batch4profile_peak; exitauto"
+  },
+  "build": {
+    "exit_code": 0,
+    "sources": 118,
+    "arch": "gfx1030",
+    "rocm_sdk": "7.14",
+    "parallel_jobs": 12
+  },
+  "cpu_tests": {
+    "full_suite_before_last_capacity_fix": {
+      "tests": 829,
+      "subtests": 148,
+      "passed": true
+    },
+    "focused_after_last_capacity_fix": {
+      "tests": 25,
+      "subtests": 15,
+      "passed": true
+    }
+  },
+  "b4_before": {
+    "batch": 4,
+    "cache_tokens": 34816,
+    "timed_jobs": 4,
+    "warm_jobs": 4,
+    "new_tokens": [
+      256,
+      256,
+      256,
+      256
+    ],
+    "observed_tps": [
+      14.462074766632234,
+      14.462074766632234,
+      13.956453809731157,
+      14.789193971372955
+    ],
+    "engine_tps": [
+      14.25090384290427,
+      14.249496003930048,
+      14.13504803297508,
+      14.567613421401983
+    ],
+    "observed_median_tps": 14.462074766632234,
+    "engine_median_tps": 14.25019992341716,
+    "draft_acceptance": 0.768,
+    "complete": true,
+    "tp_audit_ok": true,
+    "post_audit_ok": true,
+    "cleanup_errors": [],
+    "power_restored": true,
+    "native_sha256": "57afa48c9a61b9e7ba2721917bf011096d7cc947e43b2a8444ee8350f0820718",
+    "input_ids_sha256": [
+      "74b0789a4d0e25acdeab0996cf1843909533e6e1cec7e491bd971a359cbcda13",
+      "f49739658682176ec491ccc6f4c291f571b79811dc1b9486f9db337e0f7ee605",
+      "9bafac25b7f2c9e9bb8fa9aa739cbc23dc6fa1edaed88ee2ca67a21d48a788e3",
+      "f7676aad09865c6c6d1b87754d2cb4b3d6ebcee4386364ae87ce656e0440688d"
+    ],
+    "full_span_aggregate_tps": 55.825651679995026,
+    "full_span_definition": "(sum generated tokens minus number of jobs) / (group wall end minus earliest first delivery)",
+    "common_window_aggregate_tps": 57.358873873285695
+  },
+  "b4_after": {
+    "batch": 4,
+    "cache_tokens": 34816,
+    "timed_jobs": 4,
+    "warm_jobs": 4,
+    "new_tokens": [
+      256,
+      256,
+      256,
+      256
+    ],
+    "observed_tps": [
+      19.281694015467775,
+      19.09673475823681,
+      18.272735921893442,
+      19.281694015467775
+    ],
+    "engine_tps": [
+      18.993987777578937,
+      18.80912192209958,
+      18.681744706253227,
+      18.989366711185685
+    ],
+    "observed_median_tps": 19.189214386852292,
+    "engine_median_tps": 18.89924431664263,
+    "draft_acceptance": 0.7529527559055118,
+    "complete": true,
+    "tp_audit_ok": true,
+    "post_audit_ok": true,
+    "cleanup_errors": [],
+    "power_restored": true,
+    "native_sha256": "25b536e7486ca2ac9a00e274f4efdbbc7e7435d64e96a20c604a44b5533ca57f",
+    "input_ids_sha256": [
+      "74b0789a4d0e25acdeab0996cf1843909533e6e1cec7e491bd971a359cbcda13",
+      "f49739658682176ec491ccc6f4c291f571b79811dc1b9486f9db337e0f7ee605",
+      "9bafac25b7f2c9e9bb8fa9aa739cbc23dc6fa1edaed88ee2ca67a21d48a788e3",
+      "f7676aad09865c6c6d1b87754d2cb4b3d6ebcee4386364ae87ce656e0440688d"
+    ],
+    "full_span_aggregate_tps": 73.09066939941047,
+    "full_span_definition": "(sum generated tokens minus number of jobs) / (group wall end minus earliest first delivery)",
+    "common_window_aggregate_tps": 76.29501671218425
+  },
+  "b1_after": {
+    "batch": 1,
+    "cache_tokens": 8704,
+    "timed_jobs": 2,
+    "warm_jobs": 1,
+    "new_tokens": [
+      256,
+      256
+    ],
+    "observed_tps": [
+      60.937877641878394,
+      59.374402873945414
+    ],
+    "engine_tps": [
+      61.6262523200288,
+      62.708444719670524
+    ],
+    "observed_median_tps": 60.1561402579119,
+    "engine_median_tps": 62.16734851984966,
+    "draft_acceptance": 0.7735849056603774,
+    "complete": true,
+    "tp_audit_ok": true,
+    "post_audit_ok": true,
+    "cleanup_errors": [],
+    "power_restored": true,
+    "native_sha256": "25b536e7486ca2ac9a00e274f4efdbbc7e7435d64e96a20c604a44b5533ca57f",
+    "input_ids_sha256": [
+      "74b0789a4d0e25acdeab0996cf1843909533e6e1cec7e491bd971a359cbcda13",
+      "da9720bde4f04b385510868dccc90372ae18862285ec4a2d172fdca5681b0153"
+    ]
+  },
+  "b4_full_span_improvement_percent": 30.926674745119588,
+  "b4_common_window_improvement_percent": 33.01344946334079
+}
