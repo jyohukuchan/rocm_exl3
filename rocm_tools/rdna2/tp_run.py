@@ -210,7 +210,7 @@ def build_parser():
     ap.add_argument("--use-per-device", type=float, nargs=2, default=[28, 28], metavar=("GiB0", "GiB1"),
                     help="load budget per GPU in GiB")
     ap.add_argument("--new-tokens", type=int, default=256)
-    ap.add_argument("--power-socket", required=True, help="power_switch_server.py Unix socket")
+    ap.add_argument("--power-socket", required=True, help="power_server.py Unix socket")
     ap.add_argument("--output", required=True, help="report JSON path (written even on failure)")
     ap.add_argument("--validate-finite", action="store_true",
                     help="explicit isfinite checks (parent logits + per-rank forwards); validation-only, "
