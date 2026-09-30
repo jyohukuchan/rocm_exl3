@@ -24,6 +24,9 @@ Streaming uses standard OpenAI SSE chunks, terminated with "data: [DONE]".
 import sys, os
 from pathlib import Path
 
+if not __package__:
+    sys.path.append(str(Path(__file__).resolve().parents[2]))
+
 # Prefer an installed exllamav3; fall back to the repo this script lives in
 # (rocm_tools/exl3_server -> repo root), then to sibling checkouts
 try:
@@ -50,6 +53,7 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.exceptions import RequestValidationError
 from sse_starlette.sse import EventSourceResponse
 
 
@@ -75,7 +79,10 @@ from exllamav3.generator.sampler import (
     ComboSampler, CustomSampler, SS_LogitBias, SS_RepP, SS_PresFreqP, SS_Argmax,
     SS_Temperature, SS_MinP, SS_TopK, SS_TopP, SS_XTC, SS_AdaptiveP, SS_Sample,
 )
-from dry_sampler import SS_DRY, breaker_token_ids
+from rocm_tools.exl3_server.dry_sampler import SS_DRY, breaker_token_ids
+from rocm_tools.exl3_server import protocol
+from rocm_tools.exl3_server import schema as structured
+from rocm_tools.exl3_server import runtime as serving_runtime
 
 DEFAULT_DRY_BREAKERS = ("\n", ":", "\"", "*")
 
@@ -99,6 +106,9 @@ class ServerState:
     has_chat_template: bool = False
     default_template_kwargs: dict = {}
     lock = None  # asyncio.Lock for load-time init
+    runtime = None
+    max_output_tokens: int = 8192
+    audit_log: str | None = None
 
 state = ServerState()
 
@@ -141,6 +151,11 @@ class ChatCompletionRequest(SamplingFields):
     stop: str | list[str] | None = None
     n: int = 1
     tools: list[dict] | None = None
+    tool_choice: str | dict | None = None
+    parallel_tool_calls: bool = True
+    response_format: dict | None = None
+    reasoning_effort: str | None = None
+    enable_thinking: bool | None = None
     # Template control extensions (llama.cpp / vLLM style)
     chat_template_kwargs: dict | None = None
     add_generation_prompt: bool = True
@@ -157,6 +172,7 @@ class CompletionRequest(SamplingFields):
     # Extensions for raw-prompt clients (SillyTavern Text Completion etc.)
     add_bos: bool = True
     parse_special: bool = True
+    response_format: dict | None = None
 
 class NativeCompletionRequest(BaseModel):
     """llama.cpp-native /completion request (subset). DRY and XTC are honored;
@@ -309,8 +325,9 @@ def token_budget(prompt_len: int, requested: int | None) -> int:
             f"Prompt is {prompt_len} tokens but the cache only holds {state.context_length}. "
             f"Increase --cache_size or shorten the prompt."
         )
-    if state.args.max_response_tokens:
-        budget = min(budget, state.args.max_response_tokens)
+    if requested is not None and requested < 1:
+        raise HTTPException(400, "max_tokens must be positive")
+    budget = min(budget, state.max_output_tokens)
     if requested is not None:
         budget = min(budget, requested)
     return budget
@@ -322,7 +339,7 @@ def finish_reason(eos_reason: str | None) -> str:
 
 def make_job(req: SamplingFields, ids: torch.Tensor, max_new: int,
              stop: str | list[str] | None, identifier: int = 0,
-             ignore_eos: bool = False) -> AsyncJob:
+             ignore_eos: bool = False, filters: list | None = None) -> AsyncJob:
     a = state.args
     return AsyncJob(
         state.generator,
@@ -335,6 +352,7 @@ def make_job(req: SamplingFields, ids: torch.Tensor, max_new: int,
         decode_special_tokens = req.decode_special_tokens,
         stop_on_loop = (a.loop_window, a.loop_min_reps) if a.loop_window else None,
         identifier = identifier,
+        filters = filters,
     )
 
 
@@ -390,7 +408,9 @@ async def collect_job(job: AsyncJob, request: Request | None = None) -> tuple[st
 def usage_dict(final: dict, completion_tokens_hint: int = 0) -> dict:
     pt = final.get("prompt_tokens", 0)
     ct = final.get("new_tokens", completion_tokens_hint)
-    return {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct}
+    cached = min(pt, max(0, final.get("cached_tokens", 0)))
+    return {"prompt_tokens": pt, "completion_tokens": ct, "total_tokens": pt + ct,
+            "prompt_tokens_details": {"cached_tokens": cached}}
 
 
 def log_request(kind: str, final: dict):
@@ -447,42 +467,62 @@ def flatten_content(content: Any) -> str:
     return str(content)
 
 
-def chat_prompt_ids(req: ChatCompletionRequest) -> torch.Tensor:
-    if not state.has_chat_template:
-        raise HTTPException(
-            400,
-            "This model has no chat template in its tokenizer config. Use /v1/completions "
-            "with a client-side instruct template instead."
-        )
-    messages = [
-        {"role": m.get("role", "user"), "content": flatten_content(m.get("content"))}
-        for m in req.messages
-    ]
-    if not messages:
-        raise HTTPException(400, "messages must not be empty")
-
-    kwargs = dict(state.default_template_kwargs)
-    if req.chat_template_kwargs:
-        kwargs.update(req.chat_template_kwargs)
-    if req.tools:
-        kwargs["tools"] = req.tools
-
-    add_gen = req.add_generation_prompt
-    if req.continue_final_message:
-        kwargs["continue_final_message"] = True
-        add_gen = False
-
+def chat_controls(req: ChatCompletionRequest) -> tuple[list, Any, dict]:
     try:
-        ids = state.tokenizer.hf_chat_template(
-            messages,
-            add_generation_prompt = add_gen,
-            **kwargs,
-        )
+        tools = protocol.normalize_tool_definitions(req.tools)
+        choice = protocol.validate_tool_choice(req.tool_choice, tools,
+                                              parallel_tool_calls=req.parallel_tool_calls)
+        if not tools and choice == "auto":
+            choice = "none"
+    except protocol.ProtocolError as e:
+        raise HTTPException(400, str(e)) from e
+    kwargs = dict(state.default_template_kwargs)
+    kwargs.update(req.chat_template_kwargs or {})
+    if req.enable_thinking is not None:
+        kwargs["enable_thinking"] = req.enable_thinking
+    if req.reasoning_effort is not None:
+        if req.reasoning_effort not in {"low", "medium", "xhigh"}:
+            raise HTTPException(400, "reasoning_effort must be low, medium or xhigh")
+        kwargs["reasoning_effort"] = req.reasoning_effort
+    selected = tools
+    if choice == "none":
+        selected = []
+    elif isinstance(choice, dict):
+        selected = [t for t in tools if t["function"]["name"] == choice["function"]["name"]]
+    if selected:
+        kwargs["tools"] = selected
+    return tools, choice, kwargs
+
+
+def chat_prompt_ids(req: ChatCompletionRequest, *, instructions: str = "",
+                    generation_prefix: str = "") -> torch.Tensor:
+    if not state.has_chat_template:
+        raise HTTPException(400, "Model has no chat template; use /v1/completions")
+    _tools, _choice, kwargs = chat_controls(req)
+    try:
+        messages = protocol.messages_for_template(req.messages)
+        if instructions:
+            if messages[0]["role"] == "system":
+                messages[0]["content"] += "\n\n" + instructions
+            else:
+                messages.insert(0, {"role": "system", "content": instructions})
+        add_gen = req.add_generation_prompt
+        if req.continue_final_message:
+            kwargs["continue_final_message"] = True
+            add_gen = False
+        ids = state.tokenizer.hf_chat_template(messages, add_generation_prompt=add_gen,
+                                               **kwargs)
+        if generation_prefix:
+            prefix = state.tokenizer.encode(generation_prefix, add_bos=False,
+                                             encode_special_tokens=True)
+            ids = torch.cat([ids, prefix], dim=-1)
+        return ids
+    except protocol.ProtocolError as e:
+        raise HTTPException(400, str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(400, f"Chat template rendering failed: {e}")
-    return ids
+        raise HTTPException(400, f"Chat template rendering failed: {e}") from e
 
 
 def completion_prompt_ids(req: CompletionRequest) -> torch.Tensor:
@@ -518,23 +558,18 @@ def completion_prompt_ids(req: CompletionRequest) -> torch.Tensor:
 async def lifespan(app: FastAPI):
     # AsyncGenerator must be created inside a running event loop
     a = state.args
-    state.generator = AsyncGenerator(
-        model = state.model,
-        cache = state.cache,
-        tokenizer = state.tokenizer,
-        draft_model = state.draft_model,
-        draft_cache = state.draft_cache,
-        num_draft_tokens = a.num_draft_tokens,
-        ngram_match_min = a.ngram_match_min,
-        dynamic_draft_tokens = a.dynamic_draft,
-        draft_confidence = a.draft_confidence,
-        cpu_cache_size = int(a.cpu_cache_size * 1024 ** 3),
-        recurrent_cache_size = int(a.recurrent_cache_size * 1024 ** 3),
-    )
-    print(f" -- Server ready: http://{a.host}:{a.port} (model: {state.model_name}, "
-          f"context: {state.context_length} tokens)", flush = True)
-    yield
-    await state.generator.close()
+    state.generator = state.runtime.bind(AsyncGenerator(**state.runtime.generator_kwargs))
+    power = state.runtime.power_context(state.generator)
+    try:
+        power.__enter__()
+        print(f" -- Server ready: http://{a.host}:{a.port} (model: {state.model_name}, "
+              f"context: {state.context_length} tokens)", flush = True)
+        yield
+    finally:
+        errors = await state.runtime.shutdown(state.generator, power)
+        state.generator = None
+        if errors:
+            raise RuntimeError("server cleanup failed: " + "; ".join(errors))
 
 app = FastAPI(title = "exl3_server", lifespan = lifespan)
 app.add_middleware(
@@ -545,8 +580,28 @@ app.add_middleware(
 )
 
 
+@app.exception_handler(HTTPException)
+async def http_error(_request: Request, exc: HTTPException):
+    return JSONResponse(status_code=exc.status_code, content={"error": {
+        "message": str(exc.detail), "type": "invalid_request_error" if exc.status_code < 500 else "server_error",
+        "code": "context_length_exceeded" if "Prompt is" in str(exc.detail) else None,
+        "param": None,
+    }})
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(_request: Request, exc: RequestValidationError):
+    return JSONResponse(status_code=400, content={"error": {
+        "message": str(exc), "type": "invalid_request_error", "code": "invalid_request", "param": None,
+    }})
+
+
 @app.get("/health")
 async def health():
+    error = getattr(state.generator, "error", None)
+    if state.generator is None or error:
+        return JSONResponse({"status": "unavailable", "error": str(error) if error else "not ready"},
+                            status_code=503)
     return {"status": "ok"}
 
 
@@ -563,6 +618,8 @@ async def props():
         "default_generation_settings": {"n_ctx": state.context_length},
         "stop_token_ids": state.stop_token_ids,
         "default_template_kwargs": state.default_template_kwargs,
+        "max_output_tokens": state.max_output_tokens,
+        "runtime": state.runtime.report() if state.runtime is not None else {},
     }
 
 
@@ -576,6 +633,9 @@ async def models(request: Request):
             "object": "model",
             "created": int(time.time()),
             "owned_by": "exl3_server",
+            "context_length": state.context_length,
+            "max_output_tokens": state.max_output_tokens,
+            "capabilities": {"tools": True, "input": ["text"], "output": ["text"]},
         }],
     }
 
@@ -601,87 +661,146 @@ async def detokenize(request: Request, body: DetokenizeRequest):
 # Chat completions
 # ---------------------------------------------------------------------------
 
+def audit_chat(body, response_id, parsed, final, *, streamed):
+    if not state.audit_log:
+        return
+    record = {
+        "id": response_id, "unix_s": time.time(), "model": state.model_name,
+        "stream": streamed, "input_roles": [m.get("role") for m in body.messages],
+        "input_tool_ids": [m.get("tool_call_id") for m in body.messages if m.get("role") == "tool"],
+        "declared_tools": [t.get("function", {}).get("name") for t in body.tools or []],
+        "tool_choice": body.tool_choice, "parallel_tool_calls": body.parallel_tool_calls,
+        "response": protocol.build_chat_message(parsed), "usage": usage_dict(final),
+        "finish_reason": parsed.get("finish_reason"),
+        "time_prefill": final.get("time_prefill"), "time_generate": final.get("time_generate"),
+        "accepted_draft_tokens": final.get("accepted_draft_tokens"),
+        "rejected_draft_tokens": final.get("rejected_draft_tokens"),
+    }
+    path = Path(state.audit_log)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def prepare_chat(body):
+    if body.model is not None and body.model != state.model_name:
+        raise HTTPException(404, f"Unknown model {body.model!r}; use {state.model_name!r}")
+    if not 1 <= body.n <= 8:
+        raise HTTPException(400, "n must be in 1..8")
+    tools, choice, kwargs = chat_controls(body)
+    thinking = bool(kwargs.get("enable_thinking", True))
+    try:
+        plan = structured.prepare_constraints(state.tokenizer, tools, choice,
+                                               body.parallel_tool_calls, body.response_format,
+                                               thinking=thinking)
+    except protocol.ProtocolError as e:
+        raise HTTPException(400, str(e)) from e
+    prefix = plan.generation_prefix or ""
+    ids = chat_prompt_ids(body, instructions=plan.template_instructions,
+                          generation_prefix=prefix)
+    return tools, choice, thinking, plan, prefix, ids
+
+
+def validate_chat_output(parsed, body, tools, choice, final):
+    protocol.validate_output_tools(parsed, tools, tool_choice=choice,
+                                   parallel_tool_calls=body.parallel_tool_calls)
+    if parsed.get("tool_calls"):
+        structured.validate_tool_arguments(parsed["tool_calls"], tools)
+    if body.response_format:
+        structured.validate_response_format_output(parsed.get("content") or "", body.response_format)
+    if not parsed.get("tool_calls"):
+        parsed["finish_reason"] = finish_reason(final.get("eos_reason"))
+    return parsed
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: ChatCompletionRequest):
     check_auth(request)
-    ids = chat_prompt_ids(body)
-    prompt_len = ids.shape[-1]
-    requested = body.max_completion_tokens or body.max_tokens
-    max_new = token_budget(prompt_len, requested)
+    tools, choice, thinking, plan, prefix, ids = prepare_chat(body)
+    max_new = token_budget(ids.shape[-1], body.max_completion_tokens or body.max_tokens)
     cmpl_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
+
+    def parser_for(index=0):
+        return protocol.IncrementalAssistantParser(
+            tools=tools, initial_reasoning=thinking,
+            id_factory=lambda i: f"call_{cmpl_id[9:]}_{index}_{i}")
 
     if body.stream:
         if body.n != 1:
             raise HTTPException(400, "n > 1 is not supported with streaming")
-        job = make_job(body, ids, max_new, body.stop)
+        job = make_job(body, ids, max_new, body.stop, filters=plan.filters)
         include_usage = bool((body.stream_options or {}).get("include_usage"))
 
         async def stream():
-            def chunk(delta: dict, fin: str | None = None, usage: dict | None = None):
-                d = {
-                    "id": cmpl_id,
-                    "object": "chat.completion.chunk",
-                    "created": created,
-                    "model": state.model_name,
-                    "choices": [{"index": 0, "delta": delta, "finish_reason": fin}],
-                }
-                if usage is not None:
-                    d["usage"] = usage
-                return sse(d)
-
-            final = {}
-            done = False
+            parser = parser_for()
+            final, done = {}, False
             watch = DisconnectWatch(request, job)
+            def chunk(delta, reason=None, usage=None):
+                return sse(protocol.build_chat_chunk(delta, response_id=cmpl_id,
+                    model=state.model_name, created=created, finish_reason=reason, usage=usage))
             try:
                 yield chunk({"role": "assistant", "content": ""})
+                if prefix:
+                    for event in parser.feed(prefix):
+                        yield chunk(protocol.event_to_chat_delta(event))
                 async for r in job:
-                    text = r.get("text", "")
-                    if text:
-                        yield chunk({"content": text})
+                    for event in parser.feed(r.get("text", "")):
+                        delta = protocol.event_to_chat_delta(event)
+                        if delta:
+                            yield chunk(delta)
                     if r.get("eos"):
                         final = r
                         done = True
                 if watch.disconnected:
                     done = True
                     return
-                yield chunk({}, fin = finish_reason(final.get("eos_reason")),
-                            usage = usage_dict(final) if include_usage else None)
+                parsed = parser.finish()
+                validate_chat_output(parsed, body, tools, choice, final)
+                for event in parsed.get("events", []):
+                    delta = protocol.event_to_chat_delta(event)
+                    if delta:
+                        yield chunk(delta)
+                yield chunk({}, parsed["finish_reason"], usage_dict(final) if include_usage else None)
                 yield "[DONE]"
+                audit_chat(body, cmpl_id, parsed, final, streamed=True)
                 log_request("chat (stream)", final)
+            except protocol.ProtocolError as e:
+                yield sse({"error": {"message": str(e), "type": "server_error",
+                                      "code": "invalid_model_output"}})
+                yield "[DONE]"
             finally:
                 watch.stop()
                 if not done:
                     await job.cancel()
-                    print(" -- Client disconnected, job cancelled", flush = True)
 
-        # EventSourceResponse (not StreamingResponse): under ASGI spec >= 2.4 starlette only
-        # notices a disconnect when a write fails, abandoning the generator un-closed and
-        # leaking the job until GC; sse_starlette listens for the disconnect and closes the
-        # iterator deterministically, so the finally-cancel above always runs
         return CancellingStreamResponse(stream())
 
-    # Non-streaming, n completions
-    jobs = [make_job(body, ids, max_new, body.stop, identifier = i) for i in range(body.n)]
+    jobs = []
+    for i in range(body.n):
+        local_plan = plan if i == 0 else structured.prepare_constraints(
+            state.tokenizer, tools, choice, body.parallel_tool_calls, body.response_format,
+            thinking=thinking)
+        jobs.append(make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters))
     results = await asyncio.gather(*(collect_job(j, request) for j in jobs))
-    choices = []
-    final = {}
-    for i, (text, fin) in enumerate(results):
-        final = fin or final
-        choices.append({
-            "index": i,
-            "message": {"role": "assistant", "content": text},
-            "finish_reason": finish_reason(fin.get("eos_reason")),
-        })
-        log_request("chat", fin)
-    return JSONResponse({
-        "id": cmpl_id,
-        "object": "chat.completion",
-        "created": created,
-        "model": state.model_name,
-        "choices": choices,
-        "usage": usage_dict(final),
-    })
+    choices, finals = [], []
+    try:
+        for i, (text, final) in enumerate(results):
+            parser = parser_for(i)
+            parser.feed(prefix + text)
+            parsed = validate_chat_output(parser.finish(), body, tools, choice, final)
+            choices.append({"index": i, "message": protocol.build_chat_message(parsed),
+                            "finish_reason": parsed["finish_reason"]})
+            finals.append(final)
+            audit_chat(body, cmpl_id, parsed, final, streamed=False)
+            log_request("chat", final)
+    except protocol.ProtocolError as e:
+        raise HTTPException(502, f"Invalid model output: {e}") from e
+    usage = usage_dict(finals[0])
+    usage["completion_tokens"] = sum(f.get("new_tokens", 0) for f in finals)
+    usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+    return JSONResponse({"id": cmpl_id, "object": "chat.completion", "created": created,
+                         "model": state.model_name, "choices": choices, "usage": usage})
 
 
 # ---------------------------------------------------------------------------
@@ -691,6 +810,13 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
 @app.post("/v1/completions")
 async def completions(request: Request, body: CompletionRequest):
     check_auth(request)
+    if body.model is not None and body.model != state.model_name:
+        raise HTTPException(404, f"Unknown model {body.model!r}")
+    try:
+        plan = structured.prepare_constraints(state.tokenizer, response_format=body.response_format,
+                                               thinking=False)
+    except protocol.ProtocolError as e:
+        raise HTTPException(400, str(e)) from e
     ids = completion_prompt_ids(body)
     prompt_len = ids.shape[-1]
     max_new = token_budget(prompt_len, body.max_tokens)
@@ -700,7 +826,7 @@ async def completions(request: Request, body: CompletionRequest):
     if body.stream:
         if body.n != 1:
             raise HTTPException(400, "n > 1 is not supported with streaming")
-        job = make_job(body, ids, max_new, body.stop)
+        job = make_job(body, ids, max_new, body.stop, filters=plan.filters)
         include_usage = bool((body.stream_options or {}).get("include_usage"))
 
         async def stream():
@@ -717,11 +843,13 @@ async def completions(request: Request, body: CompletionRequest):
                 return sse(d)
 
             final = {}
+            full_text = ""
             done = False
             watch = DisconnectWatch(request, job)
             try:
                 async for r in job:
                     text = r.get("text", "")
+                    full_text += text
                     if text:
                         yield chunk(text)
                     if r.get("eos"):
@@ -730,6 +858,8 @@ async def completions(request: Request, body: CompletionRequest):
                 if watch.disconnected:
                     done = True
                     return
+                if body.response_format:
+                    structured.validate_response_format_output(full_text, body.response_format)
                 yield chunk("", fin = finish_reason(final.get("eos_reason")),
                             usage = usage_dict(final) if include_usage else None)
                 yield "[DONE]"
@@ -746,11 +876,20 @@ async def completions(request: Request, body: CompletionRequest):
         # iterator deterministically, so the finally-cancel above always runs
         return CancellingStreamResponse(stream())
 
-    jobs = [make_job(body, ids, max_new, body.stop, identifier = i) for i in range(body.n)]
+    jobs = []
+    for i in range(body.n):
+        local_plan = plan if i == 0 else structured.prepare_constraints(
+            state.tokenizer, response_format=body.response_format, thinking=False)
+        jobs.append(make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters))
     results = await asyncio.gather(*(collect_job(j, request) for j in jobs))
     choices = []
     final = {}
     for i, (text, fin) in enumerate(results):
+        if body.response_format:
+            try:
+                structured.validate_response_format_output(text, body.response_format)
+            except protocol.ProtocolError as e:
+                raise HTTPException(502, f"Invalid model output: {e}") from e
         final = fin or final
         choices.append({
             "index": i,
@@ -797,10 +936,10 @@ async def apply_template(request: Request, body: ApplyTemplateRequest):
     check_auth(request)
     if not state.has_chat_template:
         raise HTTPException(400, "Model has no chat template")
-    messages = [
-        {"role": m.get("role", "user"), "content": flatten_content(m.get("content"))}
-        for m in body.messages
-    ]
+    try:
+        messages = protocol.messages_for_template(body.messages)
+    except protocol.ProtocolError as e:
+        raise HTTPException(400, str(e)) from e
     kwargs = dict(state.default_template_kwargs)
     if body.chat_template_kwargs:
         kwargs.update(body.chat_template_kwargs)
@@ -972,9 +1111,14 @@ def main(args):
                   f"Pass -cs to cap it (e.g. -cs 32768), or -cq to quantize it.", flush = True)
 
     # Load model, cache, tokenizer, optional draft model (same as chat.py)
-    (state.model, state.config, state.cache, state.tokenizer,
-     state.draft_model, _draft_config, state.draft_cache) = model_init.init(args)
-    state.context_length = state.cache.max_num_tokens
+    state.runtime = serving_runtime.load_runtime(args, log=lambda msg: print(msg, flush=True))
+    for name in ("model", "config", "cache", "tokenizer", "draft_model", "draft_cache"):
+        setattr(state, name, getattr(state.runtime, name))
+    state.context_length = state.runtime.context_length
+    state.max_output_tokens = args.max_output_tokens or args.max_response_tokens or 8192
+    if args.max_response_tokens:
+        state.max_output_tokens = min(state.max_output_tokens, args.max_response_tokens)
+    state.audit_log = args.audit_log
 
     # Stop tokens: model EOS list plus tokenizer EOS
     stop_ids = set()
@@ -1036,6 +1180,8 @@ if __name__ == "__main__":
     parser.add_argument("-ctk", "--chat_template_kwargs", type = str, default = None, help = "Default kwargs for the chat template as JSON, e.g. '{\"enable_thinking\": false}'")
     parser.add_argument("-lw", "--loop_window", type = int, default = 0, help = "Loop detection window in tokens, 0 to disable (default)")
     parser.add_argument("-lmr", "--loop_min_reps", type = int, default = 3, help = "Min. reps for loop detection, default = 3")
+    serving_runtime.add_helper_flags(parser)
+    parser.add_argument("--audit-log", default=None, help="Private JSONL request/result audit (no credentials)")
     parser.add_argument("-xtcp", "--xtc_probability", type = float, default = 0.0, help = "XTC probability, 0 to disable (default)")
     parser.add_argument("-xtct", "--xtc_threshold", type = float, default = 0.1, help = "XTC threshold, default = 0.1")
     parser.add_argument("-drym", "--dry_multiplier", type = float, default = 0.0, help = "DRY multiplier, 0 to disable (default)")
