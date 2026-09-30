@@ -64,6 +64,7 @@ llguidance>=1.7.0
 fastapi
 uvicorn
 sse-starlette
+jsonschema>=4.18
 transformers
 jinja2
 
