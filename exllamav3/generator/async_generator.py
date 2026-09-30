@@ -98,19 +98,42 @@ class AsyncGenerator:
             self.condition.notify_all()
 
     async def close(self):
-        self.iteration_task.cancel()
+        """Stop iteration and release every synchronous job before model teardown.
 
-        # Force a re-check of the condition to unlock the loop
-        await self._notify_condition()
+        The async job map is only a delivery registry; the synchronous Generator owns cache pages and
+        recurrent/MTP state. Clear that queue while its models are still loaded, then wake consumers so a
+        shutdown cannot leave active pages pointing at an unloaded model.
+        """
+        task = self.iteration_task
+        current = asyncio.current_task()
+        caller_cancelled = False
+        cleanup_error = None
+        task.cancel()
         try:
-            await self.iteration_task
+            # Force a re-check of the condition to unlock the loop
+            await self._notify_condition()
+            await task
         except asyncio.CancelledError:
-            pass
+            # Cancellation raised by the child task is expected. Preserve cancellation of the caller itself;
+            # the synchronous queue cleanup in finally still runs before propagating it.
+            caller_cancelled = current is not None and current.cancelling() > 0
+        finally:
+            try:
+                clear_queue = getattr(self.generator, "clear_queue", None)
+                if clear_queue is not None:
+                    clear_queue()
+            except BaseException as exc:
+                cleanup_error = exc
 
-        # Wake any consumers still parked on job queues; no more results will be produced
-        for async_job in self.jobs.values():
-            async_job.put_result(_CANCELLED_SENTINEL)
-        self.jobs.clear()
+            # Wake any consumers still parked on job queues; no more results will be produced.
+            for async_job in self.jobs.values():
+                async_job.put_result(_CANCELLED_SENTINEL)
+            self.jobs.clear()
+
+        if caller_cancelled:
+            raise asyncio.CancelledError
+        if cleanup_error is not None:
+            raise cleanup_error
 
     async def cancel(self, job: AsyncJob):
         # Remove the underlying Job from the synchronous generator first so no new tokens are produced, then drop

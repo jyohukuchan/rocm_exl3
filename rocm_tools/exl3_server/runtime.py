@@ -604,6 +604,9 @@ class Runtime:
         self._agen = None
         self._power = None
         self._peak_active_jobs = 0
+        self._observed_generator = None
+        self._original_iterate = None
+        self._observed_iterate = None
         self._models_unloaded = False
 
     @property
@@ -655,12 +658,8 @@ class Runtime:
             report["power_rank_syncs"] = self._power.rank_syncs
         sync_gen = getattr(self._agen, "generator", None) if self._agen is not None else None
         if sync_gen is not None:
-            active = getattr(sync_gen, "active_jobs", None)
-            active_count = len(active) if active is not None else None
-            current_peak = getattr(self, "_peak_active_jobs", 0)
-            if active_count is not None:
-                self._peak_active_jobs = max(current_peak, active_count)
-                current_peak = self._peak_active_jobs
+            active_count = self._observe_active_jobs(sync_gen)
+            current_peak = self._peak_active_jobs
             report["generator_runtime"] = {
                 "active_jobs": active_count,
                 "peak_active_jobs": current_peak,
@@ -670,8 +669,49 @@ class Runtime:
 
     def bind(self, async_generator):
         """Remember the live AsyncGenerator so shutdown() closes it first."""
+        self._restore_iteration_observer()
         self._agen = async_generator
+        sync_gen = getattr(async_generator, "generator", None)
+        iterate = getattr(sync_gen, "iterate", None) if sync_gen is not None else None
+        if sync_gen is not None and iterate is not None:
+            runtime = self
+            from functools import wraps
+
+            @wraps(iterate)
+            def observed_iterate(*args, **kwargs):
+                runtime._observe_active_jobs(sync_gen)
+                try:
+                    return iterate(*args, **kwargs)
+                finally:
+                    runtime._observe_active_jobs(sync_gen)
+
+            sync_gen.iterate = observed_iterate
+            self._observed_generator = sync_gen
+            self._original_iterate = iterate
+            self._observed_iterate = observed_iterate
         return async_generator
+
+    def _observe_active_jobs(self, sync_gen):
+        try:
+            active = getattr(sync_gen, "active_jobs", None)
+            count = len(active) if active is not None else None
+        except Exception:
+            return None
+        if count is not None:
+            self._peak_active_jobs = max(self._peak_active_jobs, count)
+        return count
+
+    def _restore_iteration_observer(self):
+        sync_gen = self._observed_generator
+        observed = self._observed_iterate
+        if sync_gen is not None and observed is not None:
+            try:
+                if getattr(sync_gen, "iterate", None) is observed:
+                    sync_gen.iterate = self._original_iterate
+            finally:
+                self._observed_generator = None
+                self._original_iterate = None
+                self._observed_iterate = None
 
     def power_context(self, async_generator, *, socket_path=_UNSENTINEL, batch_size=None,
                       devices=None):
@@ -727,6 +767,8 @@ class Runtime:
                     await close()
             except Exception as e:
                 self.cleanup_errors.append(f"async generator close: {e!r}")
+            finally:
+                self._restore_iteration_observer()
         if ctx is not None:
             try:
                 ctx.__exit__(None, None, None)

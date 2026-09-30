@@ -112,6 +112,18 @@ async def test_ordinary_chat_nonstream_usage_and_limits(http_state):
         "max_tokens": 4,
     })
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_raw_completion_n_choices_aggregates_usage(http_state):
+    response = await request_json("POST", "/v1/completions", {
+        "model": "fake-model", "prompt": "hi", "n": 2, "max_tokens": 4,
+    })
+    assert response.status_code == 200
+    usage = response.json()["usage"]
+    assert usage["prompt_tokens"] == 3
+    assert usage["completion_tokens"] == 2
+    assert usage["total_tokens"] == 5
     body = response.json()
     assert body["choices"][0]["message"]["content"] == "hello"
     assert body["choices"][0]["finish_reason"] == "stop"
@@ -210,4 +222,46 @@ async def test_http_errors_context_model_and_cancellation(http_state):
     with pytest.raises(asyncio.CancelledError):
         await server.collect_job(job)
     assert job.cancelled
+
+
+@pytest.mark.asyncio
+async def test_async_generator_close_clears_sync_queue_before_waking_consumers():
+    class FakeSyncGenerator:
+        def __init__(self):
+            self.active_jobs = [object()]
+            self.pending_jobs = [object()]
+            self.clear_calls = 0
+
+        def clear_queue(self):
+            self.clear_calls += 1
+            self.active_jobs.clear()
+            self.pending_jobs.clear()
+
+    class WaitingJob:
+        def __init__(self):
+            self.results = []
+
+        def put_result(self, result):
+            self.results.append(result)
+
+    sync = FakeSyncGenerator()
+    agen = server.AsyncGenerator.__new__(server.AsyncGenerator)
+    agen.generator = sync
+    agen.jobs = {}
+    agen.error = None
+    agen.condition = asyncio.Condition()
+    waiting = WaitingJob()
+    agen.jobs[object()] = waiting
+
+    async def idle():
+        await asyncio.Event().wait()
+
+    agen.iteration_task = asyncio.create_task(idle())
+    await asyncio.sleep(0)
+    await agen.close()
+
+    assert sync.clear_calls == 1
+    assert sync.active_jobs == [] and sync.pending_jobs == []
+    assert len(waiting.results) == 1
+    assert agen.jobs == {}
 

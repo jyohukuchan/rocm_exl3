@@ -837,6 +837,42 @@ def test_runtime_exposes_generator_kwargs_for_server_wiring():
     assert kwargs["cpu_cache_size"] == 1024**3
 
 
+def test_runtime_bind_records_peak_active_jobs_and_restores_iterate_wrapper():
+    class Sync:
+        max_batch_size = 4
+
+        def __init__(self):
+            self.active_jobs = []
+
+        def iterate(self):
+            self.active_jobs[:] = [object(), object(), object(), object()]
+            return []
+
+    class Agen:
+        def __init__(self, sync):
+            self.generator = sync
+
+        async def close(self):
+            pass
+
+    sync = Sync()
+    original = sync.iterate
+    agen = Agen(sync)
+    rt = runtime.Runtime(
+        model=FakeModel([]), config=None, cache=None, tokenizer=None,
+        draft_model=None, draft_config=None, draft_cache=None,
+        settings={"path": "generic_model_init", "context_limit": None,
+                  "power_devices": [0], "power_socket": None, "batch_size": 4},
+        audit={"execution_actual": "single_device", "ok": True})
+    rt.bind(agen)
+    sync.iterate()
+    report = rt.report()
+    assert report["generator_runtime"]["active_jobs"] == 4
+    assert report["generator_runtime"]["peak_active_jobs"] == 4
+    asyncio.run(rt.shutdown())
+    assert sync.iterate == original
+
+
 def test_power_context_wires_rank_facade_for_tp_runtime():
     events = []
     rt = runtime.Runtime(

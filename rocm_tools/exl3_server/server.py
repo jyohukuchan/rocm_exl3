@@ -891,27 +891,32 @@ async def completions(request: Request, body: CompletionRequest):
         jobs.append(make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters))
     results = await asyncio.gather(*(collect_job(j, request) for j in jobs))
     choices = []
-    final = {}
+    finals = []
     for i, (text, fin) in enumerate(results):
         if body.response_format:
             try:
                 structured.validate_response_format_output(text, body.response_format)
             except protocol.ProtocolError as e:
                 raise HTTPException(502, f"Invalid model output: {e}") from e
-        final = fin or final
+        final = fin or {}
+        finals.append(final)
         choices.append({
             "index": i,
             "text": text,
             "finish_reason": finish_reason(fin.get("eos_reason")),
         })
         log_request("completion", fin)
+    usage = usage_dict(finals[0] if finals else {},
+                       completion_tokens_hint=sum(f.get("new_tokens", 0) for f in finals))
+    usage["completion_tokens"] = sum(f.get("new_tokens", 0) for f in finals)
+    usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
     return JSONResponse({
         "id": cmpl_id,
         "object": "text_completion",
         "created": created,
         "model": state.model_name,
         "choices": choices,
-        "usage": usage_dict(final),
+        "usage": usage,
     })
 
 
