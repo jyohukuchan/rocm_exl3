@@ -162,6 +162,22 @@ def test_tool_start_after_unbalanced_prose_quote_is_not_hidden_by_quote_scanner(
     assert json.loads(streamed_args) == {"city": "Tokyo"}
 
 
+def test_partial_tool_header_is_buffered_without_xml_content_leak():
+    raw = ('<tool_call><function=get_weather><parameter=city>"Tokyo"'
+           '</parameter></function></tool_call>')
+    parser = IncrementalAssistantParser(tools=TOOLS)
+    events = []
+    for char in raw:
+        events.extend(parser.feed(char))
+    events.extend(parser.finish()["events"])
+    content = "".join(e.get("delta", "") for e in events if e["type"] == "content")
+    starts = [e for e in events if e["type"] == "tool_call_start"]
+    args = "".join(e["delta"] for e in events if e["type"] == "tool_call_arguments")
+    assert "<tool_call" not in content
+    assert starts and starts[0]["name"] == "get_weather"
+    assert json.loads(args) == {"city": "Tokyo"}
+
+
 def test_incremental_metadata_and_arguments_arrive_before_close_and_initial_reasoning():
     parser = IncrementalAssistantParser(
         tools=TOOLS, initial_reasoning=True, id_factory=lambda i: f"req_{i}")

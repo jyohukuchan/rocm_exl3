@@ -183,7 +183,10 @@ def _iter_tool_call_starts(text: str):
         # Ignore incidental prose markers, but accept a complete or partial
         # function/JSON block. Once accepted, all inner markers are scoped to
         # this block and cannot become sibling calls.
-        if not re.match(r"<function\b|\{", after, re.IGNORECASE):
+        after_lower = after.lower()
+        if (after and not after.startswith("{")
+                and not after_lower.startswith("<function")
+                and not "<function".startswith(after_lower)):
             cursor = start + len("<tool_call")
             continue
         yield start, open_end
@@ -729,19 +732,27 @@ class IncrementalAssistantParser:
         think_open = lower.rfind("<think") > lower.rfind("</think")
         partial_think = any(lower.endswith("<think"[:i]) for i in range(1, 6))
         partial_think_close = any(lower.endswith("</think"[:i]) for i in range(1, 8))
-        partial_tool = any(lower.endswith("<tool_call"[:i]) for i in range(1, 10))
+        partial_tool = any(lower.endswith("<tool_call"[:i])
+                           for i in range(1, len("<tool_call") + 1))
+        function_starts = list(_iter_tool_function_starts(self._text))
+        last_tool_header = lower.rfind("<tool_call>")
+        function_tail = (lower[last_tool_header + len("<tool_call>"):].lstrip()
+                         if last_tool_header >= 0 else "")
+        partial_function = (bool(function_tail)
+                            and "<function".startswith(function_tail)
+                            and not function_starts)
         marker_count = len(list(_iter_tool_call_starts(self._text)))
         completed_count = len(parsed.get("tool_calls") or [])
         if think_open or partial_think or partial_think_close:
             safe_content = ""
-        elif (marker_count > completed_count) or partial_tool:
+        elif (marker_count > completed_count) or partial_tool or partial_function:
             marker = content.lower().find("<tool")
             safe_content = content[:max(0, marker)] if marker >= 0 else ""
         if len(safe_content) > self._emitted_content:
             events.append({"type": "content", "delta": safe_content[self._emitted_content:]})
             self._emitted_content = len(safe_content)
         calls = parsed.get("tool_calls") or []
-        xml_count = len(list(_iter_tool_function_starts(self._text)))
+        xml_count = len(function_starts)
         for index in range(self._emitted_calls, len(calls)):
             if index < xml_count:
                 continue
