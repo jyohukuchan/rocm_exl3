@@ -94,6 +94,31 @@ and terminates ONLY its real child processes with bounded waits -- never
 the in-process pseudo rank); JSON is written in a finally block; no
 os._exit, and nothing outside this process tree is ever timed out or killed.
 
+--capacity-only separates memory CAPACITY from actual long-context inference:
+it keeps the frozen-prompt capacity gate, the target+draft cache construction,
+the loads and the existing placement / actual-cache / Engram audits, then stops
+BEFORE any Generator is constructed -- no prefill/decode, no power-phase
+transitions, no runs/groups. The report carries capacity_only true,
+validation_only true and complete true (exit code still reflects cleanup
+failures: the shared finally drains workers and unloads models, and a cleanup
+error flips complete to false). Per-rank torch facts are recorded as LOAD-only
+allocator high-water marks (weights + KV caches + recurrent state as loaded),
+NEVER disguised as post-inference peaks, in report["capacity_report"] for TP
+and LS alike: allocation evidence only, not a usable-runtime-context claim.
+
+Batched throughput: every group additionally reports group_throughput_metrics
+derived from the per-job delivery events the loop already sampled (pure CPU,
+no extra GPU synchronization): a common decode window from max(first delivery)
+to min(last delivery), cumulative tokens counted with a step function at each
+boundary, aggregate tps = counted tokens / window duration (deliberately NOT a
+mean or sum of per-job tps), per-job window tps, summed input tokens, the
+engine-measured time_prefill semantics from job.py (first-prefill-start ->
+first token, so max(time_prefill) approximates the prefill makespan, not a
+wall-clock phase boundary), engine TTFT min/max, end-to-end total outputs /
+group wall, and cross-job medians of the per-job engine/observed decode tps.
+Groups bind to absolute report row indices (run_indices) beside the hashes.
+An invalid overlap yields null window fields, never bogus rates.
+
 Usage (native stack via PYTHONPATH, root starts the privileged power helper):
     python3 -m rocm_tools.rdna2.tp_run -m MODEL --prompts-json P.json \
         --execution tp --mode mtp --power-socket SOCK --output OUT.json
@@ -108,6 +133,7 @@ import math
 import os
 import re
 import resource
+import statistics
 import sys
 import time
 import types
@@ -189,6 +215,10 @@ def build_parser():
     ap.add_argument("--validate-finite", action="store_true",
                     help="explicit isfinite checks (parent logits + per-rank forwards); validation-only, "
                          "never steady performance")
+    ap.add_argument("--capacity-only", action="store_true", default=False,
+                    help="load target+draft caches, run the existing placement/actual-cache/Engram "
+                         "audits, record LOAD-only allocator facts, then exit BEFORE any Generator or "
+                         "inference: allocation evidence only, never a usable-runtime-context claim")
     return ap
 
 
@@ -1131,15 +1161,276 @@ def aggregate_tp_audit(rank_records, expected_devices, output_device, parent_pid
 
 
 # ---------------------------------------------------------------------------
+# --capacity-only evidence: a PURE dict transform over what the load-time
+# audits already captured (unit-testable without the native stack).
+# ---------------------------------------------------------------------------
+
+LOAD_ONLY_SEMANTICS = (
+    "allocator bytes sampled at LOAD time by the capacity probe; no Generator and no "
+    "inference ever ran, so peak_bytes is the weight+cache load high-water mark, never a "
+    "post-inference peak")
+
+
+def build_capacity_report(args, prompts, report):
+    """Assemble the --capacity-only allocation-evidence section for TP and LS.
+
+    The run reached here only after the frozen-prompt capacity gate, the
+    target+draft cache construction, both loads and the existing
+    placement / actual-cache / Engram audits passed -- those verdicts live in
+    their normal report sections and are referenced here. Every allocator
+    fact is labelled LOAD-only: this is allocation evidence, NOT a claim of
+    usable runtime-context capacity (long-context inference, post-inference
+    peaks and throughput were never measured). Group token math re-states the
+    prompt-capacity requirement (already enforced fail-closed before any load;
+    this never bypasses it)."""
+    groups = []
+    for gi in range(0, len(prompts), args.batch_size):
+        chunk = prompts[gi:gi + args.batch_size]
+        needed = required_cache_tokens(chunk, args.new_tokens, args.draft_tokens)
+        groups.append({"group": gi // args.batch_size, "jobs": len(chunk),
+                       "required_cache_tokens": needed,
+                       "cache_token_capacity": args.cache_tokens,
+                       "fits": needed <= args.cache_tokens})
+
+    per_rank = []
+    audit = report.get("tp_audit")
+    if audit:
+        # TP: each worker self-reported its OWN allocator state during the
+        # post-load audit (the parent cannot see a spawned rank's context).
+        for r in (audit.get("memory") or {}).get("torch_by_rank") or []:
+            entry = dict(r)
+            entry["scope"] = "tp_worker_self_reported"
+            entry["semantics"] = LOAD_ONLY_SEMANTICS
+            per_rank.append(entry)
+    for dev, snap in sorted((report.get("memory_snapshot") or {}).items()):
+        entry = dict(snap)
+        entry["device"] = dev
+        entry["scope"] = "parent_process_only"
+        entry["semantics"] = LOAD_ONLY_SEMANTICS
+        per_rank.append(entry)
+
+    return {
+        "capacity_only": True,
+        "evidence": "load_allocation_only",
+        "execution_actual": (report.get("execution") or {}).get("actual"),
+        "requested": {
+            "cache_tokens": args.cache_tokens,
+            "batch_size": args.batch_size,
+            "new_tokens": args.new_tokens,
+            "draft_tokens": args.draft_tokens,
+            "max_chunk_size": args.max_chunk_size,
+            "load_budget_gib_per_device": list(args.use_per_device),
+            "cache": requested_cache(args),
+        },
+        "prompt_capacity_groups": groups,
+        "cache_capacity": report.get("cache_capacity"),
+        "mtp_residency": report.get("mtp_residency"),
+        "allocator_peak_semantics": LOAD_ONLY_SEMANTICS,
+        "per_rank_load_memory": per_rank,
+        "parent_allocated_after_draft_load_bytes": report.get("allocated_bytes_after_draft_load"),
+        "parent_allocated_after_load_bytes": report.get("allocated_bytes_after_load"),
+        "device_memory_snapshot": report.get("memory_snapshot"),
+        "audits": {
+            "tp_audit_ok": audit.get("ok") if audit else None,
+            "placement_ok": (report.get("placement") or {}).get("ok"),
+            "ngram_ok": (report.get("ngram") or {}).get("ok"),
+            "cache_runtime_audit_observed": (report.get("cache") or {}).get("observed") is not None,
+        },
+        "not_claimed": (
+            "usable runtime-context capacity: no Generator, prefill or decode ran, so "
+            "nothing here proves long-context inference works at these cache sizes; read "
+            "as allocation evidence only"),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Group throughput from the per-job delivery events / engine rows the run
+# loop ALREADY recorded. Pure CPU math (stdlib only, no GPU synchronization,
+# no new engine calls); every derived rate is a token COUNT over a measured
+# interval, never an average or sum of individual tps figures.
+# ---------------------------------------------------------------------------
+
+def _num(v):
+    """A genuinely measured finite number (bools are never arithmetic evidence)."""
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
+
+
+def _events_valid(events):
+    """Nonempty [[t_s, cumulative_tokens], ...] with numeric fields and
+    nondecreasing sample times -- the exact shape the run loop appends."""
+    if not isinstance(events, list) or not events:
+        return False
+    prev = None
+    for e in events:
+        if not (isinstance(e, (list, tuple)) and len(e) == 2):
+            return False
+        if not _num(e[0]) or not _num(e[1]):
+            return False
+        if prev is not None and e[0] < prev:
+            return False
+        prev = e[0]
+    return True
+
+
+def _cum_at(events, boundary):
+    """Step-function delivered count: the cumulative value of the LAST event
+    with t <= boundary (0 if none). An MTP multi-token burst counts wholly at
+    its sample instant -- it is never amortized across time."""
+    val = 0
+    for t, cum in events:
+        if t <= boundary:
+            val = cum
+        else:
+            break
+    return val
+
+
+def group_throughput_metrics(rows, *, wall_s=None, run_index_offset=0):
+    """One batch group's batched-throughput metrics over the report rows of
+    exactly that group (bound to ABSOLUTE indices in report["runs"] through
+    run_index_offset -- hashes alone cannot address rows once repeats run).
+
+    Common decode window: start = max(first delivery per job), end = min(last
+    delivery per job) -- the interval over which EVERY job was demonstrably
+    still streaming. Delivered tokens are the cumulative step-function counts
+    at <= each boundary; aggregate_decode_tps = counted token delta / window
+    duration. Per-job rates are never averaged or summed into the aggregate.
+    For a batch of one the window collapses onto the job's own first/last
+    delivery, so aggregate_decode_tps == that row's burst-aware
+    delivery_rate (= observed_decode_tps): batch1 equivalence is structural.
+
+    An invalid overlap (no rows, missing/garbage events, or end <= start,
+    e.g. a job whose deliveries all land after every other job finished)
+    yields null window fields plus an overlap_note instead of bogus rates;
+    the engine-measured fields are independent.
+
+    Engine semantics (job.py, inspected): time_prefill spans the job's FIRST
+    PREFILL START to its first token -- it excludes queue wait, so
+    prefill_makespan_s_engine = max(time_prefill) approximates the group
+    prefill makespan from per-job prefill starts as ENGINE-MEASURED time, not
+    a wall-clock phase boundary; time_generate spans first token to last
+    token. Per-job decode medians are medians ACROSS jobs of
+    (new_tokens-1)/time_generate and of burst-aware delivery_rate -- central
+    tendency only, never a group aggregate. end_to_end divides summed
+    new_tokens by the harness group wall (prefill + decode + overhead)."""
+    jobs, invalid_rows = [], []
+    for pos, row in enumerate(rows):
+        ev = row.get("delivery_events")
+        if not _events_valid(ev):
+            invalid_rows.append(run_index_offset + pos)
+            ev = []
+        jobs.append({"run_index": run_index_offset + pos,
+                     "ids_sha256": row.get("ids_sha256"),
+                     "events": ev,
+                     "new_tokens": row.get("new_tokens"),
+                     "prompt_tokens": row.get("prompt_tokens"),
+                     "time_prefill": row.get("time_prefill"),
+                     "time_generate": row.get("time_generate")})
+
+    w_start = w_end = w_dur = None
+    overlap_note = None
+    if not jobs:
+        overlap_note = "no rows in group"
+    elif invalid_rows:
+        overlap_note = (f"rows {invalid_rows} recorded no/invalid delivery events; the common "
+                        "window is undefined, rates stay null")
+    else:
+        start = max(j["events"][0][0] for j in jobs)
+        end = min(j["events"][-1][0] for j in jobs)
+        if end <= start:
+            overlap_note = (f"invalid common decode overlap: max(first delivery)={start} >= "
+                            f"min(last delivery)={end}; refusing to emit window rates")
+        else:
+            w_start, w_end, w_dur = start, end, end - start
+
+    per_job_window = []
+    for j in jobs:
+        toks = rate = None
+        if w_dur is not None:
+            toks = _cum_at(j["events"], w_end) - _cum_at(j["events"], w_start)
+            rate = toks / w_dur
+        per_job_window.append({"run_index": j["run_index"], "ids_sha256": j["ids_sha256"],
+                               "tokens_in_window": toks, "tps": rate})
+    at_start = sum(_cum_at(j["events"], w_start) for j in jobs) if w_dur is not None else None
+    at_end = sum(_cum_at(j["events"], w_end) for j in jobs) if w_dur is not None else None
+
+    prompt_vals = [j["prompt_tokens"] for j in jobs]
+    input_total = sum(prompt_vals) if prompt_vals and all(_num(v) for v in prompt_vals) else None
+    out_vals = [j["new_tokens"] for j in jobs]
+    total_out = sum(out_vals) if out_vals and all(_num(v) for v in out_vals) else None
+    e2e_tps = total_out / wall_s if (total_out is not None and _num(wall_s) and wall_s > 0) else None
+
+    # Engine TTFT / prefill makespan (see docstring for the exact semantics).
+    prefill_vals = [j["time_prefill"] for j in jobs if _num(j["time_prefill"])]
+    ttft = {"min": min(prefill_vals) if prefill_vals else None,
+            "max": max(prefill_vals) if prefill_vals else None,
+            "jobs": len(prefill_vals)}
+    makespan = max(prefill_vals) if prefill_vals and len(prefill_vals) == len(jobs) else None
+    firsts = [j["events"][0][0] for j in jobs if j["events"]]
+
+    per_job_rates, eng_rates, obs_rates = [], [], []
+    for j in jobs:
+        nt, tg = j["new_tokens"], j["time_generate"]
+        eng = (nt - 1) / tg if _num(nt) and _num(tg) and tg > 0 and nt >= 1 else None
+        obs = delivery_rate(j["events"]) if j["events"] and len(j["events"]) >= 2 else None
+        if eng is not None:
+            eng_rates.append(eng)
+        if obs is not None:
+            obs_rates.append(obs)
+        per_job_rates.append({"run_index": j["run_index"], "ids_sha256": j["ids_sha256"],
+                              "engine_tps": eng, "observed_tps": obs})
+    median_note = None
+    if jobs and (len(eng_rates) < len(jobs) or len(obs_rates) < len(jobs)):
+        median_note = (f"engine median over {len(eng_rates)}/{len(jobs)} jobs, observed median "
+                       f"over {len(obs_rates)}/{len(jobs)} jobs; jobs without usable timing are "
+                       "excluded, never imputed")
+
+    return {
+        "jobs": len(jobs),
+        "run_indices": [j["run_index"] for j in jobs],
+        "overlap_valid": w_dur is not None,
+        "overlap_note": overlap_note,
+        "common_window": {
+            "start_s": w_start, "end_s": w_end, "duration_s": w_dur,
+            "delivered_at_start": at_start, "delivered_at_end": at_end,
+            "token_delta": (at_end - at_start) if at_start is not None else None,
+            "aggregate_decode_tps": ((at_end - at_start) / w_dur) if w_dur is not None else None,
+        },
+        "per_job_window_tps": per_job_window,
+        "input_tokens_total": input_total,
+        "prefill_makespan_s_engine": makespan,
+        "ttft_engine_s": ttft,
+        "first_delivery_s": {"min": min(firsts) if firsts else None,
+                             "max": max(firsts) if firsts else None},
+        "end_to_end": {"total_new_tokens": total_out, "wall_s": wall_s, "aggregate_tps": e2e_tps},
+        "per_job_decode_tps": per_job_rates,
+        "decode_median_tps": {"engine": statistics.median(eng_rates) if eng_rates else None,
+                              "observed": statistics.median(obs_rates) if obs_rates else None,
+                              "engine_jobs": len(eng_rates), "observed_jobs": len(obs_rates),
+                              "note": median_note},
+    }
+
+
+# ---------------------------------------------------------------------------
 # GPU-side run
 # ---------------------------------------------------------------------------
+
+class _CapacityProbeComplete(Exception):
+    """--capacity-only control flow, raised after the load-time audits instead
+    of constructing a Generator. NOT an error: the dedicated handler leaves the
+    report marked complete, and the shared finally block still drains workers
+    and unloads models -- a cleanup failure flips complete and forces exit 1."""
+
 
 def run(args, prompts):
     """TP-vs-LS evaluation; returns the exit code (0 only when fully complete).
 
     Never calls os._exit; the report JSON is written even on failure, workers
     are drained, models unload via finally, and the power context restores on
-    every exit path."""
+    every exit path. With --capacity-only the run stops after the load-time
+    placement/actual-cache/Engram audits: no Generator, no inference, no power
+    phase, no runs/groups -- only allocation evidence (see
+    build_capacity_report)."""
     import torch
     import exllamav3_ext
     from exllamav3 import Model, Config, Cache, Tokenizer, Generator, Job
@@ -1151,7 +1442,8 @@ def run(args, prompts):
     from rocm_tools.rdna2.common import model_fingerprint, git_commit
 
     native_path = Path(exllamav3_ext.__file__).resolve()
-    report = {"complete": False, "validation_only": args.validate_finite,
+    report = {"complete": False, "validation_only": bool(args.validate_finite or args.capacity_only),
+              "capacity_only": bool(args.capacity_only),
               "cli": {k: v for k, v in vars(args).items()},
               "cache": {"requested": requested_cache(args), "observed": None, "notes": []},
               "execution": {"requested": args.execution,
@@ -1265,7 +1557,10 @@ def run(args, prompts):
                                    "expected exactly [0, 1] -- a single-rank or duplicated "
                                    "layout must never be labelled TP2")
             finite_installs = None
-            if args.validate_finite:
+            if args.validate_finite and not args.capacity_only:
+                # --capacity-only never runs a forward, so a hook could only ever
+                # report zero checks: skipped, and the artifact says so via
+                # capacity_only=true, rather than installing an inert wrapper.
                 finite_installs = model.tp_worker_dispatch_wait_multi(
                     expected, tp_install_finite_hook, ())
             rank_records = model.tp_worker_dispatch_wait_multi(expected, tp_audit_rank, ())
@@ -1346,6 +1641,24 @@ def run(args, prompts):
                 raise RuntimeError(f"cache runtime audit failed: {cache_probs}")
         report["memory_snapshot"] = multi_gpu.device_memory_snapshot(torch, [0, 1])
 
+        if args.capacity_only:
+            # Allocation evidence ONLY: the frozen-prompt capacity gate, both
+            # cache constructions, the loads and the full placement/actual-
+            # cache/Engram audit above all ran exactly as in a measured run --
+            # then STOP. No Generator is constructed, no prefill/decode runs,
+            # no power phase engages, and no runs/groups exist to carry speed
+            # fields. The allocator facts below are LOAD-time samples, never
+            # post-inference peaks. finally cleanup still runs; a cleanup
+            # failure flips complete and the exit code.
+            cap = {"main": {"num_slots": cache.num_slots, "max_num_tokens": cache.max_num_tokens,
+                            "max_history": cache.max_history}}
+            if dcache is not None:
+                cap["draft"] = {"num_slots": dcache.num_slots, "max_num_tokens": dcache.max_num_tokens}
+            report["cache_capacity"] = cap
+            report["capacity_report"] = build_capacity_report(args, prompts, report)
+            report["complete"] = True
+            raise _CapacityProbeComplete()
+
         kwargs = dict(model=model, cache=cache, tokenizer=tok, max_batch_size=args.batch_size,
                       max_chunk_size=args.max_chunk_size, ngram_match_min=0,
                       record_draft_stats=True)
@@ -1419,6 +1732,7 @@ def run(args, prompts):
                             if item.get("eos"):
                                 s["last"] = item
                 wall = time.perf_counter() - t0
+                row_start = len(report["runs"])       # absolute index of this group's first row
                 row_refs = []
                 for s in states:
                     p, last, ev = s["prompt"], s["last"], s["events"]
@@ -1454,7 +1768,13 @@ def run(args, prompts):
                                          "jobs": len(states), "wall_s": wall,
                                          "wall_start_unix_s": unix0,
                                          "total_new_tokens": len(states) * args.new_tokens,
-                                         "ids_sha256": row_refs})
+                                         "ids_sha256": row_refs,
+                                         # ABSOLUTE report["runs"] indices bind every metric below
+                                         # to actual rows, not only to prompt hashes.
+                                         "run_indices": list(range(row_start, len(report["runs"]))),
+                                         "throughput": group_throughput_metrics(
+                                             report["runs"][row_start:], wall_s=wall,
+                                             run_index_offset=row_start)})
         if args.execution == "tp":
             # AFTER inference, BEFORE unload: the only real per-rank peaks/PSS
             # (parent allocator stats cannot see a spawned rank's context) and
@@ -1510,6 +1830,13 @@ def run(args, prompts):
         report["power_policy"] = policy.summary()
         report["finite_forward_counts"] = forward_checks if args.validate_finite else None
         report["complete"] = True
+    except _CapacityProbeComplete:
+        # Control flow, not a failure: capacity_only/validation_only/complete
+        # and capacity_report are already set; the normal report keys stay at
+        # their init values (runs/groups empty -- no speed fields were ever
+        # produced). finally still owns cleanup, and cleanup_errors there
+        # override complete so the return code reflects a failed teardown.
+        pass
     except BaseException as exc:
         report["error"] = f"{type(exc).__name__}: {exc}"
         print(f"FAILED: {report['error']}", file=sys.stderr)

@@ -18,7 +18,14 @@ rejection, tableless no-op, per-PID memory handled once, pseudo output rank
 fake engine stack built by test_qwen_mtp_run_cpu (load kwargs, Cache kwargs
 for target+draft, dispatch
 sequence, finite-hook install/collect ordering, fail-closed audits, partial
-init worker drain, cache-hit/short-output rejection, power-context restore).
+init worker drain, cache-hit/short-output rejection, power-context restore),
+the --capacity-only probe (flag default, the run()-level stop BEFORE any
+Generator with the full load-time audit retained for TP and LS, load-only
+allocator labelling, cleanup-failure exit code, the prompt-capacity gate
+never bypassed) and group_throughput_metrics (burst-aware staggered
+common-window step-function counting, invalid-overlap nulls, batch1
+equivalence to delivery_rate, engine prefill/TTFT/median fields, absolute
+run-index binding).
 
 Gate:
     python3 -m pytest -q -p no:cacheprovider rocm_tools/rdna2/tests/test_tp_run_cpu.py
@@ -32,6 +39,7 @@ import io
 import json
 import math
 import os
+import statistics
 import sys
 import tempfile
 import types
@@ -261,6 +269,7 @@ class ReuseAndParserTests(unittest.TestCase):
         self.assertEqual(a.use_per_device, [28, 28])
         self.assertFalse(a.dynamic_draft)
         self.assertFalse(a.validate_finite)
+        self.assertFalse(a.capacity_only)          # --capacity-only defaults FALSE
         self.assertEqual(a.draft_confidence, 0.4)
         # K5/V4 quant KV is the DEFAULT selected policy; FP16 is never a default.
         self.assertEqual((a.cache_k_bits, a.cache_v_bits), (5, 4))
@@ -269,6 +278,15 @@ class ReuseAndParserTests(unittest.TestCase):
         self.assertEqual(req["policy"], "quant")
         self.assertEqual(req["layer_type"], "CacheLayer_quant")
         tr.validate_args(a)
+
+    def test_capacity_only_flag_parses_and_validates(self):
+        b = tr.build_parser().parse_args(self.REQUIRED + ["--capacity-only"])
+        self.assertTrue(b.capacity_only)
+        tr.validate_args(b)                                   # no new contradiction to reject
+        c = tr.build_parser().parse_args(
+            self.REQUIRED + ["--capacity-only", "--validate-finite", "--execution", "ls"])
+        self.assertTrue(c.capacity_only and c.validate_finite)
+        tr.validate_args(c)
 
     def test_cache_bits_range_validation(self):
         base = tr.build_parser().parse_args(self.REQUIRED)
@@ -1086,6 +1104,227 @@ class AggregateTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Group throughput metrics: PURE math over recorded per-job rows. Staggered
+# bursts are counted with a step function inside the common decode window
+# [max(first delivery), min(last delivery)]; the aggregate is counted tokens
+# / duration, NEVER a mean or sum of per-job rates; invalid overlap yields
+# nulls instead of bogus rates.
+# ---------------------------------------------------------------------------
+
+def mrow(sha, events, *, new_tokens, prompt_tokens, time_prefill=0.2, time_generate=2.0):
+    """A finished report["runs"] row carrying exactly what the metric helper
+    derives from (delivery events + engine RESULT_KEYS fields)."""
+    return {"ids_sha256": sha, "delivery_events": events, "new_tokens": new_tokens,
+            "prompt_tokens": prompt_tokens, "time_prefill": time_prefill,
+            "time_generate": time_generate}
+
+
+class GroupThroughputMetricTests(unittest.TestCase):
+    # A: 0.05->3, 0.35->6, 0.55->9.  B: 0.10->2, 0.30->5, 0.50->8, 0.70->10.
+    A = mrow("A", [[0.05, 3], [0.35, 6], [0.55, 9]], new_tokens=9, prompt_tokens=5,
+             time_prefill=0.2, time_generate=2.0)
+    B = mrow("B", [[0.10, 2], [0.30, 5], [0.50, 8], [0.70, 10]], new_tokens=10,
+             prompt_tokens=6, time_prefill=0.3, time_generate=2.2)
+
+    def test_staggered_bursts_count_step_function_over_common_window(self):
+        m = tr.group_throughput_metrics([self.A, self.B], wall_s=1.5, run_index_offset=3)
+        w = m["common_window"]
+        self.assertTrue(m["overlap_valid"])
+        self.assertIsNone(m["overlap_note"])
+        # start = max(0.05, 0.10) = 0.10; end = min(0.55, 0.70) = 0.55
+        self.assertAlmostEqual(w["start_s"], 0.10)
+        self.assertAlmostEqual(w["end_s"], 0.55)
+        self.assertAlmostEqual(w["duration_s"], 0.45)
+        # step function at <= boundaries: A(0.10)=3 A(0.55)=9; B(0.10)=2 B(0.55)=8
+        self.assertEqual(w["delivered_at_start"], 5)
+        self.assertEqual(w["delivered_at_end"], 17)
+        self.assertEqual(w["token_delta"], 12)
+        self.assertAlmostEqual(w["aggregate_decode_tps"], 12 / 0.45)
+        # counted, NOT the sum of individual burst-aware rates:
+        rates = tr.delivery_rate(self.A["delivery_events"]) + \
+            tr.delivery_rate(self.B["delivery_events"])
+        self.assertGreater(w["aggregate_decode_tps"], rates)
+        # per-job window tps (6 tokens each inside [0.10, 0.55])
+        pj = m["per_job_window_tps"]
+        self.assertEqual([p["tokens_in_window"] for p in pj], [6, 6])
+        self.assertEqual([p["run_index"] for p in pj], [3, 4])          # bound to ROW INDICES
+        self.assertEqual([p["ids_sha256"] for p in pj], ["A", "B"])
+        for p in pj:
+            self.assertAlmostEqual(p["tps"], 6 / 0.45)
+        self.assertEqual(m["run_indices"], [3, 4])
+        self.assertEqual(m["jobs"], 2)
+
+    def test_engine_measured_fields_prefill_ttft_inputs_e2e(self):
+        m = tr.group_throughput_metrics([self.A, self.B], wall_s=1.5)
+        self.assertEqual(m["input_tokens_total"], 11)                  # summed prompt_tokens
+        # max(time_prefill): engine-measured makespan APPROXIMATION, not wall
+        self.assertEqual(m["prefill_makespan_s_engine"], 0.3)
+        self.assertEqual(m["ttft_engine_s"], {"min": 0.2, "max": 0.3, "jobs": 2})
+        # harness-observed first deliveries, relative to the group wall t0
+        self.assertEqual(m["first_delivery_s"], {"min": 0.05, "max": 0.10})
+        self.assertEqual(m["end_to_end"]["total_new_tokens"], 19)      # summed engine new_tokens
+        self.assertEqual(m["end_to_end"]["wall_s"], 1.5)
+        self.assertAlmostEqual(m["end_to_end"]["aggregate_tps"], 19 / 1.5)
+        eng = [(9 - 1) / 2.0, (10 - 1) / 2.2]
+        obs = [tr.delivery_rate(self.A["delivery_events"]), tr.delivery_rate(self.B["delivery_events"])]
+        self.assertEqual([p["engine_tps"] for p in m["per_job_decode_tps"]], eng)
+        self.assertEqual([p["observed_tps"] for p in m["per_job_decode_tps"]], obs)
+        self.assertAlmostEqual(m["decode_median_tps"]["engine"], statistics.median(eng))
+        self.assertAlmostEqual(m["decode_median_tps"]["observed"], statistics.median(obs))
+        self.assertEqual((m["decode_median_tps"]["engine_jobs"],
+                          m["decode_median_tps"]["observed_jobs"]), (2, 2))
+        self.assertIsNone(m["decode_median_tps"]["note"])
+
+    def test_no_overlap_returns_null_window_fields_not_bogus_rates(self):
+        late = mrow("C", [[0.60, 2], [0.80, 6]], new_tokens=6, prompt_tokens=4,
+                    time_prefill=0.1, time_generate=1.0)              # C starts AFTER A ends
+        m = tr.group_throughput_metrics([self.A, late], wall_s=1.0)
+        self.assertFalse(m["overlap_valid"])
+        self.assertIn("invalid common decode overlap", m["overlap_note"])
+        w = m["common_window"]
+        for key in ("start_s", "end_s", "duration_s", "delivered_at_start", "delivered_at_end",
+                    "token_delta", "aggregate_decode_tps"):
+            self.assertIsNone(w[key], key)
+        self.assertTrue(all(p["tps"] is None and p["tokens_in_window"] is None
+                            for p in m["per_job_window_tps"]))
+        # engine-measured fields are independent of the overlap and survive
+        self.assertEqual(m["input_tokens_total"], 9)
+        self.assertEqual(m["prefill_makespan_s_engine"], 0.2)
+        self.assertAlmostEqual(m["end_to_end"]["aggregate_tps"], 15 / 1.0)
+        self.assertEqual(m["decode_median_tps"]["engine_jobs"], 2)
+
+    def test_batch1_equivalence_aggregate_equals_delivery_rate(self):
+        m = tr.group_throughput_metrics([self.A], wall_s=1.0, run_index_offset=7)
+        self.assertTrue(m["overlap_valid"])
+        self.assertEqual(m["run_indices"], [7])
+        w = m["common_window"]
+        self.assertAlmostEqual(w["start_s"], 0.05)
+        self.assertAlmostEqual(w["end_s"], 0.55)
+        self.assertEqual(w["token_delta"], 6)                          # 9 - 3 (burst-aware)
+        self.assertAlmostEqual(w["aggregate_decode_tps"], tr.delivery_rate(self.A["delivery_events"]))
+        self.assertAlmostEqual(m["per_job_window_tps"][0]["tps"], w["aggregate_decode_tps"])
+
+    def test_single_event_job_and_garbage_rows_fail_to_nulls(self):
+        one = mrow("D", [[0.1, 9]], new_tokens=9, prompt_tokens=1, time_generate=2.0)
+        m = tr.group_throughput_metrics([one], wall_s=1.0)
+        self.assertFalse(m["overlap_valid"])                           # zero-duration window
+        self.assertIn("max(first delivery)", m["overlap_note"])
+        self.assertIsNone(m["per_job_decode_tps"][0]["observed_tps"])  # no interval to divide
+        self.assertEqual(m["decode_median_tps"]["engine"], 4.0)        # engine value survives
+        self.assertIn("excluded, never imputed", m["decode_median_tps"]["note"])
+        bad = tr.group_throughput_metrics(
+            [mrow("X", [[0.1, "z"]], new_tokens=2, prompt_tokens=1)], wall_s=1.0)
+        self.assertFalse(bad["overlap_valid"])
+        self.assertIn("invalid delivery events", bad["overlap_note"])
+        empty = tr.group_throughput_metrics([], wall_s=None)
+        self.assertEqual(empty["jobs"], 0)
+        self.assertEqual(empty["overlap_note"], "no rows in group")
+        self.assertIsNone(empty["common_window"]["aggregate_decode_tps"])
+        self.assertIsNone(empty["input_tokens_total"])
+        self.assertIsNone(empty["end_to_end"]["aggregate_tps"])
+
+    def test_partial_engine_timing_never_imputes_makespan(self):
+        missing = mrow("E", [[0.1, 2], [0.5, 7]], new_tokens=7, prompt_tokens=5,
+                       time_prefill=None, time_generate=1.0)
+        m = tr.group_throughput_metrics([self.A, missing], wall_s=2.0)
+        # one job lacks time_prefill -> the group MAX would UNDERSTATE: null, not partial
+        self.assertIsNone(m["prefill_makespan_s_engine"])
+        self.assertEqual(m["ttft_engine_s"], {"min": 0.2, "max": 0.2, "jobs": 1})
+        # per-job sums survive because all rows carry the count fields
+        self.assertEqual(m["input_tokens_total"], 10)
+        self.assertEqual(m["end_to_end"]["total_new_tokens"], 16)
+
+    def test_metrics_are_json_serializable(self):
+        m = tr.group_throughput_metrics([self.A, self.B], wall_s=1.5)
+        json.dumps(m)
+
+
+# ---------------------------------------------------------------------------
+# --capacity-only evidence builder: pure dict transform. Every allocator fact
+# must be labelled LOAD-only (no Generator ever ran => never a post-inference
+# peak), and the artifact must state it is allocation evidence, not a usable
+# runtime-context claim. TP and LS alike.
+# ---------------------------------------------------------------------------
+
+class CapacityReportTests(unittest.TestCase):
+    REQUIRED = ["-m", "/models/qwen38", "--prompts-json", "/tmp/p.json", "--execution", "tp",
+                "--mode", "mtp", "--power-socket", "/tmp/s", "--output", "/tmp/o.json",
+                "--capacity-only", "--batch-size", "2", "--cache-tokens", "1024",
+                "--new-tokens", "9"]
+
+    def _args(self):
+        args = tr.build_parser().parse_args(self.REQUIRED)
+        return tr.validate_args(args)
+
+    def _tp_report(self):
+        return {"execution": {"actual": "tp2"},
+                "tp_audit": {"ok": True, "memory": {"torch_by_rank": [
+                    {"device": 0, "pid": 4001, "allocated_bytes": 10,
+                     "peak_bytes": 20, "reserved_bytes": 30},
+                    {"device": 1, "pid": 111, "allocated_bytes": 11,
+                     "peak_bytes": 21, "reserved_bytes": 31}]}},
+                "memory_snapshot": {"cuda:1": {"peak_bytes": 444, "allocated_bytes": 222,
+                                               "reserved_bytes": 666},
+                                    "cuda:0": {"peak_bytes": 222, "allocated_bytes": 111,
+                                               "reserved_bytes": 555}},
+                "cache_capacity": {"main": {"num_slots": 2, "max_num_tokens": 1024,
+                                            "max_history": 4},
+                                   "draft": {"num_slots": 2, "max_num_tokens": 1024}},
+                "cache": {"requested": {}, "observed": {"target": {}, "draft": {}}},
+                "allocated_bytes_after_draft_load": {"cuda:0": 0, "cuda:1": 5},
+                "allocated_bytes_after_load": {"cuda:0": 7, "cuda:1": 9},
+                "mtp_residency": {"component_present": True, "resident": True}}
+
+    def test_tp_capacity_report_is_labelled_load_only_evidence(self):
+        cr = tr.build_capacity_report(self._args(), [{"ids": list(range(5))},
+                                                     {"ids": list(range(6))}], self._tp_report())
+        json.dumps(cr)
+        self.assertTrue(cr["capacity_only"])
+        self.assertEqual(cr["evidence"], "load_allocation_only")
+        self.assertEqual(cr["execution_actual"], "tp2")
+        # every per-rank fact is a LOAD-time sample, explicitly scoped and labelled
+        self.assertEqual(len(cr["per_rank_load_memory"]), 4)
+        scopes = [r["scope"] for r in cr["per_rank_load_memory"]]
+        self.assertEqual(scopes, ["tp_worker_self_reported", "tp_worker_self_reported",
+                                  "parent_process_only", "parent_process_only"])
+        for r in cr["per_rank_load_memory"]:
+            self.assertIn("sampled at LOAD time", r["semantics"])
+            self.assertIn("never a post-inference peak", r["semantics"])
+        self.assertIn("never a post-inference peak", cr["allocator_peak_semantics"])
+        self.assertIn("allocation evidence", cr["not_claimed"])
+        self.assertIn("usable runtime-context", cr["not_claimed"])
+
+    def test_prompt_capacity_recomputed_not_bypassed(self):
+        # 5+9+4 -> 256 rounded; 6+9+4 -> 256 rounded; group needs 512 of 1024
+        cr = tr.build_capacity_report(self._args(), [{"ids": list(range(5))},
+                                                     {"ids": list(range(6))}], self._tp_report())
+        self.assertEqual(cr["prompt_capacity_groups"],
+                         [{"group": 0, "jobs": 2, "required_cache_tokens": 512,
+                           "cache_token_capacity": 1024, "fits": True}])
+        self.assertEqual(cr["cache_capacity"]["draft"],
+                         {"num_slots": 2, "max_num_tokens": 1024})
+        self.assertEqual(cr["requested"]["cache"]["policy"], "quant")
+        self.assertEqual((cr["requested"]["cache"]["k_bits"],
+                          cr["requested"]["cache"]["v_bits"]), (5, 4))
+
+    def test_ls_capacity_report_exposes_parent_scoped_facts(self):
+        argv = list(self.REQUIRED)
+        argv[argv.index("tp")] = "ls"                      # the --execution VALUE only
+        args = tr.build_parser().parse_args(argv)
+        ls_report = {"execution": {"actual": "layer_split"},
+                     "memory_snapshot": {"cuda:0": {"peak_bytes": 1, "allocated_bytes": 2,
+                                                    "reserved_bytes": 3}},
+                     "placement": {"ok": True}, "ngram": {"ok": True},
+                     "cache": {"observed": {"target": {}, "draft": {}}}}
+        cr = tr.build_capacity_report(tr.validate_args(args), [{"ids": [1]}], ls_report)
+        self.assertIsNone(cr["audits"]["tp_audit_ok"])
+        self.assertTrue(cr["audits"]["placement_ok"] and cr["audits"]["ngram_ok"])
+        self.assertTrue(cr["audits"]["cache_runtime_audit_observed"])
+        self.assertEqual([r["scope"] for r in cr["per_rank_load_memory"]], ["parent_process_only"])
+        self.assertEqual(len(cr["prompt_capacity_groups"]), 1)
+
+
+# ---------------------------------------------------------------------------
 # Fake engine stack for run() dispatch tests: build on the qwen test fakes and
 # extend the Model fake with the TP mixin surface the CLI interrogates.
 # ---------------------------------------------------------------------------
@@ -1718,6 +1957,248 @@ class RunDispatchTests(unittest.TestCase):
             self.assertIn("no silent fallback", rep["error"])
             self.assertIn("CacheLayer_fp16", rep["error"])
             self.assertEqual([e for e in log if e[0] in ("load", "dispatch")], [])
+
+    # -- capacity-only -------------------------------------------------------
+
+    def test_capacity_only_tp_stops_before_generator_after_full_load_audit(self):
+        # Loads + placement/actual-cache/Engram audit run, then STOP: no
+        # Generator, no dispatches past the load-time audit, no power phase,
+        # no runs/groups/speed fields. Exit 0 only because cleanup succeeds.
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "cap_tp.json")
+            code, rep, log = self._case("tp", "mtp", str(Path(td) / "absent.sock"), out,
+                                        extra=["--capacity-only"], dispatch=happy_dispatch())
+            self.assertEqual(code, 0, rep.get("error"))
+            self.assertTrue(rep["complete"] and rep["capacity_only"] and rep["validation_only"])
+            self.assertNotIn("error", rep)                      # control flow, not a failure
+            self.assertEqual(rep["runs"], [])                   # no speed fields, no runs
+            self.assertEqual(rep["groups"], [])
+            for absent in ("generator", "power_policy", "power_rank_syncs",
+                           "tp_final_audit", "finite_forward_counts"):
+                self.assertNotIn(absent, rep)
+            # only the LOAD-time worker audits: no post-inference re-collect
+            self.assertEqual([e[1] for e in log if e[0] == "dispatch"],
+                             ["tp_audit_rank", "tp_cpu_helper_meta"])
+            self.assertEqual([e for e in log if e[0] == "dispatch_single"], [])
+            self.assertTrue(rep["tp_audit"]["ok"])
+            self.assertEqual(rep["cache"]["observed"]["target"]["layers_total"], 2)
+            # allocation evidence section, TP and LS alike
+            cr = rep["capacity_report"]
+            self.assertEqual(cr["evidence"], "load_allocation_only")
+            self.assertTrue(cr["audits"]["tp_audit_ok"])
+            self.assertTrue(cr["audits"]["cache_runtime_audit_observed"])
+            self.assertEqual(cr["cache_capacity"],
+                             {"main": {"num_slots": 1, "max_num_tokens": 1024, "max_history": 4},
+                              "draft": {"num_slots": 1, "max_num_tokens": 1024}})
+            self.assertTrue(cr["mtp_residency"]["resident"])
+            self.assertEqual(cr["prompt_capacity_groups"],
+                             [{"group": 0, "jobs": 1, "required_cache_tokens": 256,
+                               "cache_token_capacity": 1024, "fits": True}])
+            # per-rank allocator facts are labelled LOAD-only (never claimed
+            # as post-inference peaks); worker numbers are the workers' own.
+            workers = [r for r in cr["per_rank_load_memory"]
+                       if r["scope"] == "tp_worker_self_reported"]
+            self.assertEqual({r["device"] for r in workers}, {0, 1})
+            self.assertEqual([r["peak_bytes"] for r in workers], [2 * 10 ** 9, 2 * 10 ** 9])
+            for r in cr["per_rank_load_memory"]:
+                self.assertIn("never a post-inference peak", r["semantics"])
+            self.assertIn("allocation evidence", cr["not_claimed"])
+            # finally-block parent peaks stay honestly parent-only, with no
+            # post-inference rank peaks fabricated (tp_final_audit never ran)
+            self.assertEqual(rep["peak_allocated_bytes"]["scope"], "parent_process_only")
+            self.assertIsNone(rep["peak_allocated_bytes"]["tp_rank_peak_bytes"])
+            # cleanup ran normally and the report was still written
+            self.assertIn(("unload", "mtp"), log)
+            self.assertIn(("unload", "text"), log)
+            self.assertEqual(rep["cleanup_errors"], [])
+            self.assertTrue(Path(out).exists())
+
+    def test_capacity_only_ls_exposes_capacity_report_and_skips_inference(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "cap_ls.json")
+            code, rep, log = self._case("ls", "mtp", str(Path(td) / "absent.sock"), out,
+                                        extra=["--capacity-only"], ngram_tables=True)
+            self.assertEqual(code, 0, rep.get("error"))
+            self.assertTrue(rep["complete"] and rep["capacity_only"] and rep["validation_only"])
+            self.assertEqual(rep["runs"], [])
+            self.assertNotIn("generator", rep)
+            self.assertNotIn("power_policy", rep)
+            self.assertEqual([e for e in log if e[0] in ("dispatch", "dispatch_single", "sync")], [])
+            self.assertTrue(rep["placement"]["ok"] and rep["ngram"]["ok"])
+            # pre-inference residency proof ran (it is part of the load audit)...
+            owner = rep["ngram"]["ram_owners"][NGRAM_SHELL_KEY][0]
+            self.assertTrue(owner["residency"]["all_resident"])
+            # ...but NO post-inference re-probe happened (nothing inferred)
+            self.assertNotIn("residency_post_inference", rep["ngram"])
+            cr = rep["capacity_report"]
+            self.assertEqual(cr["execution_actual"], "layer_split")
+            self.assertTrue(cr["audits"]["placement_ok"] and cr["audits"]["ngram_ok"])
+            self.assertIsNone(cr["audits"]["tp_audit_ok"])
+            self.assertEqual({r["scope"] for r in cr["per_rank_load_memory"]},
+                             {"parent_process_only"})
+            self.assertEqual({r["device"] for r in cr["per_rank_load_memory"]},
+                             {"cuda:0", "cuda:1"})
+            for r in cr["per_rank_load_memory"]:
+                self.assertIn("never a post-inference peak", r["semantics"])
+            self.assertIn(("unload", "text"), log)
+
+    def test_capacity_only_skips_finite_hook_when_no_forward_can_run(self):
+        # --validate-finite gates POST-INFERENCE counters; with --capacity-only
+        # no forward ever runs, so the hook must not be installed (an inert
+        # wrapper would only produce a misleading zero-count artifact).
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "cap_vf.json")
+            code, rep, log = self._case("tp", "mtp", str(Path(td) / "absent.sock"), out,
+                                        extra=["--capacity-only", "--validate-finite"],
+                                        dispatch=happy_dispatch())
+            self.assertEqual(code, 0, rep.get("error"))
+            self.assertTrue(rep["capacity_only"] and rep["validation_only"])
+            self.assertEqual([e[1] for e in log if e[0] == "dispatch"],
+                             ["tp_audit_rank", "tp_cpu_helper_meta"])
+            self.assertIsNone(rep["tp_audit"]["finite_hook_installs"])
+
+    def test_capacity_only_prompt_capacity_gate_is_not_bypassed(self):
+        # The frozen-prompt capacity validation runs BEFORE any load, exactly
+        # as in measured runs: --capacity-only may not probe past it.
+        long_prompt = list(range(1, 501))
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "cap_gate.json")
+            code, rep, log = self._case("tp", "mtp", str(Path(td) / "absent.sock"), out,
+                                        prompts=tr.validate_prompts(
+                                            {"prompts": [entry(long_prompt)]}, 1),
+                                        extra=["--capacity-only", "--cache-tokens", "512"])
+            self.assertEqual(code, 1)
+            self.assertIn("cache tokens", rep["error"])
+            self.assertNotIn("capacity_report", rep)
+            self.assertEqual([e for e in log if e[0] in ("from_config", "load", "dispatch")], [])
+
+    def test_capacity_only_pre_load_failure_keeps_error_reporting(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "cap_fail.json")
+            code, rep, log = self._case("tp", "mtp", str(Path(td) / "absent.sock"), out,
+                                        extra=["--capacity-only"], supports_tp=False,
+                                        dispatch=happy_dispatch())
+            self.assertEqual(code, 1)
+            self.assertIn("supports_tp", rep["error"])
+            self.assertFalse(rep["complete"])
+            self.assertTrue(rep["capacity_only"])               # invocation intent, recorded
+            self.assertNotIn("capacity_report", rep)            # the probe never reached its gate
+            self.assertEqual([e for e in log if e[0] in ("load", "dispatch")], [])
+
+    def test_capacity_only_cleanup_failure_flips_complete_and_exit_code(self):
+        # The finally cleanup MUST still run for the probe, and its failure
+        # MUST override complete=True -> nonzero exit, without disguising the
+        # probe itself as an error.
+        log = []
+        saved, saved_attr, pkg = install_tp_stack(log, dispatch=happy_dispatch())
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                out = str(Path(td) / "cap_clean.json")
+
+                def bad_unload(self):
+                    log.append(("unload", self.component))
+                    raise RuntimeError("injected unload failure")
+
+                sys.modules["exllamav3"].Model.unload = bad_unload
+                args = tr.build_parser().parse_args(
+                    self.BASE + ["--execution", "tp", "--mode", "mtp", "--capacity-only",
+                                 "--power-socket", str(Path(td) / "absent.sock"),
+                                 "--output", out, "--prompts-json", "/unused"])
+                prompts = tr.validate_prompts(
+                    {"prompts": [entry(list(range(1, 6)), language="code", repeat=1)]},
+                    args.batch_size)
+                code = tr.run(args, prompts)
+                rep = json.loads(Path(out).read_text())
+        finally:
+            uninstall_tp_stack(saved, saved_attr, pkg)
+        self.assertEqual(code, 1)
+        self.assertTrue(rep["capacity_only"])
+        self.assertEqual(rep["runs"], [])
+        self.assertIn("capacity_report", rep)                   # evidence survives the bad cleanup
+        self.assertFalse(rep["complete"])                       # cleanup failure wins
+        self.assertNotIn("error", rep)                          # teardown != probe failure
+        joined = " ".join(rep["cleanup_errors"])
+        self.assertIn("unload draft", joined)
+        self.assertIn("unload model", joined)
+        self.assertIn("injected unload failure", joined)
+        self.assertIn(("unload", "text"), log)
+
+    # -- group throughput (common-window) -------------------------------------
+
+    def test_batch2_group_binds_run_indices_and_counts_common_window(self):
+        prompts = tr.validate_prompts({"prompts": [
+            entry(list(range(1, 6)), language="ja", repeat=1),
+            entry(list(range(100, 106)), language="en", repeat=2)]}, 2)
+        with tempfile.TemporaryDirectory() as td:
+            helper = tqmr.FakeHelper(Path(td) / "power.sock")
+            helper.start()
+            try:
+                out = str(Path(td) / "b2.json")
+                code, rep, log = self._case("tp", "mtp", str(Path(td) / "power.sock"), out,
+                                            prompts=prompts, extra=["--batch-size", "2"],
+                                            dispatch=happy_dispatch())
+                self.assertEqual(code, 0, rep.get("error"))
+                self.assertFalse(rep["capacity_only"])
+                grp = rep["groups"][0]
+                # existing keys preserved verbatim
+                for key in ("group", "timed", "jobs", "wall_s", "wall_start_unix_s",
+                            "total_new_tokens", "ids_sha256"):
+                    self.assertIn(key, grp)
+                self.assertEqual(grp["jobs"], 2)
+                # rows are bound to ABSOLUTE report indices, not only hashes
+                self.assertEqual(grp["run_indices"], [0, 1])
+                rows = [rep["runs"][i] for i in grp["run_indices"]]
+                self.assertEqual(grp["ids_sha256"], [r["ids_sha256"] for r in rows])
+                th = grp["throughput"]
+                self.assertTrue(th["overlap_valid"], th["overlap_note"])
+                self.assertEqual(th["run_indices"], [0, 1])
+                ev = [r["delivery_events"] for r in rows]
+                start = max(e[0][0] for e in ev)
+                end = min(e[-1][0] for e in ev)
+                self.assertAlmostEqual(th["common_window"]["start_s"], start)
+                self.assertAlmostEqual(th["common_window"]["end_s"], end)
+                self.assertGreater(th["common_window"]["duration_s"], 0)
+                # lockstep fake engine: every job delivers exactly one token
+                # per iterate; counted delta is (9-3)+(9-3), never (N-1)-style
+                self.assertEqual(th["common_window"]["token_delta"], 12)
+                self.assertAlmostEqual(th["common_window"]["aggregate_decode_tps"],
+                                       12 / th["common_window"]["duration_s"])
+                self.assertEqual([p["tokens_in_window"] for p in th["per_job_window_tps"]], [6, 6])
+                self.assertEqual(th["input_tokens_total"], 5 + 6)
+                self.assertEqual(th["prefill_makespan_s_engine"], 0.2)   # max(time_prefill)
+                self.assertEqual(th["ttft_engine_s"], {"min": 0.2, "max": 0.2, "jobs": 2})
+                self.assertEqual(th["end_to_end"]["total_new_tokens"], 18)
+                self.assertEqual(th["end_to_end"]["wall_s"], grp["wall_s"])
+                self.assertGreater(th["end_to_end"]["aggregate_tps"], 0)
+                self.assertEqual([p["engine_tps"] for p in th["per_job_decode_tps"]], [4.0, 4.0])
+                self.assertEqual(th["decode_median_tps"]["engine"], 4.0)
+                self.assertEqual(th["decode_median_tps"]["engine_jobs"], 2)
+            finally:
+                helper.stop()
+
+    def test_batch1_group_aggregate_equals_burst_aware_delivery_rate(self):
+        with tempfile.TemporaryDirectory() as td:
+            helper = tqmr.FakeHelper(Path(td) / "power.sock")
+            helper.start()
+            try:
+                out = str(Path(td) / "b1.json")
+                code, rep, _ = self._case("tp", "mtp", str(Path(td) / "power.sock"), out,
+                                          dispatch=happy_dispatch())
+                self.assertEqual(code, 0, rep.get("error"))
+                grp = rep["groups"][0]
+                row = rep["runs"][grp["run_indices"][0]]
+                self.assertEqual(grp["run_indices"], [0])
+                th = grp["throughput"]
+                self.assertTrue(th["overlap_valid"])
+                # batch1 equivalence: group aggregate == the row's burst-aware
+                # observed tps == shared delivery_rate over its own events
+                self.assertAlmostEqual(th["common_window"]["aggregate_decode_tps"],
+                                       row["observed_decode_tps"])
+                self.assertAlmostEqual(th["common_window"]["aggregate_decode_tps"],
+                                       tr.delivery_rate(row["delivery_events"]))
+                self.assertEqual(th["common_window"]["token_delta"], 9 - 3)
+            finally:
+                helper.stop()
 
 
 if __name__ == "__main__":
