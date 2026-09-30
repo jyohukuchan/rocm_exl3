@@ -22,9 +22,9 @@
             "output": ["text"]
           },
           "limit": {
-            "context": 32768,
-            "input": 24576,
-            "output": 8192
+            "context": 524288,
+            "input": 491520,
+            "output": 32768
           },
           "compatibility": {
             "reasoningField": "reasoning_content",

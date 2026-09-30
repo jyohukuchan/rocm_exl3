@@ -29,10 +29,17 @@ OpenCode v2.0.12 uses an OpenAI-compatible provider definition. Copy
 [`examples/opencode.jsonc`](../../examples/opencode.jsonc) to a project-level
 `opencode.jsonc`, then change only the local key if the server was started with
 one. The example points to `http://127.0.0.1:3953/v1`, advertises a
-32,768-token context, reserves 24,576 input tokens and 8,192 output tokens, and
+524,288-token context, reserves 491,520 input tokens and 32,768 output tokens, and
 uses `enable_thinking: true` with `reasoning_effort: xhigh`. The original
 OpenCode coding sample was validated with `low`; future coding tasks use `xhigh`.
 Set `enable_thinking: false` for text-only smoke checks.
+
+Match the server allocation to this client configuration with `-cs 524288
+--context-limit 524288 --max-output-tokens 32768`, and use
+`-ctk '{"enable_thinking":true,"reasoning_effort":"xhigh"}'` for the same server
+defaults. The 2026-10-01 batch1 V620 pair check confirmed this cache allocation
+with K5/V4 and short coding/API requests; it did not validate a full 512Ki input.
+The earlier dated OpenCode sample in the validation report used a 32Ki cache.
 
 Start OpenCode from the project containing that configuration:
 
