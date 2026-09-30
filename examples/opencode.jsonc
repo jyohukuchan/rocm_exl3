@@ -1,0 +1,75 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // Start exl3_server with the same key before launching OpenCode.
+  // Replace this placeholder locally; do not commit a real key.
+  "providers": {
+    "rocm-exl3": {
+      "name": "Local EXL3 OpenAI-compatible server",
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "http://127.0.0.1:3953/v1",
+        "apiKey": "replace-with-a-local-key",
+        "timeout": 180000
+      },
+      "models": {
+        "qwen38": {
+          "modelID": "qwen38-local",
+          "name": "Qwen3.8 Flash Next EXL3",
+          "capabilities": {
+            "tools": true,
+            "input": ["text"],
+            "output": ["text"]
+          },
+          "limit": {
+            "context": 32768,
+            "input": 24576,
+            "output": 8192
+          },
+          "compatibility": {
+            "reasoningField": "reasoning_content",
+            "maxTokensField": "max_tokens",
+            "requireFinishReason": true
+          },
+          "body": {
+            "chat_template_kwargs": {
+              "enable_thinking": true,
+              "reasoning_effort": "low"
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "model": "rocm-exl3/qwen38",
+
+  "experimental": {
+    "policies": [
+      {
+        "action": "provider.use",
+        "resource": "*",
+        "effect": "deny"
+      },
+      {
+        "action": "provider.use",
+        "resource": "rocm-exl3",
+        "effect": "allow"
+      }
+    ]
+  },
+
+  "agents": {
+    "build": {"model": "rocm-exl3/qwen38"},
+    "title": {"model": "rocm-exl3/qwen38"},
+    "compaction": {"model": "rocm-exl3/qwen38"},
+    "worker": {"model": "rocm-exl3/qwen38"}
+  },
+
+  // Keep this false while validating tool history and request payloads.
+  // Enable it later after choosing a buffer appropriate for your workload.
+  "compaction": {
+    "auto": false,
+    "buffer": 2048
+  }
+}

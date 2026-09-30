@@ -1,0 +1,149 @@
+{
+  "date": "2026-10-01",
+  "timezone": "Asia/Tokyo",
+  "tested_source_commit": "08a4ddb",
+  "model": "Qwen3.8 Flash Next EXL3 3.05bpw",
+  "model_revision": "69e33439ae950f17bcbe95c98f117d80f759ab6d",
+  "native_extension_sha256": "25b536e7486ca2ac9a00e274f4efdbbc7e7435d64e96a20c604a44b5533ca57f",
+  "context_tokens": 32768,
+  "max_output_tokens": 8192,
+  "gpu": "2 × Radeon Pro V620 / gfx1030",
+  "execution": {
+    "actual": "tp2",
+    "loaded_tp": true,
+    "backend": {
+      "requested": "nccl",
+      "actual": "nccl",
+      "rank_classes": {
+        "0": "TPBackendRCCL",
+        "1": "TPBackendRCCL"
+      }
+    }
+  },
+  "cache_policy": {
+    "requested": {
+      "policy": "quant",
+      "layer_type": "CacheLayer_quant",
+      "k_bits": 5,
+      "v_bits": 4,
+      "note": "K5/V4 for target AND draft (same kwargs); QSA attention auto-maps to CacheLayer_qsa_quant; GDN recurrent state is not KV and stays FP32/BF16"
+    },
+    "observed": {
+      "target": {
+        "layers_total": 12,
+        "bytes_total": 377487360,
+        "cls_counts": {
+          "CacheLayer_qsa_quant": 12
+        },
+        "bits_variants": {
+          "CacheLayer_qsa_quant": [
+            [
+              5,
+              4
+            ]
+          ]
+        }
+      },
+      "draft": {
+        "layers_total": 1,
+        "bytes_total": 31457280,
+        "cls_counts": {
+          "CacheLayer_qsa_quant": 1
+        },
+        "bits_variants": {
+          "CacheLayer_qsa_quant": [
+            [
+              5,
+              4
+            ]
+          ]
+        }
+      }
+    },
+    "notes": []
+  },
+  "mtp": {
+    "component_present": true,
+    "device": "cuda:1",
+    "unsharded": true,
+    "loaded_before_target": true,
+    "same_cache_kwargs_as_target": true,
+    "draft_depth": 4,
+    "draft_window": 4,
+    "target_max_history": 4,
+    "num_draft_tokens_arg": 4
+  },
+  "engram_ram": {
+    "owners": {
+      "model.language_model.layers.1.ple.ple_embedding.ngram_embedding": {
+        "device": 1,
+        "bytes": 32640156672,
+        "pages_resident": 7968789,
+        "pages_total": 7968789,
+        "all_pages_resident": true,
+        "mlocked": true,
+        "mlock_bytes": 32640159744
+      }
+    },
+    "replicated_copies": [],
+    "locked_total_bytes": 32640159744
+  },
+  "cpu_api_tests": {
+    "passed": 65,
+    "skipped": 0
+  },
+  "real_api_cases": {
+    "named_tool": true,
+    "tool_history_and_none": true,
+    "auto_tool": true,
+    "parallel_tools": true,
+    "json_schema": true,
+    "thinking_json_schema": true,
+    "thinking_json_schema_adversarial_enum": true,
+    "json_schema_adversarial_enum": true,
+    "auto_tool_adversarial_enum": true,
+    "json_object": true,
+    "sse_tool_arguments": true,
+    "sse_nullable_arguments": true,
+    "text_completion_sse": true,
+    "prefix_cache": true,
+    "invalid_tool_choice": true,
+    "unknown_model": true,
+    "oversized_context": true,
+    "stream_cancellation_cleanup": true
+  },
+  "real_api_complete": true,
+  "raw_n2_usage": {
+    "prompt_tokens": 4,
+    "completion_tokens": 8,
+    "total_tokens": 12
+  },
+  "opencode_roundtrip": "../examples/opencode_lru/verification.json",
+  "batch4": {
+    "rccl_timeout_seconds": 180,
+    "runs": [
+      {
+        "text_jobs": 4,
+        "independent_schema_jobs": 4,
+        "peak_active_jobs": 4,
+        "power_policy": "held-profile-peak",
+        "complete": true
+      },
+      {
+        "text_jobs": 4,
+        "independent_schema_jobs": 4,
+        "peak_active_jobs": 4,
+        "power_policy": "held-profile-peak",
+        "complete": true
+      }
+    ]
+  },
+  "batch1_power": {
+    "policy": "phase-switched",
+    "observed_modes": [
+      "auto",
+      "profile_peak"
+    ],
+    "idle_mode": "auto"
+  }
+}

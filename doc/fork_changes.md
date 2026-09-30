@@ -113,3 +113,14 @@ branch all three statements changed.
 - [qwen38_v620_tp_config.json](qwen38_v620_tp_config.json) — validated TP2 config snapshot
 - [r9700_vs_v620.md](r9700_vs_v620.md) — R9700 workarounds & comparison
 - [rdna2_multirow_bounds_fix.md](rdna2_multirow_bounds_fix.md) — bounds-fix detail
+
+## OpenCode用HTTP API（2026-10-01）
+
+- tool出力をOpenAI形式へ変換し、tool history、ID、reasoningを保持。
+- incremental SSE argumentsとparallel tool calls、JSON Schema生成filterを統合。
+- Qwen templateのparameter例・履歴を生成形式に合わせてrender。
+- TP2/RCCL、元のMTP、K5/V4、Engram RAM＋mlock、power policyをHTTP loaderへ統合・監査。
+- MTP中のfilter activation境界、AsyncGenerator終了時のqueue解放、複数候補usage集計を修正。
+- OpenCodeの実read/write/shell往復、生成コードと14テスト、batch4動作を検証。
+
+[日付付き検証記録](opencode_api_validation.md)と[API/OpenCode手順](../rocm_tools/exl3_server/README.md)。

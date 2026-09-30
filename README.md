@@ -148,9 +148,10 @@ batch 2–4 long-context maximums are not established.
 - **Context ceiling: only batch 1 at 261,632 input + 256 output is proven.** Batch 2–4
   long-context tests were deferred; allocation-only probes are not validated limits.
 - **The benchmarking engines and harness tools were validated on hardware** (frozen prompts,
-  placement / cache / RAM audits, repeated timed groups). **The bundled HTTP server has not
-  been newly validated for the TP / MTP / Engram-mlock paths added on this branch** — its
-  `-tp` flags are unverified here.
+  placement / cache / RAM audits, repeated timed groups). The HTTP runtime was also
+  validated on 2026-10-01 with TP2/RCCL, the original 3-bit MTP head, K5/V4, and
+  one locked Engram RAM table at a 32,768-token API context. See the
+  [server guide](rocm_tools/exl3_server/README.md).
 - Vision/multimodal remains untested on ROCm (inherited status).
 - Full target-model quantization is not validated here. A limited official-source MTP
   3/5-bit quantization comparison was performed on V620; see [the precision study](doc/qwen38_v620_mtp_precision.md). The main inference benchmarks use publicly distributed EXL3 checkpoints. The MIT licence covers the code, **not** the model
@@ -186,27 +187,27 @@ batch 2–4 long-context maximums are not established.
 
 ### Server
 
-**Parent feature — *not* revalidated for the new TP / MTP paths.**
-The fork ships its own server: `rocm_tools/exl3_server/server.py`, a single-file,
-llama.cpp-server-style, OpenAI-compatible HTTP server. Its dependencies are in
-`requirements_rocm.txt`. It takes the same model/sampler flags as `examples/chat.py` (they
-come from `exllamav3.model_init.add_args`), plus the server flags below. On this branch the
-server was not revalidated for TP2 + MTP + Engram-mlock; treat that flag matrix as inherited
-and unverified here.
+The bundled `rocm_tools/exl3_server` serves OpenAI Chat/Text Completions and a
+llama.cpp-style completion API. It provides structured function calls, incremental
+SSE arguments, preserved tool history, thinking controls, and JSON Schema generation
+constraints. Dependencies are in `requirements_rocm.txt`.
 
 ```sh
-python rocm_tools/exl3_server/server.py -m ~/models/<model>-exl3 -cs 32768 -ngram 2 -dds
+python -m rocm_tools.exl3_server.server -m ~/models/<model>-exl3 -cs 32768
 # serves on http://127.0.0.1:3953
 ```
 
-`-ngram 2 -dds` (n-gram drafting, skipped while acceptance is low) is the recommended
-speculative-decoding setting on this GPU. Endpoints: `GET /health`, `GET /props`,
-`GET /v1/models`, `POST /v1/chat/completions` (prompt built with the model's own chat
-template), `POST /v1/completions` (prompt used verbatim, for clients that apply their own
-instruct template), `POST /tokenize`, `POST /detokenize`. Streaming uses standard OpenAI SSE
-chunks ending in `data: [DONE]`. Sampling flags set the *defaults*; each request can override
-them. See [`rocm_tools/exl3_server/README.md`](rocm_tools/exl3_server/README.md) for endpoint
-details, SillyTavern setup and measurements.
+The V620×2 HTTP path has been validated with TP2/RCCL, K5/V4, the original MTP
+head, Engram in one mlocked RAM table, and the batch-one power policy. Context and
+output limits are exposed through `/v1/models` and `/props`. The HTTP integration
+uses a 32K context; the separate long-context benchmark above establishes the larger
+engine limit.
+
+See the [API/OpenCode guide](rocm_tools/exl3_server/README.md) for endpoints,
+configuration, supported schemas, and the V620 launch commands. A portable
+[OpenCode v2 configuration](examples/opencode.jsonc) selects the local provider.
+The [2026-10-01 integration report](doc/opencode_api_validation.md) includes
+real tool roundtrip verification and an [OpenCode-generated coding sample](examples/opencode_lru/README.md).
 
 #### All flags
 
@@ -295,6 +296,10 @@ were the cause of the "coherency cliff" around 8K tokens that was once blamed on
 | `-maxr N` | server-side cap on tokens per response, default: fill the remaining context |
 | `-ctk JSON` | default chat-template kwargs, e.g. `'{"enable_thinking": false}'` |
 | `-lw N`, `-lmr N` | loop detection: stop after a window of N tokens repeats `-lmr` times (default 3); `-lw 0` disables |
+| `--context-limit N` | API context cap within the allocated cache |
+| `--max-output-tokens N` | maximum output tokens per choice |
+| `--power-socket PATH` | selected-card power helper socket |
+| `--audit-log PATH` | private request/response verification log |
 
 ---
 
