@@ -1,5 +1,5 @@
 {
-  "purpose": "V620 TP2 + original packed MTP3 settings with K5/V4 KV cache selected; pass explicitly to runner/API (not auto-loaded). K5/V4 selected per user; new measurements pending.",
+  "purpose": "Validated V620 TP2 + original packed MTP3 + K5/V4 KV with replicated std routers; set runtime_env before importing EXL3 and pass settings explicitly (not auto-loaded).",
   "model_directory": "/work/models/qwen38-flash-next-exl3-3.05bpw",
   "model_revision": "69e33439ae950f17bcbe95c98f117d80f759ab6d",
   "target_quantization": "EXL3 3.05bpw; head5; ng5",
@@ -20,7 +20,8 @@
     "HSA_ENABLE_SDMA": "0",
     "PYTHONPATH": "/work/lib-qwen38-reduction:/src",
     "LD_PRELOAD": "libhsa-runtime64.so",
-    "LD_LIBRARY_PATH": "/opt/rocm/core-7.14/lib:/opt/venv/lib/python3.12/site-packages/torch/lib"
+    "LD_LIBRARY_PATH": "/opt/rocm/core-7.14/lib:/opt/venv/lib/python3.12/site-packages/torch/lib",
+    "EXL3_TP_REPLICATE_ROUTER": "1"
   },
   "batch1": {
     "draft_tokens": 4,
@@ -33,7 +34,7 @@
       "draft_and_verify_and_decode": "profile_peak",
       "idle": "auto"
     },
-    "evidence": "TP2: 8K+256 repeated AR/MTP jobs; 32K+256 Japanese/code finite validation with fixed4."
+    "evidence": "K5/V4 and replicated router: 8K+256 AR/MTP repeated jobs; 32K+256 JA/code finite with fixed4."
   },
   "batch_gt1": {
     "draft_tokens": 2,
@@ -42,7 +43,7 @@
     "max_history": 2,
     "power_during_inference": "profile_peak",
     "power_after_exit": "auto",
-    "evidence": "TP2: batch2, two 8K+256 jobs simultaneously, fixed2 finite validation; performance optimum for larger batches not established."
+    "evidence": "K5/V4 and replicated router: batch2, two8K+256 jobs simultaneously, fixed2 finite validation; larger-batch optimum not established."
   },
   "cache_tokens_example_batch1_8k": 8704,
   "max_chunk_size": 2048,
@@ -76,15 +77,30 @@
     "qsa_auto_map": "QSA attention auto-maps to CacheLayer_qsa_quant; raw_k/pooled indexer planes remain FP16",
     "gdn_state": "GDN recurrent state is not KV; stays FP32/BF16",
     "diagnostic_override": "--cache-fp16 only; never the default",
-    "evidence": "TP batch1: actual target 12 QSA quant layers + draft 1 layer, all K5/V4, 8K+64 JA/code finite; AR 8K+256 x12 complete. Other new measurements pending.",
+    "evidence": "Actual target12 + draft1 QSA quant layers K5/V4; 8K repeated AR/MTP, batch2 8K+256 and batch1 32K+256 validated.",
     "evidence_directory": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp-decode-opt"
   },
   "validation": {
-    "batch1": "8K AR repeated jobs and original MTP3; 32K+256 Japanese/code finite with fixed draft4",
-    "batch2": "two 8K+256 jobs together, finite with fixed draft2",
+    "batch1": "K5/V4 and replicated router: 8K+256 AR/MTP repeated jobs; 32K+256 JA/code finite with fixed4.",
+    "batch2": "K5/V4 and replicated router: batch2, two8K+256 jobs simultaneously, fixed2 finite validation; larger-batch optimum not established.",
     "power": "batch1 auto prefill/peak draft+verify+decode/auto idle; batch>1 peak during inference, auto exit",
-    "report": "doc/rdna2_tp2.md"
+    "report": "doc/v620_tp_decode_optimization.md"
   },
   "container": "rocm-exl3-v620-pair",
-  "historical_validation_cache": "FP16: earlier MTP/TP reports, including 32K and batch2 checks, predate the K5/V4 selection; they are not K5/V4 evidence."
+  "historical_validation_cache": "FP16: earlier MTP/TP reports, including 32K and batch2 checks, predate the K5/V4 selection; they are not K5/V4 evidence.",
+  "router_replication": {
+    "selected": true,
+    "scope": "TP std router on ranks with routed experts; other router types use legacy path with a notice",
+    "generic_default": "off; this model configuration explicitly selects1",
+    "extra_allocated_MiB_two_GPUs": 240.05,
+    "AR_decode_gain_percent": {
+      "ja": 10.14,
+      "code": 10.27
+    },
+    "MTP_engine_decode_gain_percent": {
+      "ja": 0.23,
+      "code": 11.99
+    },
+    "caveat": "MTP output/proposals and acceptance change with placement/numerics; code observed decode improves4.66%, not a universal12% communication-only gain."
+  }
 }

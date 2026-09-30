@@ -1,5 +1,5 @@
 {
-  "purpose": "Qwen3.8 Flash Next MTP settings with K5/V4 KV cache selected; pass explicitly to the runner/API (not auto-loaded). K5/V4 selected per user; new measurements pending.",
+  "purpose": "Layer-split MTP alternative with original packed MTP3 and K5/V4 KV; 8K repeated jobs validated. Pass settings explicitly (not auto-loaded).",
   "model_directory": "/work/models/qwen38-flash-next-exl3-3.05bpw",
   "model_revision": "69e33439ae950f17bcbe95c98f117d80f759ab6d",
   "target_quantization": "EXL3 3.05bpw; head5; ng5",
@@ -33,7 +33,7 @@
       "draft_and_verify_and_decode": "profile_peak",
       "idle": "auto"
     },
-    "evidence": "2K tuning and 8K paired 5-repeat greedy comparison; 32K+256 finite validation with fixed4."
+    "evidence": "K5/V4: 8K+256, JA/code warm1+timed5. Earlier2K tuning/32K checks used FP16 KV."
   },
   "batch_gt1": {
     "draft_tokens": 2,
@@ -42,7 +42,7 @@
     "max_history": 2,
     "power_during_inference": "profile_peak",
     "power_after_exit": "auto",
-    "evidence": "batch2, 2K+256 each, finite validation; performance optimum for larger batches not established."
+    "evidence": "Historical FP16 KV: batch2 2K+256 finite; K5/V4 long-context/batch2 checks in the new report apply to TP only."
   },
   "cache_tokens_example_batch1_8k": 8704,
   "max_chunk_size": 2048,
@@ -54,7 +54,7 @@
     "qsa_auto_map": "QSA attention auto-maps to CacheLayer_qsa_quant; raw_k/pooled indexer planes remain FP16",
     "gdn_state": "GDN recurrent state is not KV; stays FP32/BF16",
     "diagnostic_override": "--cache-fp16 only; never the default",
-    "evidence": "TP batch1: actual target 12 QSA quant layers + draft 1 layer, all K5/V4, 8K+64 JA/code finite; AR 8K+256 x12 complete. Other new measurements pending.",
+    "evidence": "Layer split: 8K+256 x12 original MTP jobs with actual K5/V4 layers, RAM audit and normal cleanup. Earlier32K/batch evidence remains historicalFP16.",
     "evidence_directory": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp-decode-opt"
   },
   "energy_policy": "User-selected energy saving; not a response to cooling or 400W capability limits.",

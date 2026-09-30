@@ -1,55 +1,99 @@
-# V620×2 decode 分解・改善（進行中）
+# V620×2 decode 分解・改善
 
-K5/V4 KVを以後の比較条件とする。既存配布パックのMTP3、Engramの単一RAM表、batch1のprefill auto / draft・verify・decode peak / idle autoを維持する。最適化の採用判定は未完了。
+2026-09-30。**std MoE routerを両GPUで計算して通知を省き、通常decodeを約10%改善した。** MTPは日本語がほぼ横ばい、コードはengine基準約12%・配送/終了処理込み約5%向上。ただしMTPの出力と採用率も変化したため、全差分を通信だけの効果とは解釈しない。
 
-## 確認済みの基準
+以後のKVはKey5bit/Value4bit。元の配布済みMTP3パック、Engramの単一RAM表、batch1のprefill auto / draft・verify・decode peak / idle auto、batch>1の推論中peakを維持する。
 
-同じQwen3.8 Flash Next EXL3 3.05bpw、8K入力＋256生成、固定token IDs、日本語/コードそれぞれwarmup1＋測定5。native SHA256は`12859e31a1bd03b61ef5a1ba6725d020dca3557e3c206dcd10f791662ae4767a`、単一host HSA。プロファイラなしの中央値。
+## 採用した変更
 
-| 構成 | 日本語prefill | コードprefill | 日本語engine decode | コードengine decode |
-|---|---:|---:|---:|---:|
-| TP・AR | 464.62 | 460.36 | 31.31 | 31.34 |
-| TP・MTP | 451.30 | 446.08 | 38.56 | 53.15 |
-| Layer split・MTP | 295.95 | 288.41 | 38.26 | 53.56 |
+`EXL3_TP_REPLICATE_ROUTER=1`をPython起動前に指定する。std routerをrouted expertを持つ各TP rankへ複製し、選択したexpert indicesと重みの2 broadcast/層を省く。expertの分担と最後の出力集約は維持する。194→98 collective/本体forwardを実測した。GPU0だけを待たせる通知を減らす代わりに、小さいrouterを重複計算する方式。
 
-単位はtok/s。engine decodeは既存の`time_generate`基準。配送・終了処理を含む観測decodeはTP AR29.20/26.74、TP MTP35.46/41.52、LS MTP34.20/37.99。生成途中64～128tokenの配送時刻から計算した中央値はTP AR31.64/31.63、TP MTP37.15/56.81、LS MTP40.07/58.32。MTPの境界は実際のburst終了token数を使う。MTP採用率（timed合算）はTP53.28%/78.14%、LS49.21%/79.14%。入力が同じでも出力や採用率が変わるので、MTP速度差を通信差だけと解釈しない。
+generic defaultはoff、今回のQwen/V620推奨設定はon。対象外routerは理由を表示して既存経路を使う。router本体とdecode用transposeをVRAM計画へ計上し、routed shardが空のrankには不要なrouterをロードしない。推論後の各workerで比較したTorch allocated増分はGPU0約238.27MiB、GPU1約1.78MiB、計約240MiB。親プロセスのCUDA0=0という値をrank0のVRAMとは扱わない。
 
-本体12層とdraft1層の実cacheが`CacheLayer_qsa_quant`、K5/V4であることを検査済み。QSAのraw_k/pooledはFP16、GDN recurrent stateは元の型を維持。8K+64のJA/code MTP finite検査、本体61/draft167 forward、両rank計7076 module checks、Engram全ページRAM常駐、正常cleanupとauto復帰に合格。AR/MTP/LSの上表の全jobも正常終了。過去のFP16 KVによる32K/batch2検証をK5/V4の証拠には使わない。
+設定は`qwen38_v620_tp_config.json`。レイヤー分割用の`qwen38_v620_mtp_config.json`もK5/V4を選択するが、router複製はTP用。これらのJSONは自動読込されない。
 
-## decode専用traceから分かったこと
+## 計測器なしの速度
 
-`q-tp-ar-kv54-decode-probe-r2`はJAの最初のtimed jobの64→128token、64 forwardだけを捕捉。prefill/最終EOS処理を含まず、両rankのkernelは110656/107968件。正常終了・電力復帰を確認した。
+同一Qwen3.8 Flash Next EXL3 3.05bpw、8K入力＋256生成、日本語/コードそれぞれwarmup1＋測定5、固定token IDs、中央値。比較した有効/無効は同じsource snapshot `113fc57`、同じnative SHA256 `12859e31a1bd03b61ef5a1ba6725d020dca3557e3c206dcd10f791662ae4767a`、単一host HSA。有効測定の後にも無効条件を再測定して再現を確認した。
 
-各rankに12416 RCCL kernel、すなわち194 kernel/forwardがある。MoEは各層でexpert選択indicesと重みを2回broadcastし、48層で96回となる。最初の改善候補は小さいrouterを両GPUで同一計算して、この通知を省く方式。expert本体の分担と最後の集約は維持する。追加のVRAMと数値一致を確認してから性能を判定する。
-
-RCCL kernelの時間にはpeer待ちが含まれる。両GPUのkernelを実行順で対応付けると所属layerは全件一致したが、片方のkernelが終了してから他方が実行する例もあり、重なる時間を「純粋なPCIe転送時間」とは呼べない。PCIeは両方Gen4 x16。以前の小payload all-reduceは10KB/40KBとも約60µsであり、帯域だけでなく起動・同期の固定費を調べる必要がある。
-
-このtrace窓は約4.58秒で、通常実行の同区間約2.02秒より大幅に遅い。GPU kernelにも単発の大きな外れ値がある。従ってprofiled kernel時間の合計を通常decodeの寄与率へ単純換算しない。現在、none controlと詳細task/phase markersで追加確認中。GPU kernelはHIP runtime Correlation_IdからCPU rangeへ対応付け、非同期GPU実行時刻をCPU rangeへ単純に当てはめない。量子化GEMVのkernel時間を「dequantのみの時間」とも呼ばない。
-
-初回traceは、CSV出力に約14秒かかるのにworker終了待ちが2秒で、出力中のSIGTERMにより正常終了しなかった。診断bootstrapだけ終了猶予120秒にしてr2は成功した。productionの終了待ちや推論処理は変更していない。
-
-## 数値比較と未完項目
-
-固定AR continuation256tokenをJA/codeで与え、各48位置・計96位置の全語彙logitsを保存した。元実装のrouter記録はrank1の48層・1152サンプル、rank0はrouterなし。候補では同じ継続tokenでlogitsを比較し、両rankのexpert選択/重みも照合する。これは速度測定ではない。
-
-### Router複製の実機結果（2026-09-30）
-
-`EXL3_TP_REPLICATE_ROUTER=1`をPython起動前に設定すると、std routerをrouted expertを持つ各rankへ複製し、expert選択indices/重みのbroadcastを省く。expertの分担と最後の集約は維持。既定は無効で、対象外routerは理由を表示して既存経路を使う。必要なrouterとdecode用transposeをVRAM計画へ計上し、routed shardが空のrankには不要なrouterをロードしない。
-
-固定続きの96位置で全語彙logitsはbit単位まで一致し、1152件のrouterサンプルも元実装・両rank間で一致した。MTPでは2/3/4/5行および255/1792/2048行prefillのrouter結果が両rankで一致し、finite/RAM/cleanup検査も合格。最初の試験はMTPでも1行処理が出るとの誤った必須条件で終了コード1になったが、1行はAR試験で確認済み。条件を修正した再試験は正常終了した。
-
-同じ最終コード・同じ入力で、無効化したARを再測定して比較した。各言語5回中央値。
-
-| AR | 無効 decode | 有効 decode | 変化 | 無効 prefill | 有効 prefill |
+| モード/課題 | 無効 engine decode | 有効 engine decode | 変化 | 無効 prefill | 有効 prefill |
 |---|---:|---:|---:|---:|---:|
-| 日本語 | 31.31 | 34.48 | +10.1% | 465.35 | 464.17 |
-| コード | 31.32 | 34.54 | +10.3% | 460.39 | 459.02 |
+| AR 日本語 | 31.31 | 34.48 | +10.1% | 465.35 | 464.17 |
+| AR コード | 31.32 | 34.54 | +10.3% | 460.39 | 459.02 |
+| MTP 日本語 | 38.44 | 38.52 | +0.2% | 451.19 | 452.74 |
+| MTP コード | 52.94 | 59.29 | +12.0% | 446.00 | 447.04 |
 
-decodeはengine基準、単位tok/s。生成途中の配送レートでも+10.4%/+10.1%、終了処理込みでは+10.2%/+8.9%。測定対象10件の出力token列はすべて一致し、前の基準とwarmupを含む12件でも一致。推論後の各workerのTorch allocatedを比較すると、増分はGPU0約238.27MiB、GPU1約1.78MiB、合計約240MiB。親プロセスだけのCUDA0=0という値をrank0のVRAMと取り違えない。
+単位tok/s。engine decodeは既存の`time_generate`基準。配送・最後の後処理まで含む観測decodeは、AR日本語29.41→32.42、ARコード27.15→29.55、MTP日本語35.92→36.74、MTPコード42.48→44.46。MTPコードの観測値の改善は約4.7%であり、上表の12%と混同しない。prefill差は約0.4%以内。
 
-QSA head分割も単体で検討した。K5/V4、Q24/KV2から各GPU Q12/KV1へ分けた結果は、1行でbit一致、3/5行でrelative L2約0.00035。GPU kernel中央値は1行144.8→134.0µs、3行225.9→150.9µs、5行352.8→191.3µs（右は遅い方のhalf）。indexer/projection/TP集約を除く値で、単一host threadから両GPUを起動した実時間は約204µs/呼出しだった。通常1行decodeの利得は小さく、MTP検証には余地があるが、実モデルへのhead分割は現時点で採用していない。
+MTP採用率（timed合算）は日本語53.28→51.39%、コード78.14→81.72%。MTPの全文token列は両条件で変化した。VRAM見積りによりTP配置計画も変わるため、採用率変化の原因をrouterの通信削減だけに帰属させない。ARの測定対象10件、前の基準とwarmupを含めた12件の生成token列はすべて一致。
 
-未完: 詳細task/phase分解、MTPでの速度比較、最終設定・長文/batch回帰検証。ARの改善と数値一致は上記の範囲で確認済み。
+## 実時間のdraft / 本体検証
+
+GPU同期やGPU profilerを追加せず、既存のdecode窓に2箇所の`perf_counter`を加えた。言語ごとに新規processのwarmup1＋代表1件。生成途中約64token（MTP burstの実token数で割る）を測定した。通常のnone controlはAR64tokenが約2.04秒で、clean測定の約31.6tok/sと近い。
+
+| 代表区間 | draft 無効→有効 ms/出力token | 本体検証 無効→有効 ms/出力token |
+|---|---:|---:|
+| 日本語 | 2.48 → 2.32 | 24.50 → 22.11 |
+| コード | 1.98 → 2.07 | 14.02 → 14.07 |
+
+この条件では本体検証が約88～91%。draft層だけを速くしても全体への寄与は限られる。コードのこの短い代表区間では改善していない。正式benchmarkはコードの前に日本語jobを走らせており、calibration履歴も異なるため、この1件を5回中央値の代用にはしない。
+
+日本語のさらに短い16token窓では、生成prefix・候補長・採用数が両条件で一致し、draft2.63→2.61、本体検証24.86→23.44ms/出力tokenだった。棄却された候補IDまで同一だったとの主張ではない。
+
+## GPU処理別の内訳
+
+OpenCodeが実装したtask/phase hooksを、検証用HIP event adapterから利用した。日本語MTPの65→81token、16出力、target8回・借用head18回を両条件で捕捉。通常終了と全hook復帰を確認し、graph capture中はeventを挿入しない。CPUのEngram stage/gatherも別記録。GPU0/1の時間は重なり、以下は**計測付きのstream区間時間**（launch待ちやcollective依存を含む）であって、通常のwall時間や純kernel時間の割合ではない。
+
+| 有効時の主な処理 | GPU0 ms/出力token | GPU1 ms/出力token |
+|---|---:|---:|
+| 本体MoE（共有expert含む） | 9.89 | 9.70 |
+| 本体Gated Residual | 4.01 | 4.00 |
+| 本体GDN | 3.10 | 3.04 |
+| 本体QSA（projection/indexer/attention） | 2.38 | 1.22 |
+| 本体通信・同期 | 4.14 | 5.29 |
+| 本体その他（head/embedding/PLE/dispatch等） | 1.39 | 1.70 |
+| MTP draft（共有headを含む） | 0.92 | 2.98 |
+
+通信・同期のstream時間は無効時GPU0約9.80、GPU1約7.64ms/出力token。通信回数の減少は確実だが、削除した呼出しの計測負荷も消えるため、時間の改善率は上のclean benchmarkで判断する。EngramのCPU stageは有効時約0.027ms/出力token、その中のRAM gather約0.011ms。今回の窓ではRAM lookupが大きな待ち要因ではなかった。
+
+別の正常終了したAR ROCprofiler traceでも、6144 layer呼出しすべてのGR/HC境界と通信順序を検査してGDN/MoE/QSA/残差/通信へ分離した。量子化Linearのkernel時間にはdequantと行列積が融合しており、「dequantだけの時間」とは呼ばない。
+
+PCIeは両方Gen4 x16。小payload all-reduceは10KB/40KBとも約60µsだった。今回、省いた通知は1行なら80B＋20B/層であり、帯域不足だけでは説明できない。頻繁な通信呼出しとGPU間の到着差・待ち合わせが改善可能な一因だった。**PCIe固有の往復遅延、RCCL内部処理、peer待ちの完全な分離はしていない。**
+
+## QSAの2GPU化を検討した結果
+
+K5/V4でQ24/KV2を各GPU Q12/KV1へ分割する単体試験を実施。1行はbit一致、3/5行はrelative L2約0.00035で参照比較に合格。GPU中央値はfull→遅い方halfで1行144.8→134.0µs、3行225.9→150.9µs、5行352.8→191.3µs。単一host threadから両GPUを起動した実時間は約204µs/呼出しだった。
+
+indexer/projection/TP集約を含まない値で、通常1行decodeの利得は小さい。MTPの複数行検証には余地があるが、追加indexer処理等を含む実モデルでの効果は未検証のためhead分割は採用しなかった。今回2GPUへ移したのはrouter計算であり、EngramのRAM表は複製していない。
+
+## 数値・回帰・終了処理
+
+- 固定AR continuationの全語彙logits96位置はすべてbit一致、top1 96/96。元実装とのrouter1152サンプルも選択/重みの差0、複製した両rank間も一致。
+- MTPのrouterは2/3/4/5行、255/1792/2048行prefillで両rank一致。最初は試験側の誤った1行必須条件でexit1だったが、ARで1行確認済みとして条件修正後の再試験は正常終了。
+- K5/V4の実cacheはtarget12層＋draft1層。QSA raw_k/pooledはFP16、GDN recurrent stateは元のFP32/BF16のまま。8K cacheでtargetの実配列は100270080 bytes。
+- 有効時batch2：各8K+256、固定draft2、target128/draft236 forwardのfinite検査。32K+256 JA/code：固定draft4、target211/draft708。いずれもRAM全ページ、cache bit、normal exit、power復帰を確認。
+- CPU suite661 tests＋63 subtests、compile/diff検査合格。通常推論、clean benchmark、none/host timers、HIP event capturesは正常終了。
+- ROCprofilerはCSV終了処理が2秒を超えたため診断だけjoin猶予120秒へ変更しAR captureに成功した。一方、詳細MTP captureは推論完了後のHSA終了処理でSIGSEGVとなったため採用せず、HIP eventsへ切替えた。driver/OSやproductionの終了待ちは変更していない。Torchが通常ロードするSDK依存と、外部`rocprofv3` captureは区別する。
+
+## 再実行と記録
+
+host側の検証済みrunner例（未使用tagを指定）。明示的な`--replicate-router`で選択する。native/modelは再ダウンロードしない。
+
+```bash
+python3 /home/homelab1/datapool/rocm-exl3-rdna2/runs/tp-decode-opt/run_bench.py \
+  --tag q-tp-selected-retest --source /src \
+  --model /work/models/qwen38-flash-next-exl3-3.05bpw \
+  --execution tp --mode mtp --replicate-router \
+  --prompts /work/runs/qwen38-mtp/formal8k-prompts.json
+```
 
 artifact root: `/home/homelab1/datapool/rocm-exl3-rdna2/runs/tp-decode-opt`。
-基準は`q-tp-ar-kv54-baseline`, `q-tp-mtp-kv54-baseline`, `q-ls-mtp-kv54-baseline`と各`-detailed-summary.json`。数値参照は`q-tp-kv54-teacher-baseline.json` / `.logits.pt`。固定sourceとmanifest、実行command、電力helperの復帰記録を同じdirectoryに保存している。
+
+- `ar-replicated-paired-comparison.json`, `mtp-replicated-paired-comparison.json`: 入力/native/モデル一致を検査したclean比較。
+- `teacher-replicated-comparison.json`, `q-tp-mtp-router-agreement-r2*`: 数値/両rank routing。
+- `q-tp-mtp-phase-wall-{ja,code}-{baseline,replicated}-phase-wall.json`: 軽いCPU wall分解。
+- `q-tp-{ar,mtp}-event-spans-*-task-summary.json`: 排他的HIP stream区間、借用headのMTP分類、194/98通信検査。`event_span_capture.py`は診断用adapterでproduction modelを変更しない。
+- `ar-kernel-task-decomposition.json`: 正常終了したAR kernel traceの層境界検査・分解。
+- `qsa-head-split-probe.json`: QSAの単体分割試験。`q-tp-replicated-kv54-{batch2,32k}*`: 回帰試験。
+
+各runにsource snapshot/manifest、実行command、実worker監査、power helperの復帰結果を保存。旧FP16 KVレポートを新K5/V4の証拠へ書き換えていない。

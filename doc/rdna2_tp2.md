@@ -1,5 +1,7 @@
 # V620×2 Tensor Parallel
 
+2026-09-30追記: 以後のK5/V4 KV・router複製設定と最新速度は [decode改善レポート](v620_tp_decode_optimization.md) を参照。以下の初回性能表はFP16 KVの記録。
+
 既存のQwen3.8 Flash Next 3.05bpwパックと、同パック内のMTP重み（主部3bit、input 4bit、attention/shared 5bit）を使う。自前量子化MTP3/5へのoverrideは使用しない。レイヤー分割の起動方法は引き続き利用可能。
 
 ## 実装
