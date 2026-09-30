@@ -1,0 +1,59 @@
+{
+  "date": "2026-10-01",
+  "client": "OpenCode 2.0.12",
+  "provider": "rocm-exl3/qwen38",
+  "server_model": "qwen38-local",
+  "hardware": "2 × Radeon Pro V620 (gfx1030)",
+  "execution": "TP2/RCCL; EXL3 3.05bpw; original 3-bit MTP; K5/V4; single mlocked Engram RAM owner",
+  "thinking": true,
+  "reasoning_effort": "low",
+  "tool_calls": [
+    {
+      "call_id": "call_e8e911eac2bc4c1d9fcd462cb05b171f_0_0",
+      "tool": "read",
+      "exact_arguments": true,
+      "status": "completed"
+    },
+    {
+      "call_id": "call_e8e911eac2bc4c1d9fcd462cb05b171f_0_1",
+      "tool": "read",
+      "exact_arguments": true,
+      "status": "completed"
+    },
+    {
+      "call_id": "call_2ec27613c047456ab081e2249e61407b_0_0",
+      "tool": "write",
+      "exact_arguments": true,
+      "status": "completed"
+    },
+    {
+      "call_id": "call_947706d2786f4149ac698c428ba9e4c0_0_0",
+      "tool": "read",
+      "exact_arguments": true,
+      "status": "completed"
+    },
+    {
+      "call_id": "call_75ee7d8b753146cfadd2bbcc7e26cba2_0_0",
+      "tool": "write",
+      "exact_arguments": true,
+      "status": "completed"
+    },
+    {
+      "call_id": "call_60b2258a5f204b2cb9d3ca71d61ed068_0_0",
+      "tool": "shell",
+      "exact_arguments": true,
+      "status": "completed"
+    }
+  ],
+  "exact_arguments_verified": true,
+  "tests": {
+    "command": "python3 -m unittest -v",
+    "count": 14,
+    "exit_code": 0,
+    "independently_repeated": true
+  },
+  "files": {
+    "lru_cache.py": "83faf7914857de17b4bd46568fbf55636b0357e4b59f98c5fe6f575717f73888",
+    "test_lru_cache.py": "c7e238aca311d8583cda8abc59707d2b4bd621f7bd0973134ec4ba271bf029bb"
+  }
+}
