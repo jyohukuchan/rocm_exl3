@@ -1,11 +1,23 @@
-# rocm_tools/rdna2 — V620 measurement harness (Phase 0-2 single card; Phase 3 audited dual-card layer split)
+# rocm_tools/rdna2 — V620 measurement harness (single card; dual-card layer split; TP2 Qwen3.8-Flash-Next MTP & batches)
+
+**Public reproduction entry point:** [../../doc/reproduce_v620.md](../../doc/reproduce_v620.md)
+is the canonical, sanitized guide for the dated 2026-09-30 benchmark bundle
+([../../benchmarks/2026-09-30/README.md](../../benchmarks/2026-09-30/README.md));
+[../../doc/fork_changes.md](../../doc/fork_changes.md) lists the rough code delta versus the
+fork parent. The public benchmark trio here is `tp_run.py` (TP2 or layer-split batch runs on
+frozen prompts, with placement/cache/RAM audits), the user-started power helper
+`power_server.py` (restores original GPU power policies on disconnect/TERM), and
+`summarize_tp.py` (prints the public metrics from a run report).
 
 Qwen3.8 Flash Next MTP support and the user-selected power policy are evaluated
-with `qwen_mtp_run.py` and `power_policy.py`. The existing `bench.py` remains an
+with `qwen_mtp_run.py` and `power_policy.py` (single-card) and `tp_run.py` (2-way TP /
+layer split). The existing `bench.py` remains an
 explicit non-speculative baseline. See
-[MTP results and reproduction](../../doc/qwen38_v620_mtp.md) and
-[validated settings](../../doc/qwen38_v620_mtp_config.json).
-The MTP runner requires a separately started local power helper; batch 1 switches
+[MTP results and reproduction](../../doc/qwen38_v620_mtp.md),
+[validated single-card settings](../../doc/qwen38_v620_mtp_config.json),
+[TP2 context/batch measurements](../../doc/qwen38_v620_context_batch.md) and
+[validated TP2 settings](../../doc/qwen38_v620_tp_config.json).
+The MTP runners require a separately started local power helper; batch 1 switches
 auto/peak at stage boundaries (including queued requests), while configured
 batch sizes above 1 hold peak during inference. Each completed `iterate()` records
 one cumulative progress sample per job, including iterations whose text output is
@@ -410,7 +422,7 @@ container runs' artifacts.
    identical argmax results.
 4. The CLI stores top-1 only. The separate full-vocabulary M KLD capture
    and comparison scripts and artifacts are preserved in
-   `/home/homelab1/datapool/rocm-exl3-rdna2`; see the Phase 2 results report.
+   `/path/to/rocm-exl3-data`; see the Phase 2 results report.
 5. Chunked C=1 over a 1024-position manifest is O(total tokens) forwards —
    slow by nature; use `--limit-cases` for localization (comparison then
    correctly refuses the partial file).

@@ -1,150 +1,221 @@
 
-# <img src="doc/cat.png" width="40"> ExLlamaV3 — ROCm / RDNA fork
+# <img src="doc/cat.png" width="40"> ExLlamaV3 — ROCm / RDNA fork (experimental V620 branch)
 
-This is a **ROCm fork of [ExLlamaV3](https://github.com/turboderp-org/exllamav3)** by turboderp, tracking
-upstream v1.5.0. If you are on NVIDIA, you want [the upstream repo](https://github.com/turboderp-org/exllamav3) —
-this one builds for CUDA too, but adds nothing there.
+This repository is an **experimental branch of the ROCm fork of
+[ExLlamaV3](https://github.com/turboderp-org/exllamav3)** by turboderp. Ancestry:
 
-The Python package is still named `exllamav3`, so it is a drop-in replacement for code that imports it. For a
-server, use the bundled one (see [Server](#server)).
-Only the repository is renamed.
+- Upstream base: [`turboderp-org/exllamav3`](https://github.com/turboderp-org/exllamav3) (tracking v1.5.0).
+- Direct parent: [`CarouselAether/rocm_exl3`](https://github.com/CarouselAether/rocm_exl3)
+  at `dd7a670065f37943f09a5eeb53818f38e9751472` — the RDNA2/3/4 port this fork was branched from.
+- This repo: [`jyohukuchan/rocm_exl3`](https://github.com/jyohukuchan/rocm_exl3) — a
+  **gfx1030 (Radeon Pro V620) first** research fork. Two V620s, tensor-parallel loading, the
+  Qwen3.8-Flash-Next architecture (QSA sparse attention + PLE n-gram embeddings + 512-expert
+  MoE) and its packed MTP draft head are what has been driven hardest and measured here.
 
-### What this fork changes
+The Python package is still named `exllamav3`, so it is a drop-in for code that imports it.
+The MIT licence and all vendor notices from the parent and upstream are preserved.
 
-The CUDA kernels that cannot compile for RDNA are replaced with hand-written HIP/WMMA siblings under
-`exllamav3_ext/rocm/`, reached through a compat shim and include-path redirection. Python divergences live in
-`exllamav3/rocm_py/` and are applied as monkeypatches at import.
+**Read the scope honestly:** this is a *fork of a fork*. It makes no universal AMD or CUDA
+support claims. Sections inherited from the parent/upstream are labelled where they begin;
+they describe generic ExLlamaV3 and CUDA behaviour that has **not** been revalidated on this
+branch.
 
-**No upstream C++ or CUDA source is modified — not one.** Verify it yourself:
+### Supported / verified matrix (this branch)
 
-```sh
-git diff --stat v1.5.0 -- '*.cu' '*.cuh' '*.cpp' '*.h' ':(exclude)exllamav3/exllamav3_ext/rocm'
-# (empty)
-```
+| Capability | Hardware | Status on this fork | Evidence |
+|---|---|---|---|
+| Single-GPU inference (bench + quality gates) | 1× V620 (gfx1030) | **Validated** — Qwen3-8B EXL3 4bpw, Qwen3-30B-A3B EXL3 3bpw | [doc/rdna2_phase2_results.md](doc/rdna2_phase2_results.md) |
+| Layer-split load (`use_per_device`) | 2× V620 | **Validated** (batch 1, placement-audited) | [doc/v620_pair_results.md](doc/v620_pair_results.md) |
+| Tensor-parallel load + RCCL collectives | 2× V620 | **Validated** — Qwen3.8-Flash-Next 3.05bpw + packed MTP3, K5/V4 KV, Engram CPU table, batches 1–4 | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md), [doc/v620_tp_decode_optimization.md](doc/v620_tp_decode_optimization.md) |
+| MTP draft windows 1–4 | 2× V620, TP2 | **Supported and exercised**; deeper drafts are *not* universally faster — acceptance is workload-dependent (screening table in the context/batch report) | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md) |
+| Engram single-owner CPU-RAM table + optional `EXL3_NGRAM_MLOCK=1` | 2× V620, TP2 | **Validated** — one 32,640,156,672-byte table, one owning rank, mlock/mincore residency audits | [doc/qwen38_v620_tp_config.json](doc/qwen38_v620_tp_config.json) |
+| K5/V4 quantized KV cache (QSA layers) | 2× V620, TP2 | **Validated** — default for the TP2 measurements; recurrent states keep their original FP32/BF16 types | [doc/v620_tp_decode_optimization.md](doc/v620_tp_decode_optimization.md) |
+| Max generated context | 2× V620, TP2, **batch 1 only** | 261,632 input + 256 output completed with fixed MTP4. **Batch 2–4 maximums are not established** — long-context tests were deferred by the operator | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md) |
+| R9700 (gfx1201 / RDNA4) | 1× R9700 | **Tested only through documented comparison adapters/workarounds** (64 KiB LDS build, MLP range-balance adapter, MoE reconstruct adapter). Not general RDNA4 support | [doc/r9700_vs_v620.md](doc/r9700_vs_v620.md) |
+| RDNA3 / RDNA3.5 (`gfx1100`…`gfx1151`) | — | **Inherited from the parent fork's gfx1151 validation; not independently rerun on this branch** after the TP / Qwen3.8 / kernel changes below. The parent's claims stand as the parent's, not ours | [doc/fork_changes.md](doc/fork_changes.md) |
+| CUDA path | NVIDIA | Upstream code; untouched by design except one shared-header race fix (see fork changes). Not tested here | — |
 
-Outside `rocm/`, `rocm_py/` and `rocm_tools/`, five upstream code/README files differ from v1.5.0, alongside local validation documentation, plus one added file
-(`requirements_rocm.txt`) and one ignore line in `.gitignore`:
+### What changed relative to the fork parent
 
-| file | change |
-|---|---|
-| `setup.py` | ROCm backend selector and `hipcc` builder. All ROCm behaviour is inside `HIPBuildExtension`, so a CUDA build is untouched upstream code. |
-| `exllamav3/__init__.py` | Six lines calling `rocm_py.apply()` at the end of package init. Returns immediately when `torch.version.hip` is `None`, so it is inert on CUDA. |
-| `exllamav3/modules/attention_fn/bc_attn.py` | gfx1030 FP16 BC decode-attention tuning in `BCAttn._configure`: the GQA head tile narrows to the group size and the AOT decode signatures get verified `:16` alignment hints. Gated to HIP + gfx1030 + the validated decode shape family (provenance and the alignment contract: `rocm_py/gqa_decode_tune.py`); every other shape, device and build — CUDA included — keeps the original geometry and signatures. `EXL3_ROCM_GQA_TUNE=0` opts out. |
-| `exllamav3/modules/attention_fn/triton_paged.py` | Selects the narrow-KV prefill tile explicitly on RDNA instead of relying on `get_device_capability()` accidentally reporting `(11, 5)`, plus measured notes on decode split counts. |
-| `README.md` | This section. |
+The headline: **the parent's two "not available / not modified" statements no longer hold on
+this branch.**
 
-```sh
-git diff --stat v1.5.0 -- . ':(exclude)exllamav3/exllamav3_ext/rocm' ':(exclude)exllamav3/rocm_py' ':(exclude)rocm_tools'
-```
+- **Tensor-parallel is available on the ROCm path.** The TP2 executions behind the benchmark
+  reports go through `exllamav3/model/model_tp*.py` with an RCCL backend
+  (`model_tp_rccl.py`), validated on 2× V620. These are not the upstream CUDA `parallel/`
+  kernels; other rank counts, GPUs and models are untested in TP mode.
+- **Shared C++/CUDA code is now modified.** One upstream header,
+  `exllamav3/exllamav3_ext/reduction.cuh`, carries a small race fix (single writer for the
+  shared-memory broadcast slot), and the RDNA2 native siblings under
+  `exllamav3/exllamav3_ext/rocm/` changed materially (gfx1030 SIMT/fdot2 fallback in
+  `rdna_wmma.hip.h`, padded-row bounds fix in `exl3_gemv_multirow_rdna.hip`).
+- On top of that, this branch touches dozens of shared Python modules (TP loading,
+  Qwen3.8-Flash-Next architecture pieces — PLE/n-gram, QSA indexer, GDN, block-sparse MLP —
+  `rocm_py` steering, vendored FLA dispatch) and adds the `rocm_tools/rdna2` measurement
+  harness with CPU test suites.
 
-The table lists the upstream integration points; local validation documentation is under `doc/`.
+[doc/fork_changes.md](doc/fork_changes.md) is the rough change list; this README stays a
+summary, not a git diary.
+
+*How the port works (inherited architecture):* CUDA kernels that cannot compile for RDNA are
+replaced by hand-written HIP siblings under `exllamav3/exllamav3_ext/rocm/`, reached through
+a compat shim; Python divergences live in `exllamav3/rocm_py/` and are applied as
+monkeypatches at import. On this branch `rocm/` grew the gfx1030 SIMT fallback and the
+multirow bounds fix, and the shared engine code changed as listed above.
 
 ### Requirements
 
 | | |
 |---|---|
-| ROCm | **7.2.4 or newer** — the build hard-fails below this |
-| GPU | RDNA2 `gfx1030` (V620): experimental single-GPU and two-V620 layer-split support, validated on Qwen3-8B EXL3 4bpw and Qwen3-30B-A3B EXL3 3bpw. See [single-V620 results](doc/rdna2_phase2_results.md) and [V620 pair results/configuration](doc/v620_pair_results.md). The validated pair uses `HSA_ENABLE_SDMA=0` and `profile_peak` during inference, restoring the host policy afterwards. RDNA3 / RDNA3.5: `gfx1100`, `gfx1101`, `gfx1102`, `gfx1150`, `gfx1151` — developed and validated on gfx1151. RDNA4 (`gfx1200`, `gfx1201`): experimental. R9700/gfx1201 needs a 64 KiB LDS build budget; its small cooperative GEMM still reaches an unimplemented WMMA trap. Qwen3-8B and Qwen3-30B-A3B were measured with explicit comparison adapters, including MLP range balancing and MoE prefill reconstruction. See [R9700 vs V620 results and workarounds](doc/r9700_vs_v620.md); this is not general unmodified RDNA4 model support. |
-| Python | 3.10+ (whatever the ROCm torch index publishes a wheel for) |
-| Torch | ROCm build, from `download.pytorch.org/whl/rocmX.Y` — see below |
+| ROCm | **7.2.4 or newer** — `setup.py` hard-fails below this. The *measured* stack used a custom ROCm 7.14 HIP/ROCr SDK (`hipcc` 7.14.60850) under `/opt/rocm/core-7.14` with `torch 2.12.0+rocm7.2`. That exact combination produced the numbers below; it is not a distributable prebuilt image, and passing the `>= 7.2.4` check is not a claim that every newer version was tested. Point `ROCM_PATH`/`PATH`/`LD_LIBRARY_PATH` at **your** install |
+| GPU | Primary target: RDNA2 `gfx1030` (V620). See the matrix above. RDNA3/3.5 (`gfx1100`–`gfx1151`): inherited parent coverage, not rerun here. RDNA4 (`gfx1200`/`gfx1201`): R9700 measured only with the documented workarounds — not general support |
+| Python | 3.10+ (measured on 3.12) |
+| Torch | ROCm build from `download.pytorch.org/whl/rocmX.Y` (measured: 2.12.0+rocm7.2, triton-rocm 3.7.0) |
 
-You do **not** need FlashAttention. Upstream uses Triton paged attention, so the FA2 dependency that
-earlier ROCm forks required is gone.
+You do **not** need FlashAttention. Upstream uses Triton paged attention, so the FA2
+dependency that earlier ROCm forks required is gone.
 
-### Install
+### Quick start (build for gfx1030)
 
 ```sh
-git clone https://github.com/CarouselAether/rocm_exl3
+git clone https://github.com/jyohukuchan/rocm_exl3
 cd rocm_exl3
 
-# 1. ROCm torch + triton-rocm + everything else.
-#    Do NOT use requirements.txt on ROCm -- it resolves torch from PyPI, which is the CUDA build.
-pip install -r requirements_rocm.txt
+python3 -m venv .venv
+source .venv/bin/activate
 
-# 2. Build and install the extension against that torch.
-pip install --no-build-isolation .
+# Set this to your installed ROCm SDK (the measured SDK was /opt/rocm/core-7.14).
+export ROCM_PATH=/opt/rocm
+export PATH="$ROCM_PATH/bin:$PATH"
+hipcc --version
+
+python -m pip install --index-url https://download.pytorch.org/whl/rocm7.2 \
+  'torch==2.12.0+rocm7.2'
+python -m pip install -r requirements_rocm.txt -c benchmarks/2026-09-30/constraints.txt
+EXL3_BACKEND=rocm PYTORCH_ROCM_ARCH=gfx1030 MAX_JOBS=12 \
+  python -m pip install --no-build-isolation .
 ```
 
-`--no-build-isolation` is required, not optional: pip otherwise builds in an isolated environment with no
-torch in it, and a torch C++ extension has to be compiled against the same torch it will run against.
-Building without it fails with an explanation rather than silently installing an empty package.
+`--no-build-isolation` is required, not optional: pip otherwise builds in an isolated
+environment with no torch in it, and a torch C++ extension has to be compiled against the
+same torch it will run against. Set `PYTORCH_ROCM_ARCH` (or `GPU_ARCHS`) explicitly so the
+build does not depend on autodetection; `MAX_JOBS` limits the parallel `hipcc` jobs on
+low-RAM machines. There is no prebuilt wheel for this fork, and the custom 7.14 SDK the
+measurements ran on is not part of any one-command turnkey install.
 
-The build compiles ~117 sources with `hipcc` in parallel (`MAX_JOBS` to limit it, e.g. on a low-memory
-machine).
+**Full reproduction** — exact environment, runtime switches, process limits, power helper,
+frozen prompts and the TP2 batch-4 benchmark command — is in
+**[doc/reproduce_v620.md](doc/reproduce_v620.md)**.
 
-### Tested
+### Dated benchmark overview (2026-09-30)
 
-Developed on a Ryzen AI Max 395+ (Strix Halo, **gfx1151**, 128 GB unified) — Ubuntu 24.04, ROCm 7.2.4,
-torch 2.13.0+rocm7.2, triton-rocm 3.7.1, Python 3.12. Verified end to end with GLM-4.6V (MoE, 3.55 bpw),
-Gemma-4-31B (dense), DeepSeek-V4-Flash (DSA sparse attention, 2.04 bpw) and Qwen 3.8-Flash-Next
-(QSA sparse attention + PLE n-gram embeddings + 512-expert MoE, 4 bpw). The other architectures in the
-supported list above should work but are untested — reports welcome.
+The public bundle at **[benchmarks/2026-09-30/](benchmarks/2026-09-30/README.md)**
+(`results.json`, `environment.json`, frozen prompt files, sanitized per-run reports under
+`reports/`) contains the validated V620×2 TP2 measurements on Qwen3.8-Flash-Next EXL3
+3.05bpw with the original distributed pack plus original packed 3-bit MTP weights, K5/V4 KV,
+Engram as a single CPU-RAM table, input 8192 / output 256 tokens per sequence. Each
+language ran warm 1 + timed 2 groups (batch 1–3) and warm 1 + timed 3 groups (batch-4
+confirmation). Full-span aggregate decode tok/s (Japanese / code):
 
-**v1.5.0 sync status (2026-09-20, validated on gfx1151):** the port was brought from v1.4.4 to v1.5.0 by
-source-level merge — upstream's own diffs applied to the RDNA siblings, two siblings regenerated, two new
-CUDA-only kernels stubbed. Validated end to end on gfx1151: full build, sibling drift audit, numeric ladder
-(`mgemv_check`, `test_reconstruct_had`, `test_dsa_kernels` all PASS, pytest suites 161/161), and coherent
-generation on the four models in the verified list — including Qwen 3.8-Flash-Next, the architecture this
-sync targets. `exllamav3/exllamav3_ext/rocm/RDNA_NOTES.md` lists exactly what changed and what remains
-unexercised (the opt-in gates below).
+| Batch | Draft | JA decode | code decode |
+|---|---|---:|---:|
+| 1 | dynamic MTP max 4 | 38.88 | 50.52 |
+| 2 | fixed MTP1 | 55.85 | 56.68 |
+| 3 | fixed MTP1 | 66.25 | 73.95 |
+| 4 | fixed MTP1 | 70.56 | 66.51 |
 
-### Known limitations on ROCm
+Batch-4 aggregate prefill (conservative: total input tokens over the *latest* first
+delivery): **471.80 / 459.68** tok/s (JA / code). Batch-4 *common-window* aggregate decode —
+the interval where every job is still generating, excluding later queue drain — was
+**76.29 / 85.80** tok/s, while the three timed groups' full-span rates ranged 68.46–73.24
+(JA) and 63.98–72.04 (code). MTP acceptance at batch 4: 70.6% (JA) / 92.2% (code);
+acceptance is workload-dependent and does not transfer to other prompts.
 
-- **Tensor-parallel is not available.** The `parallel/` kernels are excluded from the ROCm build.
-- **Vision/multimodal is untested.** Text generation is what has been verified.
-- **MoE decode at bsz ≤ 8 runs the per-token `exl3_mgemm` route** (upstream's own v1.4.4 route, reinstated by
-  `rocm_py`), not upstream v1.5.0's cooperative decode kernel (`exl3_moe_coop`, inline-PTX GEMV based, not ported).
-  On RDNA each call lands on the mgemv fast path; Laguna-S-2.1 4bpw decodes at 21 t/s this way versus 10 through
-  the fused `exl3_moe` kernel (`EXL3_ROCM_MOE_MGEMM_ROUTE=0` selects that steer). `EXL3_ROCM_MOE_BSZN=1` restores
-  upstream dispatch and raises in the stub.
-- **The one-launch sliced Q/K/V bundle is off by default** (`EXL3_ROCM_QKV_SLICE=1` to enable): the sliced mgemm
-  mode is ported into the WMMA kernels but unvalidated on RDNA; the pairwise bundles from v1.4.4 are used.
-- **RDNA4 (gfx1200/gfx1201) runs MoE through the per-expert path**: the fused MoE kernel's WMMA uses gfx11
-  intrinsics that have no gfx12 encoding (LLVM cannot select them), so `rdna_wmma.hip.h` traps on gfx12 and
-  `rocm_py` steers MoE off the fused kernel there. Dense models are unaffected. Compile-verified for gfx1201
-  (`GPU_ARCH=gfx1201 rocm_tools/hipcc_probe.sh --all`); **never run on real RDNA4 hardware** — testers welcome.
-  `EXL3_ROCM_RDNA4_FUSED_MOE=1` re-enables the fused route for a future gfx12 WMMA port.
-- **MoE 32/64-row tiles fall back to the 16-row kernel** (same numerics; slower prefill on mul1 MoE models).
-- **The batched expert-reconstruct tier is off by default** (`EXL3_ROCM_BATCH_RECON=1` to enable): ported
-  mechanically, untested.
-- **fp16-accumulate `hgemm` and the sm_120 quantizer specialisations are CUDA-only.** hipBLAS and the original
-  quantizer kernels are used; nothing is lost on RDNA, which has no fp32-accumulate rate penalty.
-- **The int8-activation GEMV is not ported** (a disabled stub); every call uses the fp16 GEMV/GEMM kernels.
-- **HIP graph capture is off by default**: capture/replay corrupts BC decode across generator jobs and can hang at
-  capture on ROCm 7.2.x. `EXL3_ROCM_HIP_GRAPHS=1` re-enables it for A/B against newer ROCm stacks.
-- **Quantization (`convert.py`) is built but not yet exercised on RDNA.** Convert on CUDA if you can; reports welcome.
-- Kernel behaviour can be bisected at runtime with the `EXL3_ROCM_*` environment switches — see
-  `exllamav3/rocm_py/__init__.py`, whose module docstring lists each one and why it exists.
+Reading notes, also recorded in the bundle: the full-span decode metric counts delivered
+tokens from the first delivery to the last, including final drain delay — it is ongoing
+generation plus drain, and never a sum of independently measured per-job speeds. Batch 1's single long-context run (261,632 + 256, fixed MTP4) completed;
+batch 2–4 long-context maximums are not established.
+
+### Known caveats on this branch
+
+- **Residual numerical differences exist across execution paths.** Cold vs prefix-reused
+  executions have pre-existing cross-path numerical differences (distinct from the batched
+  recurrent-prune change, which was shown to leave same-input outputs identical). Exact
+  generated-token equality across all paths is *not* claimed.
+- **MTP acceptance is workload-dependent.** Draft windows 1–4 are supported; the screening
+  table shows the cases where more draft tokens make things *slower*.
+- **Context ceiling: only batch 1 at 261,632 input + 256 output is proven.** Batch 2–4
+  long-context tests were deferred; allocation-only probes are not validated limits.
+- **The benchmarking engines and harness tools were validated on hardware** (frozen prompts,
+  placement / cache / RAM audits, repeated timed groups). **The bundled HTTP server has not
+  been newly validated for the TP / MTP / Engram-mlock paths added on this branch** — its
+  `-tp` flags are unverified here.
+- Vision/multimodal remains untested on ROCm (inherited status).
+- Full target-model quantization is not validated here. A limited official-source MTP
+  3/5-bit quantization comparison was performed on V620; see [the precision study](doc/qwen38_v620_mtp_precision.md). The main inference benchmarks use publicly distributed EXL3 checkpoints. The MIT licence covers the code, **not** the model
+  weights.
+
+### Additional inherited limitations
+
+- **MoE decode at bsz ≤ 8 runs the per-token `exl3_mgemm` route** (the parent's route,
+  steered by `rocm_py`). This branch added `EXL3_ROCM_MOE_MGEMM_MAX_ROWS` (accepted range
+  8–24; the V620 TP2 measurements use 20).
+- **The one-launch sliced Q/K/V bundle is off by default** (`EXL3_ROCM_QKV_SLICE=1` to
+  enable): ported but unvalidated on RDNA.
+- **RDNA4 (gfx1200/gfx1201) runs MoE through the per-expert path**: the fused kernel's WMMA
+  has no gfx12 encoding. The R9700 numbers needed explicit comparison adapters
+  ([doc/r9700_vs_v620.md](doc/r9700_vs_v620.md)); never claim general unmodified RDNA4
+  support from them.
+- **MoE 32/64-row tiles fall back to the 16-row kernel** (same numerics; slower mul1 MoE
+  prefill).
+- **The batched expert-reconstruct tier is off by default** (`EXL3_ROCM_BATCH_RECON=1`).
+  Batched recurrent checkpoint pruning is also opt-in (`EXL3_BATCH_RECURRENT_PRUNE=1`).
+- **fp16-accumulate `hgemm` and the sm_120 quantizer specialisations are CUDA-only.**
+- **The int8-activation GEMV is not ported** (disabled stub).
+- **HIP graph capture is off by default** (`EXL3_ROCM_HIP_GRAPHS=1` re-enables; known
+  corruption/hang on ROCm 7.2.x).
+- **`EXL3_NGRAM_MLOCK=1` needs a ≥ 34 GiB per-process `RLIMIT_MEMLOCK`** and fails
+  explicitly if locking cannot be granted — see [doc/reproduce_v620.md](doc/reproduce_v620.md)
+  for how to raise the limit without running inference as root.
+- Kernel behaviour can be bisected at runtime with the `EXL3_ROCM_*` environment switches —
+  see `exllamav3/rocm_py/__init__.py`, whose module docstring lists each one and why it
+  exists.
 
 ### Server
 
-The fork ships its own server: `rocm_tools/exl3_server/server.py`, a single-file, llama.cpp-server-style,
-OpenAI-compatible HTTP server. Its dependencies are in `requirements_rocm.txt`. It takes the same model/sampler
-flags as `examples/chat.py` (they come from `exllamav3.model_init.add_args`), plus the server flags below.
+**Parent feature — *not* revalidated for the new TP / MTP paths.**
+The fork ships its own server: `rocm_tools/exl3_server/server.py`, a single-file,
+llama.cpp-server-style, OpenAI-compatible HTTP server. Its dependencies are in
+`requirements_rocm.txt`. It takes the same model/sampler flags as `examples/chat.py` (they
+come from `exllamav3.model_init.add_args`), plus the server flags below. On this branch the
+server was not revalidated for TP2 + MTP + Engram-mlock; treat that flag matrix as inherited
+and unverified here.
 
 ```sh
 python rocm_tools/exl3_server/server.py -m ~/models/<model>-exl3 -cs 32768 -ngram 2 -dds
 # serves on http://127.0.0.1:3953
 ```
 
-`-ngram 2 -dds` (n-gram drafting, skipped while acceptance is low) is the recommended speculative-decoding setting on
-this GPU. Endpoints: `GET /health`, `GET /props`, `GET /v1/models`, `POST /v1/chat/completions` (prompt built with the
-model's own chat template), `POST /v1/completions` (prompt used verbatim, for clients that apply their own instruct
-template), `POST /tokenize`, `POST /detokenize`. Streaming uses standard OpenAI SSE chunks ending in `data: [DONE]`.
-Sampling flags set the *defaults*; each request can override them. See
-[`rocm_tools/exl3_server/README.md`](rocm_tools/exl3_server/README.md) for endpoint details, SillyTavern setup and
-measurements.
+`-ngram 2 -dds` (n-gram drafting, skipped while acceptance is low) is the recommended
+speculative-decoding setting on this GPU. Endpoints: `GET /health`, `GET /props`,
+`GET /v1/models`, `POST /v1/chat/completions` (prompt built with the model's own chat
+template), `POST /v1/completions` (prompt used verbatim, for clients that apply their own
+instruct template), `POST /tokenize`, `POST /detokenize`. Streaming uses standard OpenAI SSE
+chunks ending in `data: [DONE]`. Sampling flags set the *defaults*; each request can override
+them. See [`rocm_tools/exl3_server/README.md`](rocm_tools/exl3_server/README.md) for endpoint
+details, SillyTavern setup and measurements.
 
 #### All flags
 
-Every flag has a short and a long form; the short form is shown. Run `server.py -h` for the live list.
+Every flag has a short and a long form; the short form is shown. Run `server.py -h` for the
+live list.
 
 **Model loading**
 
 | flag | what it does |
 |---|---|
 | `-m DIR` | model directory (required) |
-| `-gs GB[,GB...]` | max VRAM to use per device, in GB; on a single-GPU Strix Halo box this is one number |
+| `-gs GB[,GB...]` | max VRAM to use per device, in GB |
 | `-lm` | print loader metrics |
 | `-or FILE` | tensor override spec (YAML) |
 | `-tp` | load in tensor-parallel mode (multi-GPU); respects `-gs` where it can |
@@ -181,7 +252,7 @@ Every flag has a short and a long form; the short form is shown. Run `server.py 
 
 | flag | what it does |
 |---|---|
-| `-dm DIR` | separate draft model, like llama.cpp's `--model-draft`; DFlash / EAGLE-3-style drafters load directly (e.g. `-dm ~/models/Laguna-S-2.1-DFlash`) |
+| `-dm DIR` | separate draft model, like llama.cpp's `--model-draft`; DFlash / EAGLE-3-style drafters load directly |
 | `-mtp` | draft with the model's own MTP head (DeepSeek V4, Qwen3.8-Flash-Next, ...); not with `-dm` |
 | `-ndt N` | draft tokens per step (default: the draft model's own default, else 4) |
 | `-ngram N` | n-gram drafting from repeats already in the context, minimum match length N; no extra model. `-ngram 2` is the cheap default |
@@ -189,8 +260,8 @@ Every flag has a short and a long form; the short form is shown. Run `server.py 
 | `-dc X` | confidence target for dynamic draft truncation, default 0.4 |
 | `-dmcl N` | like `-mcl` for the draft model or MTP head (experimental) |
 
-Draft acceptance is printed per request in the server log and returned in the native `timings` as
-`draft_n` / `draft_n_accepted`.
+Draft acceptance is printed per request in the server log and returned in the native
+`timings` as `draft_n` / `draft_n_accepted`.
 
 **Sampling defaults** (per-request values override these)
 
@@ -200,7 +271,7 @@ Draft acceptance is printed per request in the server log and returned in the na
 | `-temp_first` | apply temperature before truncation |
 | `-repp X` | HF-style repetition penalty, 1 disables |
 | `-presp X`, `-freqp X` | presence / frequency penalty, 0 disables |
-| `-penr N` | range in tokens the penalties look back over, default 1024 (see the note below) |
+| `-penr N` | range in tokens the penalties look back over, default 1024 |
 | `-minp X` | min-P truncation, default 0.08, 0 disables |
 | `-topk N` | top-K truncation, 0 disables |
 | `-topp X` | top-P truncation, 1 disables |
@@ -208,8 +279,8 @@ Draft acceptance is printed per request in the server log and returned in the na
 | `-xtcp X`, `-xtct X` | XTC probability (0 disables) and threshold (default 0.1) |
 | `-drym X`, `-dryb X`, `-dryal N`, `-dryln N` | DRY multiplier (0 disables), base (1.75), allowed repeat length (2), scan range in tokens (-1 = whole context, 0 disables) |
 
-Keep the penalty range bounded: unbounded frequency/presence penalties over a long context were the cause of the
-"coherency cliff" around 8K tokens that was once blamed on the kernels.
+Keep the penalty range bounded: unbounded frequency/presence penalties over a long context
+were the cause of the "coherency cliff" around 8K tokens that was once blamed on the kernels.
 
 **Server**
 
@@ -223,6 +294,15 @@ Keep the penalty range bounded: unbounded frequency/presence penalties over a lo
 | `-lw N`, `-lmr N` | loop detection: stop after a window of N tokens repeats `-lmr` times (default 3); `-lw 0` disables |
 
 ---
+
+## Inherited from upstream ExLlamaV3 (not revalidated on this branch)
+
+> Everything below this line is the upstream/parent README content, kept for the CUDA path,
+> the general API surface and model/architecture reference. It describes what upstream and
+> the fork parent document, not what this branch re-measured: the V620 validation status and
+> the ROCm build/reproduction specifics are in the sections above and in
+> [doc/reproduce_v620.md](doc/reproduce_v620.md) / [doc/fork_changes.md](doc/fork_changes.md).
+
 <p align="center">
   <img src="doc/logo.png" width="640" alt="Llama 3.1 8B Instruct quantization benchmark across bits per weight">
 </p>
@@ -231,7 +311,7 @@ Keep the penalty range bounded: unbounded frequency/presence penalties over a lo
 
 ExLlamaV3 is an inference library for running local LLMs on modern consumer GPUs, with flexible quantization and parallel inference.
 
-- **Quantization** - [EXL3](doc/exl3.md), based on QTIP, plus 2–8 bit cache quantization.
+- **Quantization** - [EXL3](https://github.com/turboderp-org/exllamav3/blob/master/doc/exl3.md), based on QTIP, plus 2–8 bit cache quantization.
 - **Parallel inference** - Flexible tensor-parallel and expert-parallel inference for consumer hardware setups.
 - **CPU offloading** - Allows large MoE models to run with limited GPU resources. AVX2 and AVX512 support.  
 - **Generation** - Continuous, dynamic batching, speculative decoding, multimodal support.
@@ -245,8 +325,10 @@ ExLlamaV3 is an inference library for running local LLMs on modern consumer GPUs
 
 Start by making sure you have the appropriate version of [PyTorch](https://pytorch.org/get-started/locally/) installed (CUDA 12.4 or later) since the Torch dependency is not automatically handled by `pip`. Then pick a method below:
 
-> **ROCm:** see [Install](#install) at the top of this file. The methods below are upstream's CUDA
-> instructions, kept for the CUDA path. There is no prebuilt ROCm wheel; building from source is the ROCm route.
+> **ROCm:** see [Quick start](#quick-start-build-for-gfx1030) at the top of this file, and
+> [doc/reproduce_v620.md](doc/reproduce_v620.md) for the fully specified V620 environment. The
+> methods below are upstream's CUDA instructions, kept for the CUDA path. There is no prebuilt
+> ROCm wheel; building from source is the ROCm route.
 
 ### Prebuilt wheel · recommended
 
@@ -336,12 +418,15 @@ ROCm-specific build variables:
 - `EXL3_BACKEND`: `cuda` or `rocm`, forcing the backend. Otherwise it follows the installed torch.
 - `MAX_JOBS`: also honoured by the ROCm builder, which drives `hipcc` directly. It defaults to a value
   bounded by core count, RAM (~2.5 GB budgeted per job) and a cap of 32, so lower it if you still run out of memory.
-- `PYTORCH_ROCM_ARCH` / `GPU_ARCHS`: comma- or space-separated `gfx` list to build for (e.g. `gfx1100,gfx1151`;
-  semicolons are *not* separators). An explicit value is used as-is. If unset, the build uses what `rocminfo`
-  reports, filtered against the supported list. `PYTORCH_ROCM_ARCH` takes precedence.
+- `PYTORCH_ROCM_ARCH` / `GPU_ARCHS`: comma- or space-separated `gfx` list to build for (e.g. `gfx1030`
+  for a V620, or `gfx1100,gfx1151`; semicolons are *not* separators). An explicit value is used as-is;
+  this fork documents building V620 work with an explicit `gfx1030`. If unset, the build uses what
+  `rocminfo` reports, filtered against the supported list (`gfx1030` is included on this branch).
+  `PYTORCH_ROCM_ARCH` takes precedence.
 - LDS budget: not an environment variable. `setup.py` passes `-DEXL3_RDNA_SMEM_MAX` from the target archs
-  (64 KB for Strix / Strix Halo and unknown targets, 90 KB for discrete RDNA3/4, the smallest across a multi-arch
-  build), and at runtime it is further clamped to the device's `sharedMemPerBlock`.
+  (64 KB for `gfx1030` (RDNA2), Strix / Strix Halo, `gfx1201` as measured on R9700, and unknown targets;
+  90 KB for discrete RDNA3 and `gfx1200`), and at runtime it is further clamped to the device's
+  `sharedMemPerBlock`.
 - `EXL3_RDNA_MOE_TILESIZE_K`: `32` (default) or `16`. 16 forces the MoE GEMMs onto the single-K path — the
   tile geometry every RDNA shape is validated on — at a cost of roughly 1.4–1.6× MoE throughput. It is the
   first thing to try if fused MoE output ever looks wrong.
@@ -414,7 +499,7 @@ For instance, a versatile CLI chatbot:
 </p>
 
 ```sh
-python examples/chat.py -m <input_dir> -mode <prompt_mode>
+python examples/chat.py -m /path/to/model -mode PROMPT_MODE
 
 # Wealth of options
 python examples/chat.py -h
@@ -480,7 +565,7 @@ To convert a model to EXL3 format, use:
 
 ```sh
 # Convert model
-python convert.py -i <input_dir> -o <output_dir> -w <working_dir> -b <bitrate>
+python convert.py -i /path/to/input -o /path/to/output -w /path/to/work -b 4.0
 
 # Resume an interrupted quant job
 python convert.py -w <working_dir> -r

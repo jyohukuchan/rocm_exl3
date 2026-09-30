@@ -1,0 +1,9 @@
+# Direct runtime versions observed for the dated V620 measurements.
+# This is not a lockfile for the OS, HIP SDK, driver, or every transitive package.
+# Install the ROCm torch wheel from the ROCm 7.2 index before requirements_rocm.txt.
+torch==2.12.0+rocm7.2
+triton-rocm==3.7.0
+numpy==2.4.4
+transformers==5.17.0
+safetensors==0.8.0
+tokenizers==0.23.2

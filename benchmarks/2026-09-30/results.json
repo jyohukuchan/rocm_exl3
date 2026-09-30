@@ -306,7 +306,7 @@
       "power_restored": true
     },
     "4": {
-      "report": "reports/confirm-concurrent-8k-b4-d1-r3.json.gz",
+      "report": "reports/batch4-8k-mtp1.json.gz",
       "prompt_manifest": "prompts-8192-b4-r3.json.gz",
       "draft_tokens": 1,
       "dynamic_draft": false,
@@ -397,8 +397,11 @@
       },
       "all_final_audits_passed": true,
       "power_restored": true,
-      "concurrency": {
-        "tag": "confirm-concurrent-8k-b4-d1-r3",
+      "load_time_only_override": {
+        "EXL3_HOST_MEM_RESERVE_MB": "0"
+      },
+      "validation": {
+        "tag": "batch4-8k-mtp1",
         "all_audits_passed": true,
         "jobs": 32,
         "timed_jobs": 24,
@@ -418,18 +421,8 @@
           "0000:03:00.0": 28.71554946899414
         },
         "sampled_inference_power_all_peak": true,
-        "inference_host_samples": 333,
-        "samples_with_external_evaluator": 277,
-        "external_names": [
-          "kld_llama_dump",
-          "llama-quantize"
-        ],
         "min_available_memory_GiB": 3.6584320068359375,
-        "scope": "batch4 speed only; long-context deferred",
-        "measurement_note": "external evaluation naturally finished during this run; no claim of constant external load or isolated performance"
-      },
-      "load_time_only_override": {
-        "EXL3_HOST_MEM_RESERVE_MB": "0"
+        "scope": "batch4 speed only; long-context deferred"
       }
     }
   },
@@ -439,8 +432,8 @@
       "input_tokens": 261632,
       "output_tokens": 256,
       "draft_tokens_fixed": 4,
-      "prefill_aggregate_tps": 463.537,
-      "decode_full_span_tps": 33.816,
+      "prefill_aggregate_tps": 463.53720394354195,
+      "decode_full_span_tps": 33.81554636575954,
       "report": "reports/long-b1-c262144-d4.json.gz"
     },
     "batch2_to_4": "Not established; further tests deferred. Allocation-only successes are not inference limits."

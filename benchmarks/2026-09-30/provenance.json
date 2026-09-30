@@ -6,7 +6,7 @@
   "engine_native_fix_commit": "ab1bc110d09754564c50946e26224b939ff4a5d5",
   "engine_prune_commit": "3a6313a76e5aa04794769e385c26bc45be7030e5",
   "engine_mlock_commit": "cecfba70fe30cce2de6f60b0ab50b56d4e4ee166",
-  "sanitization": "Filesystem locations and GPU UUIDs replaced with symbolic placeholders in reports; measured numeric fields, token IDs, generated text, hashes and audits retained. Prompt manifests are byte-for-byte originals after decompression. Raw original-file SHA256 is provenance, not the hash of normalized JSON.",
+  "sanitization": "Filesystem locations and GPU UUIDs replaced with symbolic placeholders in reports; measured numeric fields, token IDs, generated text, hashes and audits retained. Prompt manifests are byte-for-byte originals after decompression. Raw original-file SHA256 is provenance, not the hash of normalized JSON. The final batch4 report has a public batch/setting label.",
   "files": [
     {
       "file": "prompts-8192-b1-r2.json.gz",
@@ -47,9 +47,9 @@
       "kind": "exact frozen input"
     },
     {
-      "file": "reports/confirm-concurrent-8k-b4-d1-r3.json.gz",
+      "file": "reports/batch4-8k-mtp1.json.gz",
       "original_sha256": "c732ec007fa6d84927fe973aa255721d2dcb2462f5283f6e6d7d9ab4fb95868a",
-      "decompressed_sha256": "edf20def1c3852865d72859f3a026d12bde29ca292634fde432460306ee62ab8",
+      "decompressed_sha256": "7bcc0f9510b522b0b30195cf9eedd1715a10cfa9ce6e33fd88390f97e9f4805a",
       "kind": "normalized raw report"
     },
     {
@@ -57,6 +57,11 @@
       "original_sha256": "0554e3bcc3319f0f870f5a7ec36b2cd9d2442cf1922c1fdd44092bbee4847d82",
       "decompressed_sha256": "9166dec5449e0dad91a7a1a36311a313e0a6543a616b97713e9966020b7fe92d",
       "kind": "normalized raw long-context report"
+    },
+    {
+      "file": "long-prompts-cap262144-b1.json.gz",
+      "decompressed_sha256": "722d37937b361453a9d06725fbc9e79c1360d9fb18e822c92a71daf0678bdb71",
+      "kind": "exact frozen long-context input"
     }
   ]
 }

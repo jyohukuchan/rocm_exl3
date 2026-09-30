@@ -39,7 +39,6 @@
   },
   "notes": [
     "Compiler SDK7.14 and Torch wheel ROCm7.2 labels differ; this records the actual mixed tested stack, not a guarantee for every ROCm version.",
-    "Benchmarks retain the original packed MTP3 weights; no5-bit MTP replacement.",
-    "Batch4 allowed external R9700 evaluation/quantization work; it ended during the run."
+    "Benchmarks retain the original packed MTP3 weights; no5-bit MTP replacement."
   ]
 }

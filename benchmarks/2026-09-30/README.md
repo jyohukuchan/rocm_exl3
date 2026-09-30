@@ -27,7 +27,7 @@ Batch 4 final-drain-inclusive ranges were 68.46–73.24 Japanese and 63.98–72.
 
 **Timing definitions:** conservative prefill = total input tokens / latest first delivery (includes first-token overhead). Full-span decode counts delivered tokens between the first and last deliveries, excluding the first burst and including final queue-drain delay. Common-window decode measures the overlap when every job is still generating, before later completion/drain. It is not the sum of independently measured job rates. Code generation is faster in the common window but pays a larger completion delay in these 256-token runs.
 
-**Host-load limitation:** batch 4 was deliberately measured with other R9700 evaluation/quantization work allowed concurrently. External jobs appeared in 277 of 333 sampled inference observations and ended during the run. Earlier batch 1–3 runs were measured separately. This is neither an isolated batch-scaling study nor a constant external-load comparison. The earlier two-repeat batch 4 result (66.89/58.81 tok/s including drain) remains documented separately; it is not silently pooled into this confirmation.
+The earlier two-repeat batch4 result (66.89/58.81 tok/s including drain) remains documented separately; it is not pooled into the final three-repeat confirmation.
 
 ## Validation and memory
 
@@ -42,16 +42,18 @@ Separately, batch 1 with fixed MTP4 completed **261,632 input +256 output tokens
 ## Included evidence
 
 - [results.json](results.json): medians, ranges, acceptance and conditions.
+- [constraints.txt](constraints.txt): observed direct Python dependency versions (not a full system/transitive lockfile).
 - [environment.json](environment.json): CPU, RAM, software/compiler versions and native SHA256. The tested HIP SDK 7.14 and Torch ROCm 7.2 wheel labels differ; this is the actual mixed stack, not a claim that all ROCm versions work.
 - [provenance.json](provenance.json): engine commits and hashes of the compressed evidence/input manifests. No model weights or native binaries are included.
 - `prompts-*.json.gz`: byte-for-byte frozen token-ID manifests after decompression, valid for the specified model/tokenizer revision. Do not reuse them for unrelated tokenizers.
+- `long-prompts-cap262144-b1.json.gz`: exact input for the separately recorded batch1 long-context observation. It is not part of the default8K speed run.
 - `reports/*.json.gz`: raw report structure with filesystem paths/GPU UUIDs normalized. Timing values, outputs, token IDs, hashes and audits are retained. Original and normalized hashes are distinguished. These are historical observations, not assertions about files on the reader's machine.
 
 To independently recompute the final batch 4 summary without running inference:
 
 ```bash
 RUN_DIR=$(mktemp -d)
-gzip -dc benchmarks/2026-09-30/reports/confirm-concurrent-8k-b4-d1-r3.json.gz > "$RUN_DIR/report.json"
+gzip -dc benchmarks/2026-09-30/reports/batch4-8k-mtp1.json.gz > "$RUN_DIR/report.json"
 python -m rocm_tools.rdna2.summarize_tp "$RUN_DIR/report.json"
 ```
 

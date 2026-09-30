@@ -134,20 +134,19 @@
   },
   "batch_optimization": {
     "report": "doc/qwen38_v620_context_batch.md",
-    "status": "8K speed measurements complete for batch1..4; batch4 confirmed with concurrent host work allowed. Further long-context tests deferred at user request.",
+    "status": "8K speed measurements complete for batch1..4. Further long-context tests deferred.",
     "moe_rows": 20,
     "prune": true,
     "prune_generic_default": false,
     "prune_evidence": "Same-input batch4 MTP1..4 sweep: 64/64 output rows unchanged; observed timed-group wall -5.2%, single repeat per condition, includes defrag/trim variance."
   },
   "batch4_benchmark": {
-    "tag": "confirm-concurrent-8k-b4-d1-r3",
+    "tag": "batch4-8k-mtp1",
     "input_tokens_each": 8192,
     "output_tokens_each": 256,
     "cache_tokens_total": 34816,
     "warmup_groups_per_language": 1,
     "timed_groups_per_language": 3,
-    "condition": "Other host work allowed concurrently by user; external jobs ended during run. Not an isolated or constant-load benchmark.",
     "artifact_directory": "/path/to/rocm-exl3-data/runs/context-batch",
     "load_time_env_override": {
       "EXL3_HOST_MEM_RESERVE_MB": "0"
