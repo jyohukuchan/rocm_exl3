@@ -75,3 +75,17 @@ Values are full-span aggregate decode tok/s. More draft tokens increase draft an
 ## Interrupted measurement
 
 The initial final batch2 attempt failed the Engram residency audit (7,951,096 / 7,968,789 pages resident). Its supervisor state was incomplete when inspected; no benchmark process remained. Evidence is preserved in `interrupted-final-b2-ram-audit/` and excluded from performance results. The retry keeps the same RAM audit and does not alter OS, ARC, or swap settings.
+
+## Reproduction
+
+The artifact `run_bench.py` starts/stops the local power helper and serializes one container invocation. Do not run GPU benchmarks concurrently. For example, from the host artifact directory (choose a fresh tag):
+
+```bash
+python3 run_bench.py --tag verify-b2-8k --source /work/runs/context-batch/source-prune-native-fixed \
+  --native /work/lib-context-mr-bounds --model /work/models/qwen38-flash-next-exl3-3.05bpw \
+  --execution tp --mode mtp --prompts /work/runs/context-batch/prompts-8192-b2-r2.json \
+  --cache-tokens 17408 --batch-size 2 --draft-tokens 1 --fixed-draft \
+  --replicate-router --env EXL3_ROCM_MOE_MGEMM_MAX_ROWS=20 --env EXL3_BATCH_RECURRENT_PRUNE=1
+```
+
+The JSON configuration is documentation, not automatically loaded by EXL3. The runner records the exact generated command in `TAG-process.json`; preserve both process completion and main report completion, final audits, and power restoration before treating a run as successful. For long-context reproduction also pass the recorded per-device load budgets, chunk size, total cache tokens, and the frozen long-prompt file.
