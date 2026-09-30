@@ -28,9 +28,12 @@ Each language has one warmup and two timed groups. Input 8192 and output 256 tok
 | Batch | Draft setting | Japanese decode aggregate tok/s | Code decode aggregate tok/s | Japanese/code prefill aggregate tok/s |
 |---|---|---:|---:|---:|
 | 1 | dynamic max4 | 38.88 | 50.52 | 476.76 / 479.41 |
-| 2–4 | fixed1 | Pending | Pending | Pending |
+| 2 | fixed1 | 55.85 | 56.68 | 473.83 / 467.18 |
+| 3–4 | fixed1 | Pending | Pending | Pending |
 
 Batch1 run: `final-8k-b1-d4`; Japanese repetitions 38.74–39.02, code 50.45–50.58 tok/s. Do not infer a universal gain from a two-repeat median.
+
+Batch2 run: `final-8k-b2-d1`; per-sequence averages Japanese27.93/code28.34 tok/s. Common-window aggregate Japanese59.22/code61.04 tok/s. All final TP/KV/RAM audits and power restoration passed.
 
 ## Long context (partial)
 
