@@ -73,20 +73,23 @@ Environment switches (all default to the safe value for this backend):
                            aborts startup (ValueError at import), never
                            log-and-fallthrough into the native coop stub.
                            Diagnostic: rocm_tools/rdna2/moe_rows_probe.py
-  EXL3_ROCM_MOE_MULTI_TOKEN=1  EXPERIMENTAL, default off; the r3 single-layer
+  EXL3_ROCM_MOE_MULTI_TOKEN=0  opt out of the experimental multi-token route
+                           (default enabled on native-compatible gfx10/gfx11);
+                           the r3 single-layer
                            probe and a 96-sample actual-model TP2/MTP gate
                            validate the measured batch-1 route, while general
                            batch shapes remain unvalidated
                            (rocm_tools/rdna2/moe_multitoken_probe.py):
-                           decode rows 2..5 take ONE slot-major exl3_mgemm
-                           triple (gate, up, down with num_tokens=R) instead
-                           of the per-token loop, so bsz>1 MoE decode pays
-                           three fast-path launches per layer, not 3R. Gated
-                           experts only, R*top_k <= 128, quant K in 1..8,
+                           decode rows 2..configured cap (8..24) take
+                           row-aligned chunks of ONE slot-major exl3_mgemm
+                           triple (gate/up/down with num_tokens=chunk rows)
+                           instead of the per-token loop. Each chunk keeps
+                           R*top_k <= 128 slots, quant K in 1..8,
                            fast-path-aligned dims (k/n % 128), contiguous
                            half y / int64 selected / half routing_weights;
                            R == 1 and anything unsupported keep the UNCHANGED
-                           row loop. gfx1030 only (arch resolved through the
+                           row loop. Native-compatible gfx10/gfx11 only
+                           (arch resolved through the
                            cached per-device probe, never re-queried per
                            decode step). Expert-range shards pre-rebase on
                            GPU -- torch.where(in-range, sel - min_expert,
@@ -100,8 +103,8 @@ Environment switches (all default to the safe value for this backend):
                            fused epilogue's arrival counter never completes
                            when masked-slot blocks skip their arrival, then
                            never self-resets (device-wide poisoning of later
-                           weighted calls). Sharded candidate calls therefore
-                           zero the down-proj slot scratch first -- inactive
+                           weighted calls). Older binaries therefore zero the
+                           down-proj slot scratch first -- inactive
                            slots contribute exact +0.0 to the fp32 chain;
                            the r3 probe measured the masked route (maximum
                            candidate relative-L2 9.644e-5 and scaled absolute
@@ -112,12 +115,15 @@ Environment switches (all default to the safe value for this backend):
                            restored env/output); measured batch-1 TP2/MTP
                            throughput improved +8.055% observed / +11.236%
                            engine, while general batch shapes remain unvalidated --
-                           and their weighted launch runs with
-                           EXL3_GEMV_FUSE_OUT=0, set and restored around that
-                           one call only (the env is re-read per launch, the
-                           same mechanism rocm_tools/mgemv_check.py toggles
-                           EXL3_MGEMV with). Unsharded modules can never
-                           produce -1 picks and keep the fused form. Arbitrary
+                           Older native binaries zero down scratch and run
+                           their weighted launch with EXL3_GEMV_FUSE_OUT=0,
+                           set and restored around that call; binaries with
+                           EXL3_MGEMV_MASKED_REDUCE_SUPPORTED use their native
+                           masked reduction without the process toggle.
+                           Unsharded modules can never
+                           produce -1 picks and keep the fused form. Gateless
+                           relu2 experts use up/activation/down when their
+                           native layouts pass the same guards. Arbitrary
                            concurrent native callers are unsupported; TP2
                            rank processes have separate environments.
   EXL3_ROCM_QKV_SLICE=1    enable the one-launch sliced Q/K/V bundle
@@ -183,7 +189,10 @@ def _env_int(name: str, default: int, lo: int, hi: int) -> int:
 MOE_MT_ENV = "EXL3_ROCM_MOE_MULTI_TOKEN"
 MOE_MT_FUSE_ENV = "EXL3_GEMV_FUSE_OUT"
 MOE_MT_ROWS_MIN = 2
-MOE_MT_ROWS_MAX = 5      # bounded experiment: 2..5 rows, R*top_k <= 128 slots
+# Kept as the CPU-contract fallback; apply() replaces _MOE_MT["max_rows"] with
+# EXL3_ROCM_MOE_MGEMM_MAX_ROWS (8..24) for the loaded native route.
+MOE_MT_ROWS_MAX = 5
+MOE_MT_ROWS_LIMIT = 24
 MOE_MT_SLOTS_MAX = 128   # MAX_INDICES, the cooperative/fast bound; A slot-major
 
 # Wiring done by apply() under the default mgemm steer; tests inject fakes.
@@ -197,6 +206,7 @@ _MOE_MT: dict = {
     "tcache": None,
     "arch_ok": None,        # cached per-device gfx1030 probe, resolved at load
     "arch_cache": {},       # device-index -> bool, populated once at apply()
+    "max_rows": MOE_MT_ROWS_MAX,
     "require_cuda": True,
 }
 
@@ -310,9 +320,11 @@ def moe_multi_token_status() -> dict:
     return {
         "on": bool(_MOE_MT["on"]),
         "reason": str(_MOE_MT["reason"]),
-        "rows": (MOE_MT_ROWS_MIN, MOE_MT_ROWS_MAX),
+        "rows": (MOE_MT_ROWS_MIN, int(_MOE_MT.get("max_rows", MOE_MT_ROWS_MAX))),
         "slots_max": MOE_MT_SLOTS_MAX,
         "require_cuda": bool(_MOE_MT["require_cuda"]),
+        "masked_reduce_capability": bool(
+            getattr(_MOE_MT.get("ext"), "EXL3_MGEMV_MASKED_REDUCE_SUPPORTED", False)),
     }
 
 
@@ -338,19 +350,24 @@ def moe_multi_token_supported(mod, y, selected_experts, routing_weights):
     if tuple(routing_weights.shape) != (r, k):
         return False, (f"routing weights shape {tuple(routing_weights.shape)} "
                        f"!= selected shape {(r, k)}")
-    if not MOE_MT_ROWS_MIN <= r <= MOE_MT_ROWS_MAX:
-        return False, f"rows {r} outside {MOE_MT_ROWS_MIN}..{MOE_MT_ROWS_MAX}"
+    max_rows = int(_MOE_MT.get("max_rows", MOE_MT_ROWS_MAX))
+    if not MOE_MT_ROWS_MIN <= r <= max_rows:
+        return False, f"rows {r} outside {MOE_MT_ROWS_MIN}..{max_rows}"
     if k < 1 or r * k > MOE_MT_SLOTS_MAX:
-        return False, f"{r}*{k} slots exceeds the {MOE_MT_SLOTS_MAX}-slot bound"
-    if not getattr(mod, "gated", False):
-        return False, "gateless experts"
+        # Larger row batches are split into row-aligned chunks below; the
+        # whole call itself may exceed MAX_INDICES while each native launch
+        # remains within its 128-slot bound.
+        if k < 1 or MOE_MT_SLOTS_MAX // k < MOE_MT_ROWS_MIN:
+            return False, f"top_k={k} cannot form a multi-token <= {MOE_MT_SLOTS_MAX}-slot chunk"
     cfg = getattr(mod, "experts_cfg", None)
     if cfg is None:
         return False, "experts_cfg unloaded"
+    gated = bool(getattr(mod, "gated", False))
     mg, mu, md = mod.multi_gate, mod.multi_up, mod.multi_down
-    if mg is None or mu is None or md is None:
+    if mu is None or md is None or (gated and mg is None):
         return False, "fused MultiLinear tables absent"
-    for nm, m in (("gate", mg), ("up", mu), ("down", md)):
+    mats = ([ ("gate", mg) ] if gated else []) + [("up", mu), ("down", md)]
+    for nm, m in mats:
         if not 1 <= int(m.K) <= 8:      # the fast path's template switch
             return False, f"{nm} K={m.K} outside 1..8"
     if y.dtype != t.half or selected_experts.dtype != t.long \
@@ -372,7 +389,7 @@ def moe_multi_token_supported(mod, y, selected_experts, routing_weights):
         if device_index not in arch_cache:
             return False, "arch probe not wired"
         if not arch_cache[device_index]:
-            return False, "device is not gfx1030"
+            return False, "device is outside native gfx10/gfx11 envelope"
     hi_ = y.shape[1]
     if cfg.yh.shape[-1] != hi_ or hi_ % 128:
         return False, f"hidden width {hi_} != padded gate/up k or not %% 128"
@@ -406,8 +423,8 @@ def moe_multi_token_supported(mod, y, selected_experts, routing_weights):
     # allocates one bounded module-owned native bundle for that case, so a
     # short cfg buffer is a reason to stage, not a reason to silently poison
     # the grouped stride.
-    if slots > MOE_MT_SLOTS_MAX:
-        return False, f"{slots} slots exceeds the {MOE_MT_SLOTS_MAX}-slot bound"
+    if MOE_MT_SLOTS_MAX // k < MOE_MT_ROWS_MIN:
+        return False, f"top_k={k} cannot form a multi-token <= {MOE_MT_SLOTS_MAX}-slot chunk"
     if cfg.out_bszn.shape[0] < r:
         return False, f"out_bszn scratch has {cfg.out_bszn.shape[0]} rows < {r}"
     mine, maxe = cfg.min_expert, cfg.max_expert
@@ -418,15 +435,15 @@ def moe_multi_token_supported(mod, y, selected_experts, routing_weights):
     if mine is not None and mine >= 0:
         if not mine < maxe:
             return False, f"degenerate expert range [{mine},{maxe})"
-        for nm, m in (("gate", mg), ("up", mu), ("down", md)):
+        for nm, m in mats:
             if m.ptrs_trellis.shape[0] < maxe - mine:
                 return False, (f"{nm} pointer table holds {m.ptrs_trellis.shape[0]} "
                                f"entries < shard width {maxe - mine}")
     return True, ""
 
 
-def _moe_mt_run(mod, y, selected_experts, routing_weights):
-    """Slot-major multi-token launch triple. Assumes moe_multi_token_supported.
+def _moe_mt_run(mod, y, selected_experts, routing_weights, out_row_offset=0):
+    """Run one row-aligned slot-major launch triple.
 
     Slots are (row, pick) flattened token-major: slot j = row j//k, pick j%k,
     so the native grouped reduce (num_tokens=r, stride = slots/r = k) reads
@@ -452,6 +469,8 @@ def _moe_mt_run(mod, y, selected_experts, routing_weights):
     idx_buf.copy_(selected_experts.reshape(-1))
     mine, maxe = cfg.min_expert, cfg.max_expert
     sharded = mine is not None and maxe is not None and mine >= 0
+    masked_reduce_capability = bool(
+        getattr(ext, "EXL3_MGEMV_MASKED_REDUCE_SUPPORTED", False))
     if sharded:
         # Position-preserving LOCAL indices: in-range picks rebase to the
         # shard's pointer tables, out-of-range picks become -1 (skip). All
@@ -467,6 +486,7 @@ def _moe_mt_run(mod, y, selected_experts, routing_weights):
     idx = idx_buf.view(1, slots)
     w = routing_weights.view(1, slots)
 
+    gated = bool(getattr(mod, "gated", False))
     mg, mu, md = mod.multi_gate, mod.multi_up, mod.multi_down
     # Every native argument whose outer dimension contributes to bszm is
     # sliced to the active slot count.  Passing the full per-layer capacity
@@ -485,7 +505,7 @@ def _moe_mt_run(mod, y, selected_experts, routing_weights):
         interm_u = native["interm_u"].narrow(0, 0, slots)
         interm_a = native["interm_a"].narrow(0, 0, slots)
         out_d = native["out_d"].narrow(0, 0, slots)
-    out_bszn = cfg.out_bszn.narrow(0, 0, r)
+    out_bszn = cfg.out_bszn.narrow(0, out_row_offset, r)
 
     # Native mgemv skips -1 slots without writing their C rows.  Clear both
     # gate/up outputs before those launches so activation sees zeros for an
@@ -494,17 +514,18 @@ def _moe_mt_run(mod, y, selected_experts, routing_weights):
     if sharded:
         interm_g.zero_()
         interm_u.zero_()
-    ext.exl3_mgemm(
-        a_slots, mg.ptrs_trellis, interm_g, mg.ptrs_suh, yh, mg.ptrs_svh,
-        idx, None, mg.K, -1, mg.mcg, mg.mul1, -1, -1, 0, r, None, None)
+    if gated:
+        ext.exl3_mgemm(
+            a_slots, mg.ptrs_trellis, interm_g, mg.ptrs_suh, yh, mg.ptrs_svh,
+            idx, None, mg.K, -1, mg.mcg, mg.mul1, -1, -1, 0, r, None, None)
     ext.exl3_mgemm(
         a_slots, mu.ptrs_trellis, interm_u, mu.ptrs_suh, yh, mu.ptrs_svh,
         idx, None, mu.K, -1, mu.mcg, mu.mul1, -1, -1, 0, r, None, None)
     if sharded:
         interm_a.zero_()
-    mod.activation_fn_call(interm_g, interm_u, interm_a, mod.act_limit)
+    mod.activation_fn_call(interm_g if gated else interm_u, interm_u, interm_a, mod.act_limit)
 
-    if sharded:
+    if sharded and not masked_reduce_capability:
         # The fast path's grouped reduce has no -1 guard: the separate
         # exl3_mgemv_reduce_kernel sums every slot row of C, and the fused
         # epilogue's per-segment arrival counter never completes when masked
@@ -534,7 +555,8 @@ def _moe_mt_run(mod, y, selected_experts, routing_weights):
             os.environ[MOE_MT_FUSE_ENV] = "0"
             try:
                 ext.exl3_mgemm(
-                    interm_a, md.ptrs_trellis, out_d, md.ptrs_suh, interm_g, md.ptrs_svh,
+                    interm_a, md.ptrs_trellis, out_d, md.ptrs_suh,
+                    interm_g if gated else interm_u, md.ptrs_svh,
                     idx, w, md.K, -1, md.mcg, md.mul1, -1, -1, 0, r, None, None)
             finally:
                 if prev is None:
@@ -542,14 +564,32 @@ def _moe_mt_run(mod, y, selected_experts, routing_weights):
                 else:
                     os.environ[MOE_MT_FUSE_ENV] = prev
     else:
-        # Unsharded: every pick is in range, no -1 slot can exist, the fused
-        # fast-path epilogue completes and reduces normally.
+        # Unsharded, or a native binary advertising masked weighted reduction:
+        # keep the ambient fused form and let native skip inactive slots.
         ext.exl3_mgemm(
-            interm_a, md.ptrs_trellis, out_d, md.ptrs_suh, interm_g, md.ptrs_svh,
+            interm_a, md.ptrs_trellis, out_d, md.ptrs_suh,
+            interm_g if gated else interm_u, md.ptrs_svh,
             idx, w, md.K, -1, md.mcg, md.mul1, -1, -1, 0, r, None, None)
 
     width = out_bszn.shape[-1]
     out_bszn.copy_(out_d.narrow(0, 0, r).squeeze(1)[:, :width])
+
+
+def _moe_mt_chunk_sizes(rows: int, chunk_rows: int) -> list[int]:
+    """Split rows without emitting a one-row tail when multi-token is viable."""
+    out = []
+    left = rows
+    while left:
+        take = min(left, chunk_rows)
+        rem = left - take
+        if rem == 1 and take > MOE_MT_ROWS_MIN:
+            take -= 1
+            rem += 1
+        elif rem == 1:
+            return []
+        out.append(take)
+        left = rem
+    return out
 
 
 def moe_multi_token_step(mod, y, selected_experts, routing_weights) -> bool:
@@ -562,7 +602,19 @@ def moe_multi_token_step(mod, y, selected_experts, routing_weights) -> bool:
     ok, _why = moe_multi_token_supported(mod, y, selected_experts, routing_weights)
     if not ok:
         return False
-    _moe_mt_run(mod, y, selected_experts, routing_weights)
+    k = int(selected_experts.shape[1])
+    chunk_rows = MOE_MT_SLOTS_MAX // k
+    if chunk_rows < MOE_MT_ROWS_MIN:
+        return False
+    chunks = _moe_mt_chunk_sizes(int(y.shape[0]), chunk_rows)
+    if not chunks:
+        return False
+    offset = 0
+    for take in chunks:
+        _moe_mt_run(mod, y.narrow(0, offset, take),
+                    selected_experts.narrow(0, offset, take),
+                    routing_weights.narrow(0, offset, take), offset)
+        offset += take
     return True
 
 
@@ -589,6 +641,7 @@ def _moe_mgemm_rowloop(mod, y, selected_experts, routing_weights):
     w = routing_weights.unsqueeze(1)         # (bsz, 1, top_k)
     width = cfg.out_bszn.shape[-1]
     out_row = cfg.out_d[0].view(-1)[:width]  # routed sum lands in row 0
+    gated = bool(getattr(mod, "gated", False))
     mg, mu, md = mod.multi_gate, mod.multi_up, mod.multi_down
     for i in range(bsz):
         if mod.gated:
@@ -612,6 +665,19 @@ def is_rocm() -> bool:
     try:
         import torch
         return getattr(torch.version, "hip", None) is not None
+    except Exception:
+        return False
+
+
+def _moe_mt_native_arch(device) -> bool:
+    """Cached-at-apply architecture envelope for the native RDNA GEMV path."""
+    try:
+        import torch
+        arch = str(torch.cuda.get_device_properties(device).gcnArchName or "")
+        arch = arch.split(":", 1)[0]
+        # The ROCm RDNA path is compiled for gfx10/gfx11 families.  Querying
+        # this only during apply keeps decode gating a dictionary lookup.
+        return arch.startswith(("gfx10", "gfx11"))
     except Exception:
         return False
 
@@ -1039,40 +1105,42 @@ def apply() -> list[str]:
                 # can fire.
                 import torch as _mt_torch
                 from ..util.tensor import g_tensor_cache as _mt_tcache
-                from . import mlp_range_balance as _mt_mrp
                 _MOE_MT["torch"] = _mt_torch
                 _MOE_MT["ext"] = _ext
                 _MOE_MT["tcache"] = _mt_tcache
-                _MOE_MT["arch_ok"] = _mt_mrp.device_is_gfx1030
+                _MOE_MT["arch_ok"] = _moe_mt_native_arch
                 _MOE_MT["arch_cache"] = {}
+                _MOE_MT["max_rows"] = moe_max_rows
 
-                if _env_on(MOE_MT_ENV, False):
-                    # Resolve the architecture once here: the per-device
-                    # probe caches by device index, so the route gate reads a
-                    # dict during decode and never queries GPU properties.
+                if _env_on(MOE_MT_ENV, True):
+                    # Resolve the architecture once here; the route gate reads
+                    # a dict during decode and never queries GPU properties.
                     try:
-                        _mt_any1030 = False
+                        _mt_any_native = False
                         if _mt_torch.cuda.is_available():
                             for i in range(_mt_torch.cuda.device_count()):
                                 _MOE_MT["arch_cache"][i] = bool(
-                                    _mt_mrp.device_is_gfx1030(f"cuda:{i}"))
-                                _mt_any1030 = _mt_any1030 or _MOE_MT["arch_cache"][i]
+                                    _moe_mt_native_arch(f"cuda:{i}"))
+                                _mt_any_native = _mt_any_native or _MOE_MT["arch_cache"][i]
                     except Exception:
-                        _mt_any1030 = False
-                    if _mt_any1030:
+                        _mt_any_native = False
+                    if _mt_any_native:
                         _MOE_MT["on"] = True
-                        _MOE_MT["reason"] = f"{MOE_MT_ENV}=1 on gfx1030"
+                        _MOE_MT["reason"] = f"{MOE_MT_ENV} enabled on native gfx10/gfx11"
                         applied.append(
-                            "MoE multi-token candidate ON (EXL3_ROCM_MOE_MULTI_TOKEN=1: "
-                            f"rows {MOE_MT_ROWS_MIN}..{MOE_MT_ROWS_MAX}, slots <= "
-                            f"{MOE_MT_SLOTS_MAX}, gfx1030 only; each loaded module owns "
+                            "MoE multi-token candidate ON (default; "
+                            "EXL3_ROCM_MOE_MULTI_TOKEN=0 opts out: "
+                            f"rows {MOE_MT_ROWS_MIN}..{moe_max_rows}, slots <= "
+                            f"{MOE_MT_SLOTS_MAX} per row-aligned chunk, native gfx10/gfx11; "
+                            "each loaded module owns "
                             "bounded [+128xHi half and small index/mask vectors] staging "
                             "and unload releases it (plus a bounded native bundle only "
                             "when existing cfg rows are short); sharded down "
-                            f"launches zero the slot scratch and toggle "
+                            "uses the native masked-reduce capability when available, "
+                            "otherwise zeroes slot scratch and toggles "
                             f"{MOE_MT_FUSE_ENV}=0 around that call; R==1 and every "
                             "unsupported shape keep the unchanged row loop; "
-                            "EXPERIMENTAL, default off; validated for the measured "
+                            "EXPERIMENTAL; validated for the measured "
                             "batch-1 TP2/MTP route by the r3 full/TP-half probe and "
                             "96 actual-model live-input cases (max candidate "
                             "relative-L2 3.9123e-4, scaled absolute error "
@@ -1085,8 +1153,10 @@ def apply() -> list[str]:
                             "rocm_tools/rdna2/moe_multitoken_probe.py)")
                     else:
                         applied.append(
-                            f"!! {MOE_MT_ENV}=1 requested but no gfx1030 device visible "
+                            f"!! {MOE_MT_ENV}=1 requested but no native gfx10/gfx11 device visible "
                             "-> multi-token candidate stays off (row loop unchanged)")
+                else:
+                    _MOE_MT["reason"] = f"{MOE_MT_ENV}=0 opt-out"
 
                 class _BCProxy:
                     __slots__ = ("_bc", "_mod")

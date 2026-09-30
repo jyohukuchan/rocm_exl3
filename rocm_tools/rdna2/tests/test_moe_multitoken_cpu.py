@@ -382,15 +382,14 @@ if HAVE_TORCH:
             self.assertEqual(len(self.ext.calls), 18)
             self.assertTrue(all(c["num_tokens"] == 1 for c in self.ext.calls))
 
-        def test_gateless_falls_back_to_loop(self):
+        def test_gateless_uses_up_activation_down_candidate(self):
             m, y, sel, rw, _t = self.make(3, gated=False)
             ok, why = rp.moe_multi_token_supported(m, y, sel, rw)
-            self.assertFalse(ok)
-            self.assertIn("gateless", why)
-            rp.moe_mgemm_bszN(m, y, sel, rw)
+            self.assertTrue(ok, why)
+            self.assertTrue(rp.moe_multi_token_step(m, y, sel, rw))
             stages = [c["stage"] for c in self.ext.calls]
-            self.assertNotIn("gate", stages)               # loop skips gate
-            self.assertEqual(stages.count("up"), 3)
+            self.assertNotIn("gate", stages)
+            self.assertEqual(stages, ["up", "down"])
 
 
     class TestGateRejections(MTBase):
@@ -411,11 +410,11 @@ if HAVE_TORCH:
                 rw6 = torch.softmax(torch.randn(6, 4), dim=-1).half()
                 self._reject(m, y6, sel6, rw6, "outside 2..5")
 
-            with self.subTest("slots 130 > 128"):
+            with self.subTest("top_k cannot form a multi-token chunk"):
                 y13 = (torch.randn(5, 128) * 0.25).half()
-                sel13 = torch.randint(0, 8, (5, 26)).long()
-                rw13 = torch.softmax(torch.randn(5, 26), dim=-1).half()
-                self._reject(m, y13, sel13, rw13, "slots exceeds")
+                sel13 = torch.randint(0, 8, (5, 65)).long()
+                rw13 = torch.softmax(torch.randn(5, 65), dim=-1).half()
+                self._reject(m, y13, sel13, rw13, "top_k")
 
             with self.subTest("routing weights shape mismatch"):
                 self._reject(m, y, sel, rw[:, :3].contiguous(), "shape")
@@ -784,6 +783,27 @@ if HAVE_TORCH:
             self.assertIs(m._rocm_moe_mt_scratch, promoted)
             self.assertEqual(tuple(v.data_ptr() for v in promoted["native"].values()),
                              native_ptrs)
+
+        def test_row_aligned_chunk_boundary_for_large_decode_batch(self):
+            # With top-k=10, the native 128-slot bound permits 12 rows per
+            # launch. Twenty rows must become 12+8, retaining token order and
+            # copying each chunk into its corresponding out_bszn rows.
+            old_cap = rp._MOE_MT.get("max_rows", 5)
+            rp._MOE_MT["max_rows"] = 24
+            try:
+                m, y, sel, rw, _tables = self.make(20, k=10, E=16, r_cap=24)
+                ok, why = rp.moe_multi_token_supported(m, y, sel, rw)
+                self.assertTrue(ok, why)
+                self.assertTrue(rp.moe_multi_token_step(m, y, sel, rw))
+                self.assertEqual([c["stage"] for c in self.ext.calls],
+                                 ["gate", "up", "down"] * 2)
+                self.assertEqual([c["num_tokens"] for c in self.ext.calls],
+                                 [12, 12, 12, 8, 8, 8])
+                self.assertEqual([c["A"].shape[0] for c in self.ext.calls],
+                                 [120, 120, 120, 80, 80, 80])
+                self.assertTrue(torch.isfinite(m.experts_cfg.out_bszn[:20]).all())
+            finally:
+                rp._MOE_MT["max_rows"] = old_cap
 
         def test_scratch_clear_on_unload_path(self):
             m, y, sel, rw, _t = self.make(3)
