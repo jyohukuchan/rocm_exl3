@@ -138,8 +138,8 @@ def test_validation_problems_are_clear_and_never_edit_the_os(monkeypatch):
                                                               ngram_ram=False, cache_quant=None,
                                                               gpu_split="28,28"))
     assert all("verified TP2+MTP requires" not in p for p in problems)  # KV enforced on verified only
-    problems, _ = runtime.validate_runtime_args(verified_args(cache_quant="4,4"))
-    assert any("requires -cq 5,4" in p for p in problems)
+    problems, _ = runtime.validate_runtime_args(verified_args(cache_quant=None))
+    assert any("requires quantized caches" in p for p in problems)
     problems, _ = runtime.validate_runtime_args(verified_args(ngram_match_min=2))
     assert any("ngram" in p for p in problems)
     problems, _ = runtime.validate_runtime_args(verified_args(draft_model_dir="/models/draft"))
@@ -154,6 +154,15 @@ def test_validation_problems_are_clear_and_never_edit_the_os(monkeypatch):
         raise AssertionError("validate_runtime_args must never change OS limits")
     monkeypatch.setattr(real_resource, "setrlimit", _boom, raising=False)
     runtime.validate_runtime_args(verified_args())
+
+
+@pytest.mark.parametrize("k_bits,v_bits", [(2, 2), (8, 8), (4, 4), (4, 3), (2, 8), (8, 2)])
+def test_tp_mtp_accepts_quantized_cache_widths(monkeypatch, k_bits, v_bits):
+    monkeypatch.setenv(runtime.NGRAM_MLOCK_ENV, "1")
+    request = verified_args(cache_quant=f"{k_bits},{v_bits}")
+    problems, _ = runtime.validate_runtime_args(request)
+    assert problems == [], problems
+    assert runtime.settings_for(request)["cache_quant"] == (k_bits, v_bits)
 
 
 def test_power_socket_missing_is_a_requirement_not_a_problem(monkeypatch, tmp_path):

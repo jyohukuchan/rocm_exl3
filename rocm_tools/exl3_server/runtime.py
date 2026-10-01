@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Runtime bring-up helper for exl3_server: the VERIFIED V620 TP2 + Qwen3.8 MTP
-config (RCCL TP, unsharded MTP draft beside the output rank, K5/V4 KV, Engram
+config (RCCL TP, unsharded MTP draft beside the output rank, quantized KV, Engram
 single RAM owner + mlock) behind the same model_init argparse surface the
 server already uses, plus lifecycle / audit / power-policy integration so HTTP
 requests run on a proven placement instead of a hoped-for one.
@@ -38,7 +38,7 @@ Paths
           tp_run.aggregate_tp_audit (arch, per-device placement, one Engram
           RAM owner per key, per-PID memory, pseudo output rank == parent),
           tp_run.attach_ngram_residency (non-faulting mincore page proof),
-          tp_run.run_cache_runtime_audit (requested K5/V4 vs ACTUAL cache
+          tp_run.run_cache_runtime_audit (requested K/V bits vs ACTUAL cache
           layers, silent FP16 fallback rejected), parent-shell stray-table
           scan, plus this module's tp_mlock_rank dispatch for the mlock
           residency facts. Any problem unloads the models, drains only
@@ -183,7 +183,7 @@ def parse_cache_quant(spec):
 
 def requested_cache_from_args(args):
     """Requested-KV-policy record in the exact shape tp_run's cache audit
-    consumes: the K5/V4 production selection when -cq is given, FP16 otherwise."""
+    consumes: the requested quantization widths when -cq is given, FP16 otherwise."""
     try:
         bits = parse_cache_quant(getattr(args, "cache_quant", None))
     except ValueError as e:
@@ -191,7 +191,7 @@ def requested_cache_from_args(args):
                 "note": str(e)}
     if bits is None:
         return {"policy": "fp16", "layer_type": "CacheLayer_fp16", "k_bits": None, "v_bits": None,
-                "note": "no -cq given: FP16 caches (the VERIFIED TP+MTP HTTP config expects -cq 5,4)"}
+                "note": "no -cq given: FP16 caches (the specialized TP+MTP HTTP path requires quantized caches)"}
     return {"policy": "quant", "layer_type": "CacheLayer_quant", "k_bits": bits[0],
             "v_bits": bits[1],
             "note": "K{0}/V{1} for target AND draft (same kwargs); QSA attention auto-maps to "
@@ -355,7 +355,8 @@ def validate_runtime_args(args):
                 problems.append(f"{flag} requires layer-split mode and is rejected with -tp "
                                 "(model_init asserts the same rule; validated TP runs are full GPU)")
     if st["path"] == "verified_tp_mtp":
-        # The VERIFIED V620 TP2 + MTP + K5/V4 + Engram config exactly.
+        # Reviewed V620 TP2 + MTP + Engram placement. K5/V4 is the benchmark
+        # reference; the cache kernels support independent K/V widths 2..8.
         if getattr(args, "override", None):
             problems.append("-or/--override tensor replacement is not supported on the verified "
                             "TP+MTP path (generic -tp/-dm models via model_init keep supporting it)")
@@ -367,10 +368,8 @@ def validate_runtime_args(args):
                             "finite positive per-device budgets")
         if st["cache_requested"]["policy"] != "invalid":
             if st["cache_quant"] is None:
-                problems.append("verified TP2+MTP requires K5/V4 caches: pass -cq 5,4 (FP16 caches "
-                                "will not fit the 28+28 GiB budget the pair was validated with)")
-            elif st["cache_quant"] != (5, 4):
-                problems.append(f"verified TP2+MTP requires -cq 5,4, got {st['cache_quant']!r}")
+                problems.append("verified TP2+MTP requires quantized caches: pass -cq k_bits,v_bits "
+                                "with each width in 2..8 (benchmark reference: -cq 5,4)")
         if st["tp_backend_arg"] not in (None, "nccl"):
             requirements.append(f"-tpb {st['tp_backend_arg']!r} was requested but the verified TP "
                                 "load uses the RCCL ('nccl') backend; native is not assumed ported "

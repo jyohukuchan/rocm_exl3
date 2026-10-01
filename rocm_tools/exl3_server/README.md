@@ -357,6 +357,14 @@ use `-host 127.0.0.1` and replace the container paths. `-cq 5,4` selects K5/V4 K
 tensor parallel, `-mtp -ndt 4 -dds -dc 0.6` selects the packed MTP path with a
 dynamic window of up to four tokens from the original 3-bit MTP head, and `-ambs 1` is the batch-one setting.
 
+The TP+MTP path accepts independent K/V cache widths from 2 to 8 bits via
+`-cq k_bits,v_bits`; K5/V4 remains the reference configuration. The requested
+widths are applied to both target and draft, and startup audits reject an
+unexpected cache type or bitrate. See the [2026-10-02 K2/V2 and K8/V8 smoke checks](../../doc/kv_cache_width_smoke.md)
+for the limited startup and text-response validation. Other widths and long-context
+quality are not covered by those checks. Larger bit widths need more VRAM, so
+reduce `-cs` and `--context-limit` together when testing them.
+
 Start the power helper below before executing this server command.
 The server itself does not require root. The measured Engram configuration
 needs a 34 GiB memlock limit and `nofile=65536` on the inference process. Apply

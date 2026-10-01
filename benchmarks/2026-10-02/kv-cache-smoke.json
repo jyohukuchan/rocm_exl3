@@ -1,0 +1,212 @@
+{
+  "date": "2026-10-02",
+  "scope": "Startup and one short text response only; not a speed or quality benchmark",
+  "model": "Qwen3.8 Flash Next EXL3 3.05bpw, original packed 3-bit MTP",
+  "hardware": "Radeon Pro V620 x2, gfx1030",
+  "results": [
+    {
+      "k_bits": 2,
+      "v_bits": 2,
+      "context_tokens": 8192,
+      "batch": 1,
+      "tp": {
+        "actual": "tp2",
+        "loaded_tp": true,
+        "backend": {
+          "requested": "nccl",
+          "actual": "nccl",
+          "rank_classes": {
+            "0": "TPBackendRCCL",
+            "1": "TPBackendRCCL"
+          }
+        }
+      },
+      "mtp": {
+        "component_present": true,
+        "device": "cuda:1",
+        "unsharded": true,
+        "loaded_before_target": true,
+        "same_cache_kwargs_as_target": true,
+        "draft_depth": 4,
+        "draft_window": 4,
+        "target_max_history": 4,
+        "num_draft_tokens_arg": 4
+      },
+      "cache": {
+        "requested": {
+          "policy": "quant",
+          "layer_type": "CacheLayer_quant",
+          "k_bits": 2,
+          "v_bits": 2,
+          "note": "K2/V2 for target AND draft (same kwargs); QSA attention auto-maps to CacheLayer_qsa_quant; GDN recurrent state is not KV and stays FP32/BF16"
+        },
+        "observed": {
+          "target": {
+            "layers_total": 12,
+            "bytes_total": 62914560,
+            "cls_counts": {
+              "CacheLayer_qsa_quant": 12
+            },
+            "bits_variants": {
+              "CacheLayer_qsa_quant": [
+                [
+                  2,
+                  2
+                ]
+              ]
+            }
+          },
+          "draft": {
+            "layers_total": 1,
+            "bytes_total": 5242880,
+            "cls_counts": {
+              "CacheLayer_qsa_quant": 1
+            },
+            "bits_variants": {
+              "CacheLayer_qsa_quant": [
+                [
+                  2,
+                  2
+                ]
+              ]
+            }
+          }
+        },
+        "notes": []
+      },
+      "request": {
+        "model": "qwen38-local",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "max_tokens": 64,
+        "temperature": 0,
+        "enable_thinking": false,
+        "include_timings": false,
+        "stream": false
+      },
+      "response": "Hello! How can I help you today?",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 13,
+        "completion_tokens": 10,
+        "total_tokens": 23,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "health_after": {
+        "status": "ok",
+        "jobs": {
+          "active": 0,
+          "queued": 0
+        }
+      }
+    },
+    {
+      "k_bits": 8,
+      "v_bits": 8,
+      "context_tokens": 8192,
+      "batch": 1,
+      "tp": {
+        "actual": "tp2",
+        "loaded_tp": true,
+        "backend": {
+          "requested": "nccl",
+          "actual": "nccl",
+          "rank_classes": {
+            "0": "TPBackendRCCL",
+            "1": "TPBackendRCCL"
+          }
+        }
+      },
+      "mtp": {
+        "component_present": true,
+        "device": "cuda:1",
+        "unsharded": true,
+        "loaded_before_target": true,
+        "same_cache_kwargs_as_target": true,
+        "draft_depth": 4,
+        "draft_window": 4,
+        "target_max_history": 4,
+        "num_draft_tokens_arg": 4
+      },
+      "cache": {
+        "requested": {
+          "policy": "quant",
+          "layer_type": "CacheLayer_quant",
+          "k_bits": 8,
+          "v_bits": 8,
+          "note": "K8/V8 for target AND draft (same kwargs); QSA attention auto-maps to CacheLayer_qsa_quant; GDN recurrent state is not KV and stays FP32/BF16"
+        },
+        "observed": {
+          "target": {
+            "layers_total": 12,
+            "bytes_total": 138412032,
+            "cls_counts": {
+              "CacheLayer_qsa_quant": 12
+            },
+            "bits_variants": {
+              "CacheLayer_qsa_quant": [
+                [
+                  8,
+                  8
+                ]
+              ]
+            }
+          },
+          "draft": {
+            "layers_total": 1,
+            "bytes_total": 11534336,
+            "cls_counts": {
+              "CacheLayer_qsa_quant": 1
+            },
+            "bits_variants": {
+              "CacheLayer_qsa_quant": [
+                [
+                  8,
+                  8
+                ]
+              ]
+            }
+          }
+        },
+        "notes": []
+      },
+      "request": {
+        "model": "qwen38-local",
+        "messages": [
+          {
+            "role": "user",
+            "content": "hello"
+          }
+        ],
+        "max_tokens": 64,
+        "temperature": 0,
+        "enable_thinking": false,
+        "include_timings": false,
+        "stream": false
+      },
+      "response": "Hello! How can I help you today?",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 13,
+        "completion_tokens": 10,
+        "total_tokens": 23,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        }
+      },
+      "health_after": {
+        "status": "ok",
+        "jobs": {
+          "active": 0,
+          "queued": 0
+        }
+      }
+    }
+  ]
+}
