@@ -365,6 +365,12 @@ for the limited startup and text-response validation. Other widths and long-cont
 quality are not covered by those checks. Larger bit widths need more VRAM, so
 reduce `-cs` and `--context-limit` together when testing them.
 
+QSA now uses a [compact raw tail](../../doc/qsa_compact_cache.md) by default.
+The measured K5/V4 target-plus-MTP cache at 512Ki saves 1.5234375 GiB while
+retaining the pooled history. Rebuild the native extension to use the compact
+graph path; older extensions use the eager path. Set `EXL3_QSA_FULL_RAW=1`
+before starting the engine to restore the full raw plane for comparison.
+
 Start the power helper below before executing this server command.
 The server itself does not require root. The measured Engram configuration
 needs a 34 GiB memlock limit and `nofile=65536` on the inference process. Apply

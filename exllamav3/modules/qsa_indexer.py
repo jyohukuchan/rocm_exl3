@@ -8,6 +8,7 @@ from .module import Module
 from .linear import Linear
 from .rmsnorm import RMSNorm
 from ..model.config import Config
+from ..constants import PAGE_SIZE
 
 """
 QSA (Qwen sparse attention) indexer: selects which tokens each query may attend to, at 4-token
@@ -502,7 +503,10 @@ class QSAIndexer(Module):
         no per-layer H2D copy of the positions, no index arithmetic in torch. The pool kernel
         also writes the chunk's trailing incomplete pool (never selected; rebuilt once complete).
         """
-        from .attention_fn.qsa_triton import _qsa_stage_kernel, _qsa_pool_update_kernel
+        from .attention_fn.qsa_triton import (
+            _qsa_stage_kernel, _qsa_pool_update_kernel,
+            _qsa_pool_update_compact_kernel, _qsa_raw_append_compact_kernel,
+        )
         from .attention_fn.mla_triton import _mla_plane_update_kernel
         from ..util.tensor import g_tensor_cache, get_for_device
         bsz, seqlen, _ = x.shape
@@ -515,7 +519,7 @@ class QSAIndexer(Module):
         bt = block_table if block_table.dtype == torch.int32 else block_table.int()
         bt = bt.contiguous()
         npr = bt.shape[1]
-        page_size = layer.raw_k.shape[1]
+        page_size = PAGE_SIZE
 
         qk = self.index_qk_proj.forward(x.contiguous(), params).view(R, (H + 1) * dk)
         q = self._workspace(R, R * H * dk, torch.half, "qsa_up_q", dev) \
@@ -528,6 +532,19 @@ class QSAIndexer(Module):
                 eps = float(self.q_layernorm.rms_norm_eps), H_i = H, D = dk,
             )
             rope.apply(q, None, 0, seqlens, None, True)
+            if layer.raw_rows < page_size:
+                _qsa_pool_update_compact_kernel[(bsz, seqlen // cr + 1)](
+                    layer.raw_k.view(-1, dk), layer.pooled.view(-1, dk), self._norm_w_half("k", dev),
+                    rope.inv_freq, bt, seqlens, npr, seqlen, kraw,
+                    page_size = page_size, RAW_ROWS = layer.raw_rows, P = cr, D = dk,
+                    ROPE_R = 2 * rope.inv_freq.numel(), attn_factor = float(rope.attn_factor),
+                    eps = float(self.k_layernorm.rms_norm_eps), MAXPOOLS = 1,
+                )
+                _qsa_raw_append_compact_kernel[(R,)](
+                    kraw, layer.raw_k, bt, seqlens, npr, seqlen,
+                    page_size = page_size, D = dk, RAW_ROWS = layer.raw_rows,
+                )
+                return q
             _mla_plane_update_kernel[(R,)](
                 kraw, layer.raw_k, bt, seqlens, npr, seqlen,
                 page_size = page_size, D = dk, DST_D = 0, DST_OFF = 0,
@@ -566,15 +583,11 @@ class QSAIndexer(Module):
         pos_ids = pos0.unsqueeze(1) + torch.arange(seqlen, device = dev)           # (bsz, seq)
         q, raw_k = self.project_ref(x, cos_all[pos_ids].half(), sin_all[pos_ids].half(), params)
 
-        page_sz = layer.raw_k.shape[1]
+        page_sz = PAGE_SIZE
         blocks_per_page = layer.pooled.shape[1]
         bt = block_table.long()
         raw_flat = layer.raw_k.view(-1, dk)
         pooled_flat = layer.pooled.view(-1, dk)
-
-        # raw key write (row pages are disjoint, scatter is race-free)
-        flat = bt.gather(1, pos_ids // page_sz) * page_sz + pos_ids % page_sz
-        raw_flat[flat.flatten()] = raw_k.reshape(-1, dk).half()
 
         # pool blocks completed by this chunk: rows have different (b0, b1) ranges; pad to the max
         b0 = pos0 // cr
@@ -586,14 +599,22 @@ class QSAIndexer(Module):
             blocks_c = torch.where(valid, blocks, b0.unsqueeze(1))                 # safe indices
             tok = (blocks_c * cr).unsqueeze(-1) + torch.arange(cr, device = dev)   # (bsz, nbm, cr)
             tflat = bt.unsqueeze(1).expand(-1, nb_max, -1) \
-                .gather(2, tok // page_sz) * page_sz + tok % page_sz
-            pooled = raw_flat[tflat].float().mean(dim = 2).to(torch.half)          # (bsz, nbm, dk)
+                .gather(2, tok // page_sz) * layer.raw_rows + tok % layer.raw_rows
+            new_index = (tok - pos0[:, None, None]).clamp(0, seqlen - 1)
+            fresh = raw_k.gather(1, new_index.reshape(bsz, -1, 1).expand(-1, -1, dk)) \
+                .reshape(bsz, nb_max, cr, dk)
+            keys = torch.where((tok >= pos0[:, None, None]).unsqueeze(-1), fresh, raw_flat[tflat])
+            pooled = keys.float().mean(dim = 2).to(torch.half)                    # (bsz, nbm, dk)
             pooled = self.k_layernorm.forward(pooled, params)
             starts = blocks_c * cr
             pooled = _rope(pooled, cos_all[starts].half(), sin_all[starts].half())
             pflat = bt.gather(1, starts // page_sz) * blocks_per_page + blocks_c % blocks_per_page
             vm = valid.flatten()
             pooled_flat[pflat.flatten()[vm]] = pooled.reshape(-1, dk)[vm]
+        flat = bt.gather(1, pos_ids // page_sz) * layer.raw_rows + pos_ids % layer.raw_rows
+        page_end = torch.minimum((pos_ids // page_sz + 1) * page_sz, (pos0 + seqlen)[:, None])
+        keep = (pos_ids >= page_end - layer.raw_rows).flatten()
+        raw_flat[flat.flatten()[keep]] = raw_k.reshape(-1, dk).half()[keep]
         return q
 
     def select_indices_paged(
@@ -636,7 +657,7 @@ class QSAIndexer(Module):
         cr = self.compress_ratio
         dk = self.head_dim
         dev = q_idx.device
-        page_sz = layer.raw_k.shape[1]
+        page_sz = PAGE_SIZE
         bpp = layer.pooled.shape[1]
         pooled_flat = layer.pooled.view(-1, dk)
         bt = block_table.long()

@@ -609,6 +609,8 @@ void BC_Attention::run_gr
             };
             s.k_qsa_stage->launch(R, qsa_n_heads + 1, 1, args, stream);
         }
+        bool compact = qsa_raw_plane.size(0) < qsa_pool_plane.size(0) * qsa_cr;
+        auto append_raw = [&]()
         {
             std::vector<void*> args =
             {
@@ -627,7 +629,8 @@ void BC_Attention::run_gr
                 graph->record_param(s.k_qsa_raw_append->handle(), GP_attn_num_pages, 4, 4);
                 graph->record_param(s.k_qsa_raw_append->handle(), GP_end, 0);
             }
-        }
+        };
+        auto update_pool = [&]()
         {
             std::vector<void*> args =
             {
@@ -640,6 +643,7 @@ void BC_Attention::run_gr
                 (void*) (intptr_t) (int) block_table.size(1),
                 (void*) (intptr_t) q_len,
             };
+            if (compact) args.push_back((void*) s.qsa_kraw.data_ptr());
             // grid height = compiled MAXPOOLS = q_len / P + 1
             s.k_qsa_pool_update->launch(bsz, q_len / qsa_cr + 1, 1, args, stream);
             if (graph)
@@ -649,7 +653,10 @@ void BC_Attention::run_gr
                 graph->record_param(s.k_qsa_pool_update->handle(), GP_attn_num_pages, 6, 4);
                 graph->record_param(s.k_qsa_pool_update->handle(), GP_end, 0);
             }
-        }
+        };
+        // Pooling must read the old partial-block tail before the append overwrites its ring.
+        if (compact) { update_pool(); append_raw(); }
+        else { append_raw(); update_pool(); }
     }
 
     if (regime == 1)

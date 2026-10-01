@@ -468,6 +468,8 @@ class BCAttn:
         from .qsa_triton import (
             _qsa_stage_kernel,
             _qsa_pool_update_kernel,
+            _qsa_pool_update_compact_kernel,
+            _qsa_raw_append_compact_kernel,
             _qsa_sparse_split_kernel,
         )
         from .triton_paged import _paged_attn_decode_combine_kernel
@@ -476,6 +478,7 @@ class BCAttn:
         idx = self.qsa_idx
         Hi, Di, cr = idx.n_heads, idx.head_dim, idx.compress_ratio
         R = bsz * q_len
+        compact = self.qsa_layer.raw_rows < PAGE_SIZE
         rope = self.module.rope
         # The rotary width (sin/cos table width): the C++ side narrows the query rope view to
         # it and the pool kernel rotates its leading segment
@@ -495,21 +498,26 @@ class BCAttn:
             | {n: "constexpr" for n in ("eps", "H_i", "D")},
             dict(eps = float(idx.q_layernorm.rms_norm_eps), H_i = Hi, D = Di), 2, 1)
 
-        k_raw_append = _compile_kernel(dev, _mla_plane_update_kernel,
+        raw_consts = dict(page_size = PAGE_SIZE, D = Di, DST_D = 0, DST_OFF = 0)
+        if compact:
+            raw_consts = dict(page_size = PAGE_SIZE, D = Di, RAW_ROWS = self.qsa_layer.raw_rows)
+        k_raw_append = _compile_kernel(dev, _qsa_raw_append_compact_kernel if compact else _mla_plane_update_kernel,
             {"rows_new": "*fp16", "plane_cache": "*fp16", "block_table": "*i32",
              "cache_seqlens": "*i32", "num_pages_per_seq": "i32", "append_len": "i32"}
-            | {n: "constexpr" for n in ("page_size", "D", "DST_D", "DST_OFF")},
-            dict(page_size = PAGE_SIZE, D = Di, DST_D = 0, DST_OFF = 0), 2, 2)
+            | {n: "constexpr" for n in raw_consts},
+            raw_consts, 2, 2)
 
-        k_pool_update = _compile_kernel(dev, _qsa_pool_update_kernel,
+        k_pool_update = _compile_kernel(dev, _qsa_pool_update_compact_kernel if compact else _qsa_pool_update_kernel,
             {"raw_plane": "*fp16", "pool_plane": "*fp16", "k_norm_w": "*fp16",
              "inv_freq": "*fp32", "block_table": "*i32", "cache_seqlens": "*i32",
              "num_pages_per_row": "i32", "append_len": "i32"}
             | {n: "constexpr" for n in (
-                "page_size", "P", "D", "ROPE_R", "attn_factor", "eps", "MAXPOOLS")},
+                "page_size", "P", "D", "ROPE_R", "attn_factor", "eps", "MAXPOOLS")}
+            | ({"raw_new": "*fp16", "RAW_ROWS": "constexpr"} if compact else {}),
             dict(page_size = PAGE_SIZE, P = cr, D = Di, ROPE_R = rotate_dims,
                  attn_factor = float(rope.attn_factor),
-                 eps = float(idx.k_layernorm.rms_norm_eps), MAXPOOLS = q_len // cr + 1), 2, 1)
+                 eps = float(idx.k_layernorm.rms_norm_eps), MAXPOOLS = q_len // cr + 1)
+            | ({"RAW_ROWS": self.qsa_layer.raw_rows} if compact else {}), 2, 1)
 
         wts = scores = pool_idx = indices = None
         k_fewq = k_expand = k_sp_split = k_sp_combine = None
@@ -743,6 +751,11 @@ def build_bc_attn(module, layer):
 
     m = module
     qsa_idx = getattr(m, "qsa_indexer", None)
+    if qsa_idx is not None and getattr(layer, "raw_rows", PAGE_SIZE) < PAGE_SIZE \
+            and not getattr(ext, "qsa_compact_supported", False):
+        # Old native extensions cannot reorder ring upkeep or pass the fresh
+        # keys to pooling. The eager implementation remains exact and supported.
+        return None
     if not (
         _module_eligible(m) and
         isinstance(layer, (CacheLayer_quant, CacheLayer_fp16)) and

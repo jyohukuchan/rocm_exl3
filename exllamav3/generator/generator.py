@@ -173,6 +173,14 @@ class Generator:
         self.ngram_match_min = ngram_match_min
         self.dynamic_draft = dynamic_draft_tokens and self.num_draft_tokens > 0
         self.record_draft_stats = record_draft_stats
+        for c in (cache, draft_cache):
+            if c is None:
+                continue
+            for layer in c.layers.values():
+                raw_rows = getattr(layer, "raw_rows", PAGE_SIZE)
+                if raw_rows < PAGE_SIZE:
+                    assert self.num_draft_tokens + layer.compress_ratio <= raw_rows, \
+                        "QSA raw ring is too small for the draft window; use EXL3_QSA_FULL_RAW=1"
         max_q_size = max(self.num_draft_tokens + 1, max_q_size)
 
         # Chunking/partitioning

@@ -143,6 +143,114 @@ def _qsa_pool_update_kernel(
         tl.store(prow + offs_p, y_ps)
 
 
+@triton.jit(do_not_specialize = ["num_pages_per_seq", "append_len"])
+def _qsa_raw_append_compact_kernel(
+    rows_new, plane_cache, block_table, cache_seqlens,
+    num_pages_per_seq, append_len,
+    page_size: tl.constexpr, D: tl.constexpr, RAW_ROWS: tl.constexpr,
+):
+    r = tl.program_id(0)
+    b = r // append_len
+    i = r % append_len
+    pos0 = tl.load(cache_seqlens + b)
+    tok = pos0 + i
+    # Only the last RAW_ROWS of each touched page survive. Filtering avoids
+    # overlapping writes when one prefill chunk contains many ring wraps.
+    end = tl.minimum(pos0 + append_len, (tok // page_size + 1) * page_size)
+    if tok >= end - RAW_ROWS:
+        phys = tl.load(block_table + b * num_pages_per_seq + tok // page_size)
+        d = tl.arange(0, D)
+        value = tl.load(rows_new + r * D + d)
+        tl.store(plane_cache + (phys * RAW_ROWS + tok % RAW_ROWS) * D + d, value)
+
+
+@triton.jit(do_not_specialize = ["num_pages_per_row", "append_len"])
+def _qsa_pool_update_compact_kernel(
+    raw_plane,           # flat (pages * page_size, D) fp16 raw indexer keys
+    pool_plane,          # flat (pages * page_size // P, D) fp16 pooled keys
+    k_norm_w,            # (D,) fp16
+    inv_freq,            # (ROPE_R // 2,) fp32
+    block_table,         # (bsz, num_pages_per_row) i32
+    cache_seqlens,       # (bsz,) i32, pre-append counts
+    num_pages_per_row,
+    append_len,
+    raw_new,             # (bsz, append_len, D) current projection; not persisted
+    page_size: tl.constexpr,
+    RAW_ROWS: tl.constexpr,
+    P: tl.constexpr,
+    D: tl.constexpr,
+    ROPE_R: tl.constexpr,        # partial rotary width (the main attention's rotate_dims)
+    attn_factor: tl.constexpr,
+    eps: tl.constexpr,
+    MAXPOOLS: tl.constexpr,      # grid height: append_len // P + 1
+):
+    """Pool current projections plus any preceding partial-block keys in the ring.
+    This must run BEFORE the compact append kernel, including in captured graphs:
+    a long prefill can otherwise overwrite that preceding tail with newer keys.
+    The fp16 rounding points match the eager path (mean -> fp16, norm -> fp16, rope math in
+    fp16 with fp16-rounded sin/cos). The three segments (rope lo/hi halves, pass-through)
+    are separate register vectors so the NEOX pair rotation needs no in-register shuffle."""
+    b = tl.program_id(0)
+    pi = tl.program_id(1)
+    pos0 = tl.load(cache_seqlens + b)
+    t_end = pos0 + append_len
+    pool = pos0 // P + pi
+    if pool * P >= t_end:
+        return
+
+    HALF: tl.constexpr = ROPE_R // 2
+    PASS: tl.constexpr = D - ROPE_R
+    offs_h = tl.arange(0, HALF)
+    bt = block_table + b * num_pages_per_row
+
+    acc_lo = tl.zeros((HALF,), tl.float32)
+    acc_hi = tl.zeros((HALF,), tl.float32)
+    if PASS > 0:
+        acc_ps = tl.zeros((PASS,), tl.float32)
+        offs_p = ROPE_R + tl.arange(0, PASS)
+    cnt = 0.0
+    for j in range(P):
+        tok = pool * P + j
+        if tok < t_end:
+            phys = tl.load(bt + tok // page_size)
+            if tok >= pos0:
+                row = raw_new + (b * append_len + tok - pos0) * D
+            else:
+                row = raw_plane + (phys * RAW_ROWS + tok % RAW_ROWS) * D
+            acc_lo += tl.load(row + offs_h).to(tl.float32)
+            acc_hi += tl.load(row + HALF + offs_h).to(tl.float32)
+            if PASS > 0:
+                acc_ps += tl.load(row + offs_p).to(tl.float32)
+            cnt += 1.0
+
+    # fp32 mean -> fp16 (the norm reads the rounded values, like the eager path)
+    m_lo = (acc_lo / cnt).to(tl.float16).to(tl.float32)
+    m_hi = (acc_hi / cnt).to(tl.float16).to(tl.float32)
+    ssq = tl.sum(m_lo * m_lo, axis = 0) + tl.sum(m_hi * m_hi, axis = 0)
+    if PASS > 0:
+        m_ps = (acc_ps / cnt).to(tl.float16).to(tl.float32)
+        ssq += tl.sum(m_ps * m_ps, axis = 0)
+    rstd = tl.rsqrt(ssq / D + eps)
+    y_lo = (m_lo * rstd * (tl.load(k_norm_w + offs_h).to(tl.float32) + 1.0)).to(tl.float16)
+    y_hi = (m_hi * rstd * (tl.load(k_norm_w + HALF + offs_h).to(tl.float32) + 1.0)).to(tl.float16)
+
+    # Partial NEOX rope at the block start: pair (d, d + HALF) shares frequency d
+    pos_f = (pool * P).to(tl.float32)
+    fr = tl.load(inv_freq + offs_h) * pos_f
+    cosv = (tl.cos(fr) * attn_factor).to(tl.float16)
+    sinv = (tl.sin(fr) * attn_factor).to(tl.float16)
+    r_lo = y_lo * cosv - y_hi * sinv
+    r_hi = y_hi * cosv + y_lo * sinv
+
+    phys0 = tl.load(bt + (pool * P) // page_size)
+    prow = pool_plane + (phys0 * (page_size // P) + pool % (page_size // P)) * D
+    tl.store(prow + offs_h, r_lo)
+    tl.store(prow + HALF + offs_h, r_hi)
+    if PASS > 0:
+        y_ps = (m_ps * rstd * (tl.load(k_norm_w + offs_p).to(tl.float32) + 1.0)).to(tl.float16)
+        tl.store(prow + offs_p, y_ps)
+
+
 @triton.jit(do_not_specialize = ["k_len", "num_pages_per_seq", "num_splits", "split_len"])
 def _qsa_sparse_split_kernel(
     q,                   # (bsz, 1, n_q_heads, head_dim) fp16, normed + roped

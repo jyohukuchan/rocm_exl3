@@ -1,0 +1,992 @@
+{
+  "date": "2026-10-02",
+  "hardware": "Radeon Pro V620 x2, gfx1030, TP2/RCCL",
+  "model": "Qwen3.8 Flash Next EXL3 3.05bpw, original 3-bit MTP",
+  "cache_bits": [
+    5,
+    4
+  ],
+  "cache_tokens": 524288,
+  "batch": 1,
+  "mtp": "dynamic max4, confidence0.6",
+  "request_settings": {
+    "temperature": 0,
+    "enable_thinking": false,
+    "max_tokens": 192,
+    "logprobs": true,
+    "include_raw_logprobs": true
+  },
+  "input_fixture": {
+    "repeated_filler": "alpha beta gamma delta epsilon zeta eta theta.\n",
+    "repeat_count": 1050
+  },
+  "controlled_comparison": "Only TP planning costs were restored to their original full-raw values; storage and pooling remained compact. Production uses the lower actual storage costs.",
+  "controlled_completion_tokens": 347,
+  "legacy_cache_bytes": 6543114240,
+  "compact_cache_bytes": 4907335680,
+  "saved_cache_bytes": 1635778560,
+  "changed_tp_rank_component_slices": [
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.3.mlp",
+      "legacy_cost_slice": [
+        0,
+        254,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        255,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.4.mlp",
+      "legacy_cost_slice": [
+        0,
+        254,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        255,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.5.mlp",
+      "legacy_cost_slice": [
+        0,
+        254,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        255,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.6.mlp",
+      "legacy_cost_slice": [
+        0,
+        254,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        255,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.11.mlp",
+      "legacy_cost_slice": [
+        0,
+        254,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        255,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.12.mlp",
+      "legacy_cost_slice": [
+        0,
+        254,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        255,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.13.mlp",
+      "legacy_cost_slice": [
+        0,
+        254,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        255,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.14.mlp",
+      "legacy_cost_slice": [
+        0,
+        254,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        255,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.23.mlp",
+      "legacy_cost_slice": [
+        0,
+        258,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        257,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.24.mlp",
+      "legacy_cost_slice": [
+        0,
+        258,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        257,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.25.mlp",
+      "legacy_cost_slice": [
+        0,
+        258,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        257,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.26.mlp",
+      "legacy_cost_slice": [
+        0,
+        258,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        257,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.27.mlp",
+      "legacy_cost_slice": [
+        0,
+        253,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        254,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.28.mlp",
+      "legacy_cost_slice": [
+        0,
+        253,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        254,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.29.mlp",
+      "legacy_cost_slice": [
+        0,
+        253,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        254,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.30.mlp",
+      "legacy_cost_slice": [
+        0,
+        253,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        254,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.35.mlp",
+      "legacy_cost_slice": [
+        0,
+        252,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        253,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.36.mlp",
+      "legacy_cost_slice": [
+        0,
+        252,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        253,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.37.mlp",
+      "legacy_cost_slice": [
+        0,
+        252,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        253,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.38.mlp",
+      "legacy_cost_slice": [
+        0,
+        252,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        253,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.39.mlp",
+      "legacy_cost_slice": [
+        0,
+        260,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        259,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.40.mlp",
+      "legacy_cost_slice": [
+        0,
+        260,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        259,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.41.mlp",
+      "legacy_cost_slice": [
+        0,
+        260,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        259,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.42.mlp",
+      "legacy_cost_slice": [
+        0,
+        260,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        259,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.43.mlp",
+      "legacy_cost_slice": [
+        0,
+        248,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        251,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.44.mlp",
+      "legacy_cost_slice": [
+        0,
+        248,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        251,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.45.mlp",
+      "legacy_cost_slice": [
+        0,
+        248,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        251,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.46.mlp",
+      "legacy_cost_slice": [
+        0,
+        248,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        251,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "model.language_model.layers.47.mlp",
+      "legacy_cost_slice": [
+        0,
+        269,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        0,
+        264,
+        "experts"
+      ]
+    },
+    {
+      "rank": 0,
+      "component": "lm_head",
+      "legacy_cost_slice": [
+        0,
+        130432,
+        "channels"
+      ],
+      "compact_cost_slice": [
+        0,
+        128128,
+        "channels"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.3.mlp",
+      "legacy_cost_slice": [
+        254,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        255,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.4.mlp",
+      "legacy_cost_slice": [
+        254,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        255,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.5.mlp",
+      "legacy_cost_slice": [
+        254,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        255,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.6.mlp",
+      "legacy_cost_slice": [
+        254,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        255,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.11.mlp",
+      "legacy_cost_slice": [
+        254,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        255,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.12.mlp",
+      "legacy_cost_slice": [
+        254,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        255,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.13.mlp",
+      "legacy_cost_slice": [
+        254,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        255,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.14.mlp",
+      "legacy_cost_slice": [
+        254,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        255,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.23.mlp",
+      "legacy_cost_slice": [
+        258,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        257,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.24.mlp",
+      "legacy_cost_slice": [
+        258,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        257,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.25.mlp",
+      "legacy_cost_slice": [
+        258,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        257,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.26.mlp",
+      "legacy_cost_slice": [
+        258,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        257,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.27.mlp",
+      "legacy_cost_slice": [
+        253,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        254,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.28.mlp",
+      "legacy_cost_slice": [
+        253,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        254,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.29.mlp",
+      "legacy_cost_slice": [
+        253,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        254,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.30.mlp",
+      "legacy_cost_slice": [
+        253,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        254,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.35.mlp",
+      "legacy_cost_slice": [
+        252,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        253,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.36.mlp",
+      "legacy_cost_slice": [
+        252,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        253,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.37.mlp",
+      "legacy_cost_slice": [
+        252,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        253,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.38.mlp",
+      "legacy_cost_slice": [
+        252,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        253,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.39.mlp",
+      "legacy_cost_slice": [
+        260,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        259,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.40.mlp",
+      "legacy_cost_slice": [
+        260,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        259,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.41.mlp",
+      "legacy_cost_slice": [
+        260,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        259,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.42.mlp",
+      "legacy_cost_slice": [
+        260,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        259,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.43.mlp",
+      "legacy_cost_slice": [
+        248,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        251,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.44.mlp",
+      "legacy_cost_slice": [
+        248,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        251,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.45.mlp",
+      "legacy_cost_slice": [
+        248,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        251,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.46.mlp",
+      "legacy_cost_slice": [
+        248,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        251,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "model.language_model.layers.47.mlp",
+      "legacy_cost_slice": [
+        269,
+        512,
+        "experts"
+      ],
+      "compact_cost_slice": [
+        264,
+        512,
+        "experts"
+      ]
+    },
+    {
+      "rank": 1,
+      "component": "lm_head",
+      "legacy_cost_slice": [
+        130432,
+        248320,
+        "channels"
+      ],
+      "compact_cost_slice": [
+        128128,
+        248320,
+        "channels"
+      ]
+    }
+  ],
+  "gpu_tests": "6 passed; bitwise pooling comparisons on both GPUs, 2/4-warps, two rows and 11 append/rewind rounds per configuration",
+  "cpu_tests": "829 passed, 9 skipped, 148 subtests; server runtime 31 passed",
+  "cases": [
+    {
+      "case": "hello",
+      "prompt_tokens": 13,
+      "cached_tokens": 0,
+      "baseline_text": "Hello! How can I help you today?",
+      "controlled_compact_text": "Hello! How can I help you today?",
+      "production_compact_text": "Hello! How can I help you today?",
+      "controlled_text_equal": true,
+      "controlled_token_probability_trace_equal": true,
+      "baseline_trace_sha256": "0f719bb7620ddfa522f7ee4f3aece0175c0a6ae80d6be613c4e87c01b0701ac7",
+      "controlled_trace_sha256": "0f719bb7620ddfa522f7ee4f3aece0175c0a6ae80d6be613c4e87c01b0701ac7",
+      "production_semantic_check": true
+    },
+    {
+      "case": "ja",
+      "prompt_tokens": 26,
+      "cached_tokens": 0,
+      "baseline_text": "TCPは信頼性を重視し、データの順序や到着を確認しながら確実に通信する接続型プロトコルです。\n一方、UDPは速度を重視し、確認作業を行わずに素早くデータを送信する非接続型プロトコルです。",
+      "controlled_compact_text": "TCPは信頼性を重視し、データの順序や到着を確認しながら確実に通信する接続型プロトコルです。\n一方、UDPは速度を重視し、確認作業を行わずに素早くデータを送信する非接続型プロトコルです。",
+      "production_compact_text": "TCPは信頼性を重視し、データの順序や到着を確認しながら確実に通信する接続型プロトコルです。\n一方、UDPは速度と効率を重視し、確認応答を行わずにデータを迅速に送信する非接続型プロトコルです。",
+      "controlled_text_equal": true,
+      "controlled_token_probability_trace_equal": true,
+      "baseline_trace_sha256": "aacbccd53d581fc9ed75746b33e438b9385a4b46a58debc0fe6a33b193251f53",
+      "controlled_trace_sha256": "aacbccd53d581fc9ed75746b33e438b9385a4b46a58debc0fe6a33b193251f53",
+      "production_semantic_check": true
+    },
+    {
+      "case": "code",
+      "prompt_tokens": 28,
+      "cached_tokens": 0,
+      "baseline_text": "```python\ndef factorial(n):\n    if n < 0:\n        raise ValueError(\"Input must be non-negative\")\n    if n == 0 or n == 1:\n        return 1\n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    return result\n```",
+      "controlled_compact_text": "```python\ndef factorial(n):\n    if n < 0:\n        raise ValueError(\"Input must be non-negative\")\n    if n == 0 or n == 1:\n        return 1\n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    return result\n```",
+      "production_compact_text": "```python\ndef factorial(n):\n    if n < 0:\n        raise ValueError(\"Input must be non-negative\")\n    if n == 0 or n == 1:\n        return 1\n    result = 1\n    for i in range(2, n + 1):\n        result *= i\n    return result\n```",
+      "controlled_text_equal": true,
+      "controlled_token_probability_trace_equal": true,
+      "baseline_trace_sha256": "97dccacf24521866d21a257e1884f324f19c7fa4244bebfaedda480f40e1af1e",
+      "controlled_trace_sha256": "97dccacf24521866d21a257e1884f324f19c7fa4244bebfaedda480f40e1af1e",
+      "production_semantic_check": true
+    },
+    {
+      "case": "long-ja",
+      "prompt_tokens": 11589,
+      "cached_tokens": 0,
+      "baseline_text": "正方形の面積は「一辺 × 一辺」で求められるため、7cm × 7cm = 49cm² です。",
+      "controlled_compact_text": "正方形の面積は「一辺 × 一辺」で求められるため、7cm × 7cm = 49cm² です。",
+      "production_compact_text": "正方形の面積は一辺×一辺で求められるため、7cm × 7cm = 49cm² です。",
+      "controlled_text_equal": true,
+      "controlled_token_probability_trace_equal": true,
+      "baseline_trace_sha256": "4e10f9fdf7e1b1b93efe1e6c55d13800f40be458bab24490b90102fad7de73a4",
+      "controlled_trace_sha256": "4e10f9fdf7e1b1b93efe1e6c55d13800f40be458bab24490b90102fad7de73a4",
+      "production_semantic_check": true
+    },
+    {
+      "case": "long-ja-reuse",
+      "prompt_tokens": 11589,
+      "cached_tokens": 11520,
+      "baseline_text": "正方形の面積は一辺×一辺で求められるため、7cm × 7cm = 49cm² です。",
+      "controlled_compact_text": "正方形の面積は一辺×一辺で求められるため、7cm × 7cm = 49cm² です。",
+      "production_compact_text": "正方形の面積は一辺×一辺で求められるため、7cm × 7cm = 49cm² です。",
+      "controlled_text_equal": true,
+      "controlled_token_probability_trace_equal": true,
+      "baseline_trace_sha256": "15f95df1e11ac6aa62159d2adfb2ef63c2a5d77e2ad352608d19f7923a027fa9",
+      "controlled_trace_sha256": "15f95df1e11ac6aa62159d2adfb2ef63c2a5d77e2ad352608d19f7923a027fa9",
+      "production_semantic_check": true
+    },
+    {
+      "case": "long-code",
+      "prompt_tokens": 11582,
+      "cached_tokens": 11520,
+      "baseline_text": "```python\ndef unique_ordered(xs):\n    seen = set()\n    result = []\n    for x in xs:\n        if x not in seen:\n            seen.add(x)\n            result.append(x)\n    return result\n```",
+      "controlled_compact_text": "```python\ndef unique_ordered(xs):\n    seen = set()\n    result = []\n    for x in xs:\n        if x not in seen:\n            seen.add(x)\n            result.append(x)\n    return result\n```",
+      "production_compact_text": "```python\ndef unique_ordered(xs):\n    seen = set()\n    result = []\n    for x in xs:\n        if x not in seen:\n            seen.add(x)\n            result.append(x)\n    return result\n```",
+      "controlled_text_equal": true,
+      "controlled_token_probability_trace_equal": true,
+      "baseline_trace_sha256": "33b67dddb6ef7b30776a14e748cd0cf3f9aaa4db5a2aeaaa5d4f0d2580b71ab5",
+      "controlled_trace_sha256": "33b67dddb6ef7b30776a14e748cd0cf3f9aaa4db5a2aeaaa5d4f0d2580b71ab5",
+      "production_semantic_check": true
+    },
+    {
+      "case": "short-after-long",
+      "prompt_tokens": 26,
+      "cached_tokens": 0,
+      "baseline_text": "391",
+      "controlled_compact_text": "391",
+      "production_compact_text": "391",
+      "controlled_text_equal": true,
+      "controlled_token_probability_trace_equal": true,
+      "baseline_trace_sha256": "d71aa94fa5ce1df0cef8eec174b4ed11a429e1fb2e035d2e68eb078737cdde01",
+      "controlled_trace_sha256": "d71aa94fa5ce1df0cef8eec174b4ed11a429e1fb2e035d2e68eb078737cdde01",
+      "production_semantic_check": true
+    },
+    {
+      "case": "long-code-reuse",
+      "prompt_tokens": 11582,
+      "cached_tokens": 11520,
+      "baseline_text": "```python\ndef unique_ordered(xs):\n    seen = set()\n    result = []\n    for x in xs:\n        if x not in seen:\n            seen.add(x)\n            result.append(x)\n    return result\n```",
+      "controlled_compact_text": "```python\ndef unique_ordered(xs):\n    seen = set()\n    result = []\n    for x in xs:\n        if x not in seen:\n            seen.add(x)\n            result.append(x)\n    return result\n```",
+      "production_compact_text": "```python\ndef unique_ordered(xs):\n    seen = set()\n    result = []\n    for x in xs:\n        if x not in seen:\n            seen.add(x)\n            result.append(x)\n    return result\n```",
+      "controlled_text_equal": true,
+      "controlled_token_probability_trace_equal": true,
+      "baseline_trace_sha256": "d3faed1920c6be7c45cfc49a7b5073d50fdf83fdc6712970ac95f802fa7fe8de",
+      "controlled_trace_sha256": "d3faed1920c6be7c45cfc49a7b5073d50fdf83fdc6712970ac95f802fa7fe8de",
+      "production_semantic_check": true
+    },
+    {
+      "case": "prefix-extension",
+      "prompt_tokens": 11599,
+      "cached_tokens": 11520,
+      "baseline_text": "正方形の面積は $7 \\times 7 = 49$ 平方cm、周の長さは $7 \\times 4 = 28$ cmです。",
+      "controlled_compact_text": "正方形の面積は $7 \\times 7 = 49$ 平方cm、周の長さは $7 \\times 4 = 28$ cmです。",
+      "production_compact_text": "正方形の面積は $7 \\times 7 = 49$ 平方cm、周の長さは $7 \\times 4 = 28$ cm です。",
+      "controlled_text_equal": true,
+      "controlled_token_probability_trace_equal": true,
+      "baseline_trace_sha256": "fa1c59c7fa4c1713289051cf2c775bf416702a29b5b849d9e09e263f2a51abfb",
+      "controlled_trace_sha256": "fa1c59c7fa4c1713289051cf2c775bf416702a29b5b849d9e09e263f2a51abfb",
+      "production_semantic_check": true
+    }
+  ],
+  "limits": "Short and ~11.6K prompts only; no full 512Ki/1Mi, general quality benchmark or throughput claim."
+}

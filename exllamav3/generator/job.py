@@ -910,6 +910,13 @@ class Job:
                         self.recurrent_state = self.generator.cache.get_new_state()
                     self.last_recurrent_checkpoint_pos = replay_from or None
 
+            raw_replay = False
+            if self.recurrent_state is None:
+                for c in (self.generator.cache, self.generator.draft_cache):
+                    window = getattr(c, "qsa_raw_window", None)
+                    if window is not None and offset + self.generator.num_draft_tokens + c.prefix_alignment > window:
+                        raw_replay = True
+
             for seq in self.sequences:
                 p_page = seq.kv_position // PAGE_SIZE
                 seq.kv_position -= offset
@@ -934,6 +941,12 @@ class Job:
                 # position) and rewritten with identical values, and they may include shared prompt-cache pages
                 if replay_from is not None:
                     seq.kv_position = replay_from
+                    seq.prefill_complete = False
+                elif raw_replay:
+                    # An arbitrarily long banned-string rewind can outlive a
+                    # compact raw tail. Re-feed this page from its pool-aligned
+                    # start instead of using discarded raw keys.
+                    seq.kv_position = seq.kv_position // PAGE_SIZE * PAGE_SIZE
                     seq.prefill_complete = False
 
             # An MTP draft carry refers to the pre-rewind context; drop it so drafting pauses until the next
@@ -1281,6 +1294,14 @@ class Job:
                 # the post-final-norm carry state. Partial-page reuse must not consume that token.
                 if self.generator.mtp_draft and prefill_end == len(seq.sequence_ids) - 1:
                     best_match = min(best_match, prefill_ids.shape[-1] - 1)
+
+                # A compact QSA cache retains only the raw rollback tail. An
+                # older partial pool must be re-fed from its start rather than
+                # rebuilt from raw keys that have already been discarded.
+                alignment = getattr(self.generator.cache, "prefix_alignment", 1)
+                if self.generator.draft_cache is not None:
+                    alignment = max(alignment, getattr(self.generator.draft_cache, "prefix_alignment", 1))
+                best_match -= best_match % alignment
 
                 if best_match_page and best_match > 1:
                     page = seq.allocated_pages[p0]

@@ -1,3 +1,5 @@
+m.attr("qsa_compact_supported") = true;
+
 py::class_<TritonKernel, std::shared_ptr<TritonKernel>>(m, "TritonKernel").def
 (
     py::init<py::bytes, std::string, int, int>(),

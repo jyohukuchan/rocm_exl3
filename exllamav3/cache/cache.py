@@ -3,6 +3,8 @@ from abc import ABC, abstractmethod
 from collections import deque
 from typing import Type
 import torch
+import math
+from ..constants import PAGE_SIZE
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..model import Model, Config
@@ -146,6 +148,8 @@ class Cache:
         cl = self.model.get_cache_layers()
         self.num_layers = len(cl)
         self.layers = {}
+        self.prefix_alignment = 1
+        self.qsa_raw_window = None
         for attn in cl:
             # Attention variants with a different cache geometry (MLA stores one latent plus one
             # shared rope key instead of per-head K/V) map the requested layer type to their own
@@ -153,9 +157,15 @@ class Cache:
                 attn.cache_layer_type(self.layer_type, kwargs)
                 if hasattr(attn, "cache_layer_type") else (self.layer_type, kwargs)
             )
+            if getattr(attn, "qsa_indexer", None) is not None:
+                layer_kwargs = {**layer_kwargs, "raw_history": max_history}
             for instance in self.model.get_layer_instances(attn.layer_idx):
                 self.layers[instance] = \
                     layer_type(self.config, attn, id(self), self.max_num_tokens, **layer_kwargs)
+                layer = self.layers[instance]
+                if getattr(layer, "raw_rows", PAGE_SIZE) < PAGE_SIZE:
+                    self.prefix_alignment = math.lcm(self.prefix_alignment, layer.compress_ratio)
+                    self.qsa_raw_window = min(self.qsa_raw_window or layer.raw_rows, layer.raw_rows)
 
         # Attach recurrent (SWA/linear-attn) layers
         self.num_slots = max_batch_size

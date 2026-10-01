@@ -247,6 +247,7 @@ def _install_stack():
                "exllamav3/modules/quant/exl3_lib/ngram_codec.py")
     _load_real(f"{_H}.modules.ngram_embedding", "exllamav3/modules/ngram_embedding.py")
     _load_real(f"{_H}.modules.ple", "exllamav3/modules/ple.py")
+    _load_real(f"{_H}.constants", "exllamav3/constants.py")
     _load_real(f"{_H}.modules.qsa_indexer", "exllamav3/modules/qsa_indexer.py")
     # `from . import Module` (ngram / faked linear+rmsnorm siblings) resolves via
     # the package object's attributes, not __path__: keep the namespace sealed so
