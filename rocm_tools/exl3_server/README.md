@@ -47,6 +47,12 @@ Start OpenCode from the project containing that configuration:
 opencode /path/to/project
 ```
 
+For native prefill/generation speed in the terminal footer and persistent
+`/goal` execution, see [the display and Goal plugin setup](../opencode/README.md).
+Chat responses include engine timing averages in `exl3_metrics`; streamed
+responses carry this extension in their final choices chunk, independently of
+whether usage chunks were requested.
+
 The project configuration does not modify the existing global MCP setup. It
 selects the local `rocm-exl3` provider for the primary model and its worker,
 title, and compaction agents. Keep the server bound to loopback unless you add

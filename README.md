@@ -208,6 +208,8 @@ configuration, supported schemas, and the V620 launch commands. A portable
 [OpenCode v2 configuration](examples/opencode.jsonc) selects the local provider.
 The [2026-10-01 integration report](doc/opencode_api_validation.md) includes
 real tool roundtrip verification and an [OpenCode-generated coding sample](examples/opencode_lru/README.md).
+The [OpenCode metrics and Goal setup](rocm_tools/opencode/README.md) adds native
+prefill/generation averages to the terminal footer and persistent `/goal` execution.
 
 #### All flags
 
