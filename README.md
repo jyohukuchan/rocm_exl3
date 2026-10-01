@@ -200,8 +200,9 @@ python -m rocm_tools.exl3_server.server -m ~/models/<model>-exl3 -cs 32768
 The V620×2 HTTP path has been validated with TP2/RCCL, K5/V4, the original MTP
 head, Engram in one mlocked RAM table, and the batch-one power policy. Context and
 output limits are exposed through `/v1/models` and `/props`. The HTTP integration
-uses a 32K context; the separate long-context benchmark above establishes the larger
-engine limit.
+now allocates a 524,288-token context with a 32,768-token output limit. The original
+OpenCode coding sample used a 32K context; the larger cache allocation and later
+integration checks are described in the API guide.
 
 See the [API/OpenCode guide](rocm_tools/exl3_server/README.md) for endpoints,
 configuration, supported schemas, and the V620 launch commands. A portable
@@ -210,6 +211,8 @@ The [2026-10-01 integration report](doc/opencode_api_validation.md) includes
 real tool roundtrip verification and an [OpenCode-generated coding sample](examples/opencode_lru/README.md).
 The [OpenCode metrics and Goal setup](rocm_tools/opencode/README.md) adds native
 prefill/generation averages to the terminal footer and persistent `/goal` execution.
+The [2026-10-01 QSA request transition fix](doc/qsa_request_transition_fix.md)
+addresses GPU faults after a long conversation followed by a short title request.
 
 #### All flags
 

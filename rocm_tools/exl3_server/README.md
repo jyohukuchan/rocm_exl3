@@ -41,6 +41,12 @@ defaults. The 2026-10-01 batch1 V620 pair check confirmed this cache allocation
 with K5/V4 and short coding/API requests; it did not validate a full 512Ki input.
 The earlier dated OpenCode sample in the validation report used a 32Ki cache.
 
+The [QSA request transition fix](../../doc/qsa_request_transition_fix.md) prevents
+GPU faults when a shorter request follows a longer conversation. Rebuild the
+native extension and restart the model workers when applying that update; an
+older separately loaded extension still contains the fault even with new Python
+files.
+
 Start OpenCode from the project containing that configuration:
 
 ```bash
