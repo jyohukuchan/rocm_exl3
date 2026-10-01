@@ -31,7 +31,6 @@ except ImportError:  # pragma: no cover - useful when loaded as a standalone fil
 
 _PARAMETER_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
 _SUPPORTED_RESPONSE_FORMATS = {"json_object", "json_schema"}
-_MAX_OPTIONAL_PARAMETER_VARIANTS = 8
 _MAX_PARALLEL_TOOL_CALLS = 8
 
 # These keywords constrain relationships between multiple object members.
@@ -156,6 +155,8 @@ def _tool_map(tools: Iterable[dict] | None) -> dict[str, dict]:
         params = _schema_copy(fn.get("parameters", {"type": "object", "properties": {}}),
                               f"tool {fn['name']} parameters")
         unsupported = sorted(_UNSUPPORTED_TOOL_OBJECT_KEYS.intersection(params))
+        if "propertyNames" in unsupported and _unconstrained_property_names(params["propertyNames"]):
+            unsupported.remove("propertyNames")
         if unsupported:
             names = ", ".join(unsupported)
             raise _error(
@@ -211,6 +212,39 @@ def _literal(text: str) -> str:
     return json.dumps(text, ensure_ascii=False)
 
 
+def _unconstrained_property_names(schema: Any) -> bool:
+    # Every JSON object key is already a string. Other name constraints must
+    # remain intact (and fail closed if the compiler cannot implement them).
+    return schema is True or schema == {} or schema == {"type": "string"}
+
+
+def _normalize_compiler_schema(node: Any) -> None:
+    """Remove only redundant property-name checks at actual schema positions."""
+    if not isinstance(node, dict):
+        return
+    if "propertyNames" in node and _unconstrained_property_names(node["propertyNames"]):
+        del node["propertyNames"]
+    for key in ("properties", "patternProperties", "$defs", "definitions", "dependentSchemas"):
+        children = node.get(key)
+        if isinstance(children, dict):
+            for child in children.values():
+                _normalize_compiler_schema(child)
+    for key in ("items", "additionalProperties", "additionalItems", "unevaluatedProperties",
+                "unevaluatedItems", "propertyNames", "not", "contains", "if", "then", "else"):
+        children = node.get(key)
+        if isinstance(children, list):
+            for child in children:
+                _normalize_compiler_schema(child)
+        else:
+            _normalize_compiler_schema(children)
+    for key in ("allOf", "anyOf", "oneOf", "prefixItems"):
+        children = node.get(key)
+        if isinstance(children, list):
+            for child in children:
+                _normalize_compiler_schema(child)
+    # Do not walk const/enum/default/examples: they contain literal user data.
+
+
 def _llguidance_schema(schema: dict) -> dict:
     """Copy a schema and disable unbounded JSON whitespace in LLGuidance.
 
@@ -219,6 +253,7 @@ def _llguidance_schema(schema: dict) -> dict:
     spending the whole response emitting whitespace before a primitive value.
     """
     compiled = json.loads(json.dumps(schema, ensure_ascii=False))
+    _normalize_compiler_schema(compiled)
     guidance = compiled.get("x-guidance", {})
     if not isinstance(guidance, dict):
         guidance = {}
@@ -272,39 +307,21 @@ def _parameter_fragment(parent: dict, name: str) -> dict:
     return value
 
 
-def _parameter_variants(schema: dict) -> list[list[str]]:
-    properties = list(schema.get("properties", {}).keys())
-    required = list(schema.get("required", []))
-    optional = [name for name in properties if name not in required]
-    if len(optional) > _MAX_OPTIONAL_PARAMETER_VARIANTS:
-        # Emitting every declared optional field is a valid instance of the
-        # schema and avoids an exponential grammar.  The JSON subgrammars still
-        # constrain each value.
-        return [properties]
-    variants = []
-    for mask in range(1 << len(optional)):
-        chosen = set(required)
-        chosen.update(name for bit, name in enumerate(optional) if mask & (1 << bit))
-        variants.append([name for name in properties if name in chosen])
-    return variants
-
-
 def _tool_body_expression(schema: dict) -> str:
     properties = schema.get("properties", {})
-    alternatives = []
-    for names in _parameter_variants(schema):
-        chunks = []
-        for name in names:
-            chunks.extend([
-                _literal(f"<parameter={name}>\n"),
-                _json_fragment(_parameter_fragment(schema, name)),
-                _literal("\n</parameter>\n"),
-            ])
-        # </tool_call> is a user-defined/special token in the Qwen tokenizer;
-        # bare angle-bracket syntax is how llguidance matches such a token.
-        chunks.extend([_literal("</function>\n"), "</tool_call>"])
-        alternatives.append(" ".join(chunks) or "</tool_call>")
-    return " | ".join(alternatives)
+    required = set(schema.get("required", []))
+    chunks = []
+    for name in properties:
+        parameter = " ".join([
+            _literal(f"<parameter={name}>\n"),
+            _json_fragment(_parameter_fragment(schema, name)),
+            _literal("\n</parameter>\n"),
+        ])
+        # Independent optional blocks keep grammar size linear and permit
+        # omission even for tools such as Firecrawl with dozens of settings.
+        chunks.append(parameter if name in required else f"( {parameter} )?")
+    chunks.extend([_literal("</function>\n"), "</tool_call>"])
+    return " ".join(chunks)
 
 
 def _tool_body_grammar(schema: dict) -> str:

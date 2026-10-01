@@ -136,6 +136,13 @@ using object-level cross-field operators such as top-level `oneOf`, `anyOf`,
 request error instead of being silently weakened. Such operators inside an
 individual parameter value remain available to the JSON Schema compiler.
 
+Optional XML parameters remain optional for tools with any number of settings;
+the grammar grows linearly instead of enumerating every possible subset. The
+compiler also removes redundant `propertyNames: {type: string}` checks at schema
+positions, since JSON keys are already strings. Restrictive name checks and
+literal `const`/`enum` data are preserved, as are the original post-validation
+schemas.
+
 The Qwen XML adapter renders tool history and the template's parameter example
 with JSON-quoted strings, including escaped newlines for multiline source code.
 This keeps the prompt representation consistent with the generation grammar.

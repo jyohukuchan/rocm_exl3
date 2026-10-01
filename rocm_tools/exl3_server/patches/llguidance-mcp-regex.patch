@@ -1,0 +1,25 @@
+diff --git a/parser/src/json/compiler.rs b/parser/src/json/compiler.rs
+index bf870ee..cab9527 100644
+--- a/parser/src/json/compiler.rs
++++ b/parser/src/json/compiler.rs
+@@ -797,7 +797,7 @@ impl Compiler {
+                     // "minLength": 6,
+                     //
+                     // (excluding two handwritten examples with minLength:10000)
+-                    let mut regex = builder.to_regex_limited(expr, 10_000).map_err(|_| {
++                    let mut regex = builder.to_regex_limited(expr, 100_000).map_err(|_| {
+                         anyhow!(
+                             "Unable to determine if regex is empty: {}",
+                             mk_rx_repr(&ast)
+diff --git a/pyproject.toml b/pyproject.toml
+index 88685c9..56f4a3a 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -1,6 +1,6 @@
+ [project]
+ name = "llguidance"
+-version = "1.9.1"
++version = "1.9.1+exl3.1"
+ description = "Bindings for the Low-level Guidance (llguidance) Rust library for use within Guidance"
+ requires-python = ">=3.10"
+ license = "MIT"

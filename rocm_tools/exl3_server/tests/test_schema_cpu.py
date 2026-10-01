@@ -18,11 +18,60 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from rocm_tools.exl3_server.protocol import ProtocolError  # noqa: E402
 from rocm_tools.exl3_server.schema import (  # noqa: E402
+    _llguidance_schema,
     normalize_response_format,
     prepare_constraints,
     validate_response_format_output,
     validate_tool_arguments,
 )
+
+
+def test_redundant_property_names_are_normalized_only_in_schema_positions():
+    literal = {"propertyNames": {"type": "string"}}
+    original = {"type": "object", "propertyNames": {"type": "string"}, "properties": {
+        "config": {"type": "array", "items": {"type": "object", "propertyNames": True}},
+        "literal": {"const": literal, "default": literal, "enum": [literal]},
+        "restricted": {"type": "object", "propertyNames": {"pattern": "^safe$"}},
+    }, "$defs": {"entry": {"type": "object", "propertyNames": {}}}}
+    compiled = _llguidance_schema(original)
+    assert "propertyNames" not in compiled
+    assert "propertyNames" not in compiled["properties"]["config"]["items"]
+    assert "propertyNames" not in compiled["$defs"]["entry"]
+    assert compiled["properties"]["literal"] == original["properties"]["literal"]
+    assert compiled["properties"]["restricted"] == original["properties"]["restricted"]
+    assert original["propertyNames"] == {"type": "string"}
+    with pytest.raises(ProtocolError, match="violates"):
+        validate_response_format_output('{"unsafe":1}', {
+            "type": "json_schema", "schema": {
+                "type": "object", "propertyNames": {"pattern": "^safe$"}}})
+
+
+def test_many_optional_parameters_and_redundant_property_names_with_native_matcher():
+    llguidance = pytest.importorskip("llguidance")
+    tokenizer_path = Path(os.environ.get("EXL3_SCHEMA_TEST_TOKENIZER", ""))
+    if not tokenizer_path.is_file():
+        pytest.skip("Qwen tokenizer fixture is not available")
+    properties = {"url": {"type": "string"}}
+    properties.update({f"option{i}": {"type": "object", "propertyNames": {"type": "string"},
+                                     "additionalProperties": False} for i in range(12)})
+    tools = [{"type": "function", "function": {"name": "scrape", "parameters": {
+        "type": "object", "propertyNames": {"type": "string"},
+        "properties": properties, "required": ["url"], "additionalProperties": False}}}]
+    plan = prepare_constraints(FakeTokenizer(), tools=tools, tool_choice="required",
+                               parallel_tool_calls=False, compile_filters=False)
+    grammar = llguidance.grammar_from("llguidance", plan.filter_spec["llg_grammar"])
+    tokenizer = llguidance.LLTokenizer(tokenizer_path.read_text())
+    for body in ('<parameter=url>\n"https://example.com"\n</parameter>\n',
+                 '<parameter=url>\n"https://example.com"\n</parameter>\n'
+                 '<parameter=option9>\n{}\n</parameter>\n'):
+        matcher = llguidance.LLMatcher(tokenizer, grammar)
+        output = '<tool_call>\n<function=scrape>\n' + body + '</function>\n</tool_call>'
+        for token in tokenizer.tokenize_str(output):
+            assert matcher.consume_token(token), matcher.get_error()
+        assert matcher.is_stopped() and not matcher.is_error()
+    matcher = llguidance.LLMatcher(tokenizer, grammar)
+    missing_required = '<tool_call>\n<function=scrape>\n</function>\n</tool_call>'
+    assert any(not matcher.consume_token(token) for token in tokenizer.tokenize_str(missing_required))
 
 
 class FakeTokenizer:
