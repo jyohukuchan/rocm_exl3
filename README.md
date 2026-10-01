@@ -200,7 +200,7 @@ python -m rocm_tools.exl3_server.server -m ~/models/<model>-exl3 -cs 32768
 The V620×2 HTTP path has been validated with TP2/RCCL, K5/V4, the original MTP
 head, Engram in one mlocked RAM table, and the batch-one power policy. Context and
 output limits are exposed through `/v1/models` and `/props`. The HTTP integration
-now allocates a 524,288-token context with a 32,768-token output limit. The original
+now allocates a 786,432-token (768Ki) context with a 32,768-token output limit. The original
 OpenCode coding sample used a 32K context; the larger cache allocation and later
 integration checks are described in the API guide.
 
@@ -213,6 +213,9 @@ The [OpenCode metrics and Goal setup](rocm_tools/opencode/README.md) adds native
 prefill/generation averages to the terminal footer and persistent `/goal` execution.
 The [2026-10-01 QSA request transition fix](doc/qsa_request_transition_fix.md)
 addresses GPU faults after a long conversation followed by a short title request.
+Static MoE expert storage permutations can be loaded with `--tp-expert-order`.
+The [2026-10-02 expert-placement experiment](doc/expert_placement.md) describes
+Japanese coding/chat profiles, correctness checks, and decode comparisons.
 
 #### All flags
 
@@ -640,5 +643,4 @@ supporters (🐈❤️!) The following projects in particular deserve a special 
 <p align="center">
   <img src="doc/cat.png" width="40" alt="">
 </p>
-
 
