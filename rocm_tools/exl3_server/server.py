@@ -85,6 +85,7 @@ from rocm_tools.exl3_server import schema as structured
 from rocm_tools.exl3_server import runtime as serving_runtime
 from rocm_tools.exl3_server.metrics import inference_metrics, timing_footer
 from rocm_tools.exl3_server.lifecycle import GenerationFailure, job_results, create_and_collect, readiness
+from rocm_tools.exl3_server.logprobs import Logprobs
 
 DEFAULT_DRY_BREAKERS = ("\n", ":", "\"", "*")
 
@@ -165,6 +166,9 @@ class ChatCompletionRequest(SamplingFields):
     add_generation_prompt: bool = True
     continue_final_message: bool = False
     include_timings: bool | None = None  # None inherits the opt-in CLI setting
+    logprobs: bool | None = None
+    top_logprobs: int | None = Field(default=None, ge=0, le=20)
+    include_raw_logprobs: bool = False
 
 class CompletionRequest(SamplingFields):
     model: str | None = None
@@ -367,6 +371,8 @@ def make_job(req: SamplingFields, ids: torch.Tensor, max_new: int,
         identifier = identifier,
         filters = filters,
         embeddings = embeddings,
+        return_probs = bool(getattr(req, "logprobs", False)),
+        return_top_tokens = (getattr(req, "top_logprobs", 0) or 0) if getattr(req, "logprobs", False) else 0,
     )
 
 
@@ -400,13 +406,17 @@ class DisconnectWatch:
         self.task.cancel()
 
 
-async def collect_job(job: AsyncJob, request: Request | None = None) -> tuple[str, dict]:
+async def collect_job(job: AsyncJob, request: Request | None = None, trace=None) -> tuple[str, dict]:
     """Run a job to completion, returning (text, final_result). Cancels on task cancellation."""
     text = ""
     final = {}
+    completed = False
     watch = DisconnectWatch(request, job) if request is not None else None
     try:
         async for r in job_results(job, getattr(state.args, "request_timeout", 0)):
+            completed = completed or bool(r.get("eos"))
+            if trace is not None:
+                trace.add(r)
             text += r.get("text", "")
             if r.get("eos"):
                 final = r
@@ -416,6 +426,8 @@ async def collect_job(job: AsyncJob, request: Request | None = None) -> tuple[st
     finally:
         if watch:
             watch.stop()
+        if not completed:
+            await job.cancel()
     return text, final
 
 
@@ -780,6 +792,8 @@ async def prepare_chat(body):
     check_model(body.model)
     if not 1 <= body.n <= 8:
         raise HTTPException(400, "n must be in 1..8")
+    if not body.logprobs and (body.top_logprobs or body.include_raw_logprobs):
+        raise HTTPException(400, "top_logprobs and include_raw_logprobs require logprobs=true")
     tools, choice, kwargs = chat_controls(body)
     thinking = bool(kwargs.get("enable_thinking", True))
     try:
@@ -841,13 +855,18 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
 
         async def stream():
             parser = parser_for()
+            trace = Logprobs(state.tokenizer) if body.logprobs else None
             final, done = {}, False
             watch = DisconnectWatch(request, job)
-            def chunk(delta, reason=None, usage=None, metrics=None):
+            def chunk(delta, reason=None, usage=None, metrics=None, probabilities=None):
                 payload = protocol.build_chat_chunk(delta, response_id=cmpl_id,
                     model=state.model_name, created=created, finish_reason=reason, usage=usage)
                 if metrics is not None:
                     payload["exl3_metrics"] = metrics
+                if probabilities is not None:
+                    payload["choices"][0]["logprobs"] = probabilities
+                    if body.include_raw_logprobs:
+                        payload["exl3_logprobs"] = trace.records
                 return sse(payload)
             try:
                 yield chunk({"role": "assistant", "content": ""})
@@ -855,6 +874,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                     for event in parser.feed(prefix):
                         yield chunk(protocol.event_to_chat_delta(event))
                 async for r in job_results(job, getattr(state.args, "request_timeout", 0)):
+                    if trace is not None:
+                        trace.add(r)
                     for event in parser.feed(r.get("text", "")):
                         delta = protocol.event_to_chat_delta(event)
                         if delta:
@@ -871,12 +892,13 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                     delta = protocol.event_to_chat_delta(event)
                     if delta:
                         yield chunk(delta)
+                probabilities = trace.finish(parser, parsed, prefix) if trace is not None else None
                 metrics = inference_metrics(final, total_seconds=time.perf_counter() - received_at)
                 if show_timings and parsed.get("content") and not parsed.get("tool_calls") \
                         and body.response_format is None:
                     yield chunk({"content": timing_footer(metrics)})
                 yield chunk({}, parsed["finish_reason"], usage_dict(final) if include_usage else None,
-                            metrics)
+                            metrics, probabilities)
                 yield "[DONE]"
                 audit_chat(body, cmpl_id, parsed, final, streamed=True)
                 log_request("chat (stream)", final)
@@ -899,12 +921,16 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
 
         return CancellingStreamResponse(stream())
 
+    traces = [Logprobs(state.tokenizer) if body.logprobs else None for _ in range(body.n)]
+    by_job = {}
     def create_choice(i):
         local_plan = plan if i == 0 else structured.prepare_constraints(
             state.tokenizer, tools, choice, body.parallel_tool_calls, body.response_format,
             thinking=thinking)
-        return make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters, embeddings=embeddings)
-    results = await create_and_collect(body.n, create_choice, lambda job: collect_job(job, request))
+        job = make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters, embeddings=embeddings)
+        by_job[id(job)] = traces[i]
+        return job
+    results = await create_and_collect(body.n, create_choice, lambda job: collect_job(job, request, by_job[id(job)]))
     choices, finals = [], []
     try:
         for i, (text, final) in enumerate(results):
@@ -913,6 +939,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             parsed = validate_chat_output(parser.finish(), body, tools, choice, final)
             choices.append({"index": i, "message": protocol.build_chat_message(parsed),
                             "finish_reason": parsed["finish_reason"]})
+            if traces[i] is not None:
+                choices[-1]["logprobs"] = traces[i].finish(parser, parsed, prefix)
             finals.append(final)
             audit_chat(body, cmpl_id, parsed, final, streamed=False)
             log_request("chat", final)
@@ -932,9 +960,12 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             message = result["message"]
             if message.get("content") and not message.get("tool_calls"):
                 message["content"] += timing_footer(measured)
-    return JSONResponse({"id": cmpl_id, "object": "chat.completion", "created": created,
+    response = {"id": cmpl_id, "object": "chat.completion", "created": created,
                          "model": state.model_name, "choices": choices, "usage": usage,
-                         "exl3_metrics": metrics[0] if len(finals) == 1 else {"choices": metrics}})
+                         "exl3_metrics": metrics[0] if len(finals) == 1 else {"choices": metrics}}
+    if body.include_raw_logprobs:
+        response["exl3_logprobs"] = traces[0].records if len(traces) == 1 else {"choices": [t.records for t in traces]}
+    return JSONResponse(response)
 
 
 # ---------------------------------------------------------------------------

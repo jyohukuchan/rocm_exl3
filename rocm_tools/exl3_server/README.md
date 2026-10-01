@@ -208,6 +208,29 @@ Raw-prompt `/v1/completions` and native `/completion` do not use this chat optio
 Usage counts and output budgets remain the model-generated token counts; the
 server-added footer consumes no generation tokens.
 
+### Token probabilities
+
+Chat requests can set `logprobs: true` and `top_logprobs: 0..20`. Native sampled
+token probabilities are returned in `choices[].logprobs.content`, with token
+strings, original UTF-8 bytes, natural-log probabilities and top alternatives.
+Thinking and tool markup are excluded from the visible-content trace. The
+server-added timing footer and injected generation prefixes have no sampled
+probability. Tokens retain their original boundaries, including whitespace that
+the assistant parser trims; split UTF-8 tokens retain their original bytes.
+
+For streaming, the completed trace is attached to the final choices chunk;
+earlier text/think/tool deltas retain their usual incremental delivery. Optional
+`include_raw_logprobs: true` adds `exl3_logprobs` for all emitted native tokens,
+including reasoning and tool syntax, with token IDs. This is useful for draft
+diagnostics. Both alternatives/raw traces require `logprobs: true`.
+
+These are the engine's target probabilities after its logit processing, not
+draft-model probabilities or a calibrated confidence score. Zero probabilities
+use the OpenAI-compatible `-9999.0` sentinel. Missing/nonfinite traces or failed
+text alignment produce an explicit error rather than invented probabilities.
+Trace collection is disabled by default and has sampling/transfer/formatting
+overhead when enabled. It does not change the default thinking/xhigh setting.
+
 The server also accepts the EXL3 sampler extensions `banned_strings`,
 `decode_special_tokens`, DRY, and XTC. Native `/completion` accepts its
 llama.cpp field names and returns native timings; it does not implement every

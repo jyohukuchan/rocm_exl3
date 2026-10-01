@@ -91,11 +91,12 @@ def http_state(monkeypatch):
         jobs.append(job)
         return job
 
+    real_make_job = server.make_job
     monkeypatch.setattr(server, "make_job", make_job)
     monkeypatch.setattr(server.structured, "prepare_constraints",
                         lambda *_a, **_kw: SimpleNamespace(
                             filters=[], template_instructions="", generation_prefix=""))
-    yield SimpleNamespace(tokenizer=tok, jobs=jobs, events=events)
+    yield SimpleNamespace(tokenizer=tok, jobs=jobs, events=events, real_make_job=real_make_job)
     for name, value in old.items():
         setattr(server.state, name, value)
 
@@ -575,6 +576,40 @@ def test_tp_embedding_transfer_cache_stays_bounded_and_reuses_descriptors(monkey
         consumer.arena = None
         consumer.close()
         producer.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('stream', [False, True])
+async def test_chat_logprobs_json_and_sse_preserve_reasoning_and_footer(http_state, stream):
+    from test_logprobs_cpu import Tokenizer, event
+    pieces = [b'thought', b'</think>', '答え'.encode()]
+    native = Tokenizer(pieces)
+    http_state.tokenizer.tokenizer = native.tokenizer
+    http_state.tokenizer.extended_id_to_piece = {}
+    http_state.events[:] = [dict(event(pieces), text='thought</think>答え', eos=True,
+                                eos_reason='stop', new_tokens=3, prompt_tokens=3)]
+    response = await request_json('POST', '/v1/chat/completions', {
+        'messages': [{'role': 'user', 'content': 'hi'}], 'enable_thinking': True,
+        'logprobs': True, 'top_logprobs': 1, 'include_raw_logprobs': True,
+        'stream': stream, 'include_timings': True})
+    assert response.status_code == 200
+    text, final = chat_payloads(response, stream)
+    assert text.startswith('答え') and 'exl3-timings:v2' in text
+    assert len(final['choices'][0]['logprobs']['content']) == 1
+    assert final['choices'][0]['logprobs']['content'][0]['token'] == '答え'
+    assert len(final['exl3_logprobs']) == 3
+    assert 'thought' not in str(final['choices'][0]['logprobs'])
+
+
+def test_native_job_receives_probability_flags_only_when_requested(http_state, monkeypatch):
+    captured = []
+    server.state.generator = SimpleNamespace(error=None, iteration_task=None)
+    monkeypatch.setattr(server, 'AsyncJob', lambda *args, **kwargs: captured.append(kwargs))
+    request = server.ChatCompletionRequest(messages=[{'role': 'user', 'content': 'hi'}], logprobs=True, top_logprobs=5)
+    http_state.real_make_job(request, torch.tensor([[1]]), 4, None)
+    assert captured[-1]['return_probs'] is True and captured[-1]['return_top_tokens'] == 5
+    http_state.real_make_job(server.ChatCompletionRequest(messages=request.messages), torch.tensor([[1]]), 4, None)
+    assert captured[-1]['return_probs'] is False and captured[-1]['return_top_tokens'] == 0
 
 
 @pytest.mark.asyncio

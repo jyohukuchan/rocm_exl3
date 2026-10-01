@@ -14,6 +14,8 @@ class GenerationFailure(Exception):
             "inference_timeout": "Inference exceeded the configured request deadline.",
             "generation_cancelled": "Generation ended before a completion was produced.",
             "image_inference_failed": "Image inference failed; no image features were added to the prompt.",
+            "logprobs_unavailable": "Native token probabilities are unavailable or invalid.",
+            "logprobs_alignment_failed": "Native probabilities could not be aligned to the returned text.",
         }.get(self.code, "Inference is unavailable."), "type": "server_error", "code": self.code}}
 
 
