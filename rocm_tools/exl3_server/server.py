@@ -83,6 +83,7 @@ from rocm_tools.exl3_server.dry_sampler import SS_DRY, breaker_token_ids
 from rocm_tools.exl3_server import protocol
 from rocm_tools.exl3_server import schema as structured
 from rocm_tools.exl3_server import runtime as serving_runtime
+from rocm_tools.exl3_server.metrics import inference_metrics
 
 DEFAULT_DRY_BREAKERS = ("\n", ":", "\"", "*")
 
@@ -790,9 +791,12 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
             parser = parser_for()
             final, done = {}, False
             watch = DisconnectWatch(request, job)
-            def chunk(delta, reason=None, usage=None):
-                return sse(protocol.build_chat_chunk(delta, response_id=cmpl_id,
-                    model=state.model_name, created=created, finish_reason=reason, usage=usage))
+            def chunk(delta, reason=None, usage=None, metrics=None):
+                payload = protocol.build_chat_chunk(delta, response_id=cmpl_id,
+                    model=state.model_name, created=created, finish_reason=reason, usage=usage)
+                if metrics is not None:
+                    payload["exl3_metrics"] = metrics
+                return sse(payload)
             try:
                 yield chunk({"role": "assistant", "content": ""})
                 if prefix:
@@ -815,7 +819,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                     delta = protocol.event_to_chat_delta(event)
                     if delta:
                         yield chunk(delta)
-                yield chunk({}, parsed["finish_reason"], usage_dict(final) if include_usage else None)
+                yield chunk({}, parsed["finish_reason"], usage_dict(final) if include_usage else None,
+                            inference_metrics(final))
                 yield "[DONE]"
                 audit_chat(body, cmpl_id, parsed, final, streamed=True)
                 log_request("chat (stream)", final)
@@ -862,7 +867,9 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     usage["completion_tokens"] = sum(f.get("new_tokens", 0) for f in finals)
     usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
     return JSONResponse({"id": cmpl_id, "object": "chat.completion", "created": created,
-                         "model": state.model_name, "choices": choices, "usage": usage})
+                         "model": state.model_name, "choices": choices, "usage": usage,
+                         "exl3_metrics": inference_metrics(finals[0]) if len(finals) == 1 else
+                         {"choices": [inference_metrics(f) for f in finals]}})
 
 
 # ---------------------------------------------------------------------------

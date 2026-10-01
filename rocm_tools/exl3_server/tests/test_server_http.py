@@ -99,6 +99,26 @@ def http_state(monkeypatch):
         setattr(server.state, name, value)
 
 
+@pytest.mark.asyncio
+async def test_native_metrics_are_available_in_json_and_sse_without_usage_opt_in(http_state):
+    http_state.events[:] = [{"text": "hello", "eos": True, "eos_reason": "stop",
+                           "new_tokens": 10, "prompt_tokens": 100,
+                           "cached_tokens": 80, "time_prefill": .2,
+                           "time_generate": .5}]
+    body = {"model": "fake-model", "enable_thinking": False,
+            "messages": [{"role": "user", "content": "hello"}]}
+    plain = await request_json("POST", "/v1/chat/completions", body)
+    assert plain.json()["exl3_metrics"]["prefill_tokens_per_second"] == 100
+    assert plain.json()["exl3_metrics"]["output_tokens_per_second"] == 20
+    stream = await request_json("POST", "/v1/chat/completions", {**body, "stream": True})
+    chunks = [json.loads(line[5:].strip()) for line in stream.text.splitlines()
+              if line.startswith("data:") and line[5:].strip() != "[DONE]"]
+    measured = [c for c in chunks if "exl3_metrics" in c]
+    assert len(measured) == 1
+    assert measured[0]["exl3_metrics"] == plain.json()["exl3_metrics"]
+    assert "usage" not in measured[0]
+
+
 async def request_json(method, path, payload):
     transport = httpx.ASGITransport(app=server.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
