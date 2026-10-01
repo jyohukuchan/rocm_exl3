@@ -491,8 +491,9 @@ def messages_for_template(messages: Iterable[dict], tools: Iterable[dict] | None
             calls = []
             for call in msg["tool_calls"]:
                 name = call["function"]["name"]
-                if tools is not None and name not in schemas:
-                    raise ProtocolError(f"assistant call uses undeclared tool: {name}")
+                # Declarations describe what may be called NOW. A client can
+                # retire a one-use tool while retaining its earlier call/result
+                # in history (e.g. OpenCode Goal lifecycle capabilities).
                 try:
                     args = json.loads(call["function"]["arguments"])
                 except (TypeError, ValueError) as exc:

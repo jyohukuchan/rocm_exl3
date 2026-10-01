@@ -67,6 +67,20 @@ def test_history_preserves_tool_ids_reasoning_and_json_arguments():
         normalize_chat_messages([{"role": "tool", "tool_call_id": "missing", "content": "x"}])
 
 
+def test_retired_tool_remains_valid_history_but_cannot_be_called_now():
+    history = [{"role": "user", "content": "run"},
+               {"role": "assistant", "content": None, "tool_calls": [{
+                   "id": "once", "type": "function", "function": {
+                       "name": "retired_tool", "arguments": '{"value":"kept"}'}}]},
+               {"role": "tool", "tool_call_id": "once", "content": "done"}]
+    adapted = messages_for_template(history, TOOLS)
+    assert adapted[1]["tool_calls"][0]["function"]["arguments"] == {"value": "kept"}
+    assert adapted[2]["tool_call_id"] == "once"
+    from rocm_tools.exl3_server.protocol import validate_output_tools
+    with pytest.raises(ProtocolError, match="undeclared"):
+        validate_output_tools({"tool_calls": history[1]["tool_calls"]}, TOOLS)
+
+
 def test_qwen_template_mode_quotes_multiline_strings_but_keeps_typed_values():
     tools = [{"type": "function", "function": {
         "name": "write", "parameters": {"type": "object", "properties": {
