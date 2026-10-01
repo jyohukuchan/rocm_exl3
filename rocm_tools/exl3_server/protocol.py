@@ -15,6 +15,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable
 
+from .metrics import strip_timing_footer
+
 
 _FUNCTION_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,63}$")
 _THINK_RE = re.compile(r"<think\s*>(.*?)</think\s*>", re.IGNORECASE | re.DOTALL)
@@ -447,6 +449,8 @@ def normalize_chat_messages(messages: Iterable[dict]) -> list[dict]:
         if role not in {"system", "user", "assistant", "tool"}:
             raise ProtocolError(f"unsupported message role: {role}")
         item = {"role": role, "content": _text_content(message.get("content"))}
+        if role == "assistant":
+            item["content"] = strip_timing_footer(item["content"])
         if "name" in message:
             item["name"] = message["name"]
         if "reasoning_content" in message:

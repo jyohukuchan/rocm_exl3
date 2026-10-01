@@ -83,7 +83,7 @@ from rocm_tools.exl3_server.dry_sampler import SS_DRY, breaker_token_ids
 from rocm_tools.exl3_server import protocol
 from rocm_tools.exl3_server import schema as structured
 from rocm_tools.exl3_server import runtime as serving_runtime
-from rocm_tools.exl3_server.metrics import inference_metrics
+from rocm_tools.exl3_server.metrics import inference_metrics, timing_footer
 
 DEFAULT_DRY_BREAKERS = ("\n", ":", "\"", "*")
 
@@ -161,6 +161,7 @@ class ChatCompletionRequest(SamplingFields):
     chat_template_kwargs: dict | None = None
     add_generation_prompt: bool = True
     continue_final_message: bool = False
+    include_timings: bool | None = None  # None inherits the opt-in CLI setting
 
 class CompletionRequest(SamplingFields):
     model: str | None = None
@@ -626,7 +627,19 @@ async def lifespan(app: FastAPI):
         if errors:
             raise RuntimeError("server cleanup failed: " + "; ".join(errors))
 
+class RequestTimingMiddleware:
+    """Start before body parsing without changing streaming/disconnect handling."""
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http":
+            scope["exl3_received_at"] = time.perf_counter()
+        await self.app(scope, receive, send)
+
+
 app = FastAPI(title = "exl3_server", lifespan = lifespan)
+app.add_middleware(RequestTimingMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins = ["*"],
@@ -771,6 +784,9 @@ def validate_chat_output(parsed, body, tools, choice, final):
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: ChatCompletionRequest):
     check_auth(request)
+    received_at = request.scope["exl3_received_at"]
+    show_timings = (body.include_timings if body.include_timings is not None
+                    else getattr(state.args, "include_timings", False))
     tools, choice, thinking, plan, prefix, ids = prepare_chat(body)
     max_new = token_budget(ids.shape[-1], body.max_completion_tokens or body.max_tokens)
     cmpl_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -825,8 +841,12 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                     delta = protocol.event_to_chat_delta(event)
                     if delta:
                         yield chunk(delta)
+                metrics = inference_metrics(final, total_seconds=time.perf_counter() - received_at)
+                if show_timings and parsed.get("content") and not parsed.get("tool_calls") \
+                        and body.response_format is None:
+                    yield chunk({"content": timing_footer(metrics)})
                 yield chunk({}, parsed["finish_reason"], usage_dict(final) if include_usage else None,
-                            inference_metrics(final))
+                            metrics)
                 yield "[DONE]"
                 audit_chat(body, cmpl_id, parsed, final, streamed=True)
                 log_request("chat (stream)", final)
@@ -872,10 +892,16 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     usage = usage_dict(finals[0])
     usage["completion_tokens"] = sum(f.get("new_tokens", 0) for f in finals)
     usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
+    elapsed = time.perf_counter() - received_at
+    metrics = [inference_metrics(f, total_seconds=elapsed) for f in finals]
+    if show_timings and body.response_format is None:
+        for result, measured in zip(choices, metrics):
+            message = result["message"]
+            if message.get("content") and not message.get("tool_calls"):
+                message["content"] += timing_footer(measured)
     return JSONResponse({"id": cmpl_id, "object": "chat.completion", "created": created,
                          "model": state.model_name, "choices": choices, "usage": usage,
-                         "exl3_metrics": inference_metrics(finals[0]) if len(finals) == 1 else
-                         {"choices": [inference_metrics(f) for f in finals]}})
+                         "exl3_metrics": metrics[0] if len(finals) == 1 else {"choices": metrics}})
 
 
 # ---------------------------------------------------------------------------
@@ -1264,6 +1290,8 @@ if __name__ == "__main__":
     parser.add_argument("-lmr", "--loop_min_reps", type = int, default = 3, help = "Min. reps for loop detection, default = 3")
     serving_runtime.add_helper_flags(parser)
     parser.add_argument("--audit-log", default=None, help="Private JSONL request/result audit (no credentials)")
+    parser.add_argument("--include-timings", action="store_true",
+                        help="Append timings to plain chat answers (off by default; request include_timings overrides)")
     parser.add_argument("-xtcp", "--xtc_probability", type = float, default = 0.0, help = "XTC probability, 0 to disable (default)")
     parser.add_argument("-xtct", "--xtc_threshold", type = float, default = 0.1, help = "XTC threshold, default = 0.1")
     parser.add_argument("-drym", "--dry_multiplier", type = float, default = 0.0, help = "DRY multiplier, 0 to disable (default)")

@@ -90,6 +90,54 @@ Chat Completions supports `messages`, `stream`, `n` for non-streaming requests,
 fields, `chat_template_kwargs`, `reasoning_effort`, `enable_thinking`, and
 `continue_final_message`. Unknown OpenAI-style request fields are ignored.
 
+### Optional timing footer
+
+For `/v1/chat/completions`, set `"include_timings": true` in the request to append
+a timing line to the assistant's answer. Both streaming and non-streaming work:
+
+```json
+{
+  "model": "qwen38-local",
+  "messages": [{"role": "user", "content": "こんにちは"}],
+  "include_timings": true
+}
+```
+
+The visible line looks like:
+
+```text
+Prefill: 456.12 tok/s | Decode: 53.25 tok/s | Total: 16.09 s
+```
+
+The footer is **off by default**. `--include-timings` enables it as a server
+default; an explicit request `"include_timings": false` overrides that default.
+Client provider bodies can also send the request field, such as OpenCode's
+model `body` or LibreChat's endpoint `addParams`. Neither existing client
+configuration is enabled automatically.
+
+Prefill uses only uncached input tokens and the engine's prefill time. Decode
+uses generated tokens, including reasoning, and the engine's generation time.
+Unavailable phase rates are displayed as `N/A`. Total is measured from server
+ASGI request arrival to answer completion, including body parsing, template and
+grammar preparation, queueing, prefill, and generation. It excludes delivery to
+the client and previous requests or external tool execution in a multi-request
+agent turn. Chat's `exl3_metrics.total_seconds` exposes the same unrounded value.
+
+The footer is ordinary `message.content` (a final `delta.content` chunk for SSE),
+so clients store it as assistant text. Hidden versioned HTML comments identify
+the exact suffix. When assistant history comes back to this engine, the suffix
+is removed before templating/tokenization, even if display is now disabled.
+`/apply-template` performs the same removal. This prevents the footer from
+entering the model input or KV cache recomputation. User/tool content and tool
+arguments are preserved. Keep the marker comments in stored history; a client
+that removes or rewrites them cannot be recognized. Other engines may retain
+the footer in their prompts.
+
+No footer is appended to tool-call messages or `response_format` JSON answers.
+Raw-prompt `/v1/completions` and native `/completion` do not use this chat option.
+Usage counts and output budgets remain the model-generated token counts; the
+server-added footer consumes no generation tokens.
+
 The server also accepts the EXL3 sampler extensions `banned_strings`,
 `decode_special_tokens`, DRY, and XTC. Native `/completion` accepts its
 llama.cpp field names and returns native timings; it does not implement every

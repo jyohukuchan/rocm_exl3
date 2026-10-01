@@ -1,4 +1,4 @@
-from rocm_tools.exl3_server.metrics import inference_metrics
+from rocm_tools.exl3_server.metrics import inference_metrics, strip_timing_footer, timing_footer
 
 
 def test_rates_use_uncached_tokens_and_native_phase_times():
@@ -21,3 +21,12 @@ def test_complete_cache_hit_and_invalid_counts():
     assert result["cached_tokens"] == 100
     assert result["prefill_tokens_per_second"] == 0
     assert inference_metrics(dict(prompt_tokens=float("inf")))["prompt_tokens"] == 0
+
+
+def test_footer_missing_rates_and_exact_suffix_only():
+    footer = timing_footer(inference_metrics({}, total_seconds=2.5))
+    assert "Prefill: N/A tok/s | Decode: N/A tok/s | Total: 2.50 s" in footer
+    assert strip_timing_footer("answer\n" + footer + "\n") == "answer\n"
+    assert strip_timing_footer("answer" + footer + footer) == "answer"
+    assert strip_timing_footer("quote" + footer + "\nmore") == "quote" + footer + "\nmore"
+    assert strip_timing_footer("answer\nPrefill: 100 tok/s") == "answer\nPrefill: 100 tok/s"

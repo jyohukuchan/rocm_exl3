@@ -30,6 +30,24 @@ TOOLS = [{"type": "function", "function": {
 }}]
 
 
+def test_timing_footer_only_removed_from_assistant_text_history():
+    from rocm_tools.exl3_server.metrics import timing_footer
+    footer = timing_footer({"total_seconds": 1.})
+    original = [
+        {"role": "user", "content": "quoted" + footer},
+        {"role": "assistant", "content": "answer" + footer, "reasoning_content": "reason" + footer,
+         "tool_calls": [{"id": "call_x", "function": {
+             "name": "get_weather", "arguments": json.dumps({"city": footer})}}]},
+        {"role": "tool", "tool_call_id": "call_x", "content": "result" + footer}]
+    adapted = messages_for_template(original, TOOLS)
+    assert adapted[0]["content"] == "quoted" + footer
+    assert adapted[1]["content"] == "answer"
+    assert adapted[1]["reasoning_content"] == "reason" + footer
+    assert adapted[1]["tool_calls"][0]["function"]["arguments"]["city"] == footer
+    assert adapted[2]["content"] == "result" + footer
+    assert original[1]["content"] == "answer" + footer
+
+
 def test_qwen_reasoning_and_function_xml_parse_without_reasoning_tool_lookalike():
     text = (
         "<think>consider <tool_call><function=decoy></function></tool_call></think>\n"

@@ -115,7 +115,11 @@ async def test_native_metrics_are_available_in_json_and_sse_without_usage_opt_in
               if line.startswith("data:") and line[5:].strip() != "[DONE]"]
     measured = [c for c in chunks if "exl3_metrics" in c]
     assert len(measured) == 1
-    assert measured[0]["exl3_metrics"] == plain.json()["exl3_metrics"]
+    for key, value in plain.json()["exl3_metrics"].items():
+        if key == "total_seconds":
+            assert measured[0]["exl3_metrics"][key] >= 0
+        else:
+            assert measured[0]["exl3_metrics"][key] == value
     assert "usage" not in measured[0]
 
 
@@ -123,6 +127,95 @@ async def request_json(method, path, payload):
     transport = httpx.ASGITransport(app=server.app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.request(method, path, json=payload)
+
+
+def chat_payloads(response, stream):
+    if stream:
+        chunks = [json.loads(line[6:]) for line in response.text.splitlines()
+                  if line.startswith("data: {")]
+        text = "".join(c["choices"][0]["delta"].get("content", "")
+                       for c in chunks if c.get("choices"))
+        final = next(c for c in chunks if "exl3_metrics" in c)
+        return text, final
+    final = response.json()
+    return final["choices"][0]["message"]["content"], final
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("cli,option,expected", [
+    (False, None, False), (False, True, True),
+    (True, None, True), (True, False, False)])
+async def test_timing_footer_opt_in_and_wall_time(http_state, monkeypatch, stream, cli, option, expected):
+    server.state.args.include_timings = cli
+    clock = [100.]
+    monkeypatch.setattr(server.time, "perf_counter", lambda: clock[0])
+    original = server.make_job
+
+    def queued_job(*args, **kwargs):
+        clock[0] += 3.25  # Wall time includes queue/preparation, not just phase times.
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(server, "make_job", queued_job)
+    http_state.events[:] = [{"text": "hello", "eos": True, "eos_reason": "stop",
+                           "new_tokens": 10, "prompt_tokens": 100, "cached_tokens": 80,
+                           "time_prefill": .2, "time_generate": .5}]
+    body = {"messages": [{"role": "user", "content": "hi"}], "stream": stream,
+            "stream_options": {"include_usage": True}}
+    if option is not None:
+        body["include_timings"] = option
+    response = await request_json("POST", "/v1/chat/completions", body)
+    assert response.status_code == 200
+    text, final = chat_payloads(response, stream)
+    assert final["exl3_metrics"]["total_seconds"] == 3.25
+    if expected:
+        assert "Prefill: 100.00 tok/s | Decode: 20.00 tok/s | Total: 3.25 s" in text
+        assert text.startswith("hello\n\n")
+        assert final["usage"]["completion_tokens"] == 10
+    else:
+        assert text == "hello"
+
+
+@pytest.mark.asyncio
+async def test_timing_footer_removed_before_tokenization_and_apply_template(http_state, monkeypatch):
+    body = {"messages": [{"role": "user", "content": "hi"}], "include_timings": True}
+    first = await request_json("POST", "/v1/chat/completions", body)
+    answer = first.json()["choices"][0]["message"]["content"]
+    assert "exl3-timings:v1" in answer
+    body.update(messages=body["messages"] + [
+        {"role": "assistant", "content": [{"type": "text", "text": answer}]},
+        {"role": "user", "content": "continue"}], include_timings=False)
+    second = await request_json("POST", "/v1/chat/completions", body)
+    assert second.status_code == 200
+    assert http_state.tokenizer.calls[-1][0][1]["content"] == "hello"
+    monkeypatch.setattr(http_state.tokenizer, "hf_render_chat_template",
+                        lambda messages, **kwargs: json.dumps(messages), raising=False)
+    rendered = await request_json("POST", "/apply-template", {"messages": body["messages"]})
+    assert json.loads(rendered.json()["prompt"])[1]["content"] == "hello"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("kind", ["tool", "json"])
+async def test_timing_footer_preserves_tool_and_json_contract(http_state, stream, kind):
+    body = {"messages": [{"role": "user", "content": "hi"}],
+            "include_timings": True, "stream": stream}
+    if kind == "tool":
+        text = ('checking<tool_call><function=get_weather><parameter=city>"Tokyo"'
+                '</parameter></function></tool_call>')
+        body["tools"] = TOOLS
+    else:
+        text = '{"result":"hello"}'
+        body["response_format"] = {"type": "json_object"}
+    http_state.events[:] = [{"text": text, "eos": True, "eos_reason": "stop",
+                           "new_tokens": 10, "prompt_tokens": 3}]
+    response = await request_json("POST", "/v1/chat/completions", body)
+    assert response.status_code == 200
+    answer, final = chat_payloads(response, stream)
+    assert "exl3-timings" not in answer
+    assert final["choices"][0]["finish_reason"] == ("tool_calls" if kind == "tool" else "stop")
+    if kind == "json":
+        assert json.loads(answer) == {"result": "hello"}
 
 
 @pytest.mark.asyncio
