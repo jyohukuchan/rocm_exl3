@@ -53,8 +53,16 @@ mkdir -p ~/.local/share/opencode/rocm-exl3-plugins/goal
 Create `goal/index.ts` containing:
 
 ```ts
-export { default } from "../node_modules/@bybrawe/opencode-goal/dist/native.js";
+import plugin from "../node_modules/@bybrawe/opencode-goal/dist/native.js";
+import { adaptGoal } from "/ABSOLUTE/REPO/rocm_tools/opencode/goal-adapter/index.mjs";
+export default adaptGoal(plugin);
 ```
+
+The adapter constrains the independent verifier's audit token and requirement
+IDs to the current audit using JSON Schema enums. This prevents malformed IDs
+from consuming its time limit. It preserves the Goal plugin's evidence checks,
+tool restrictions, and authorization rules; it does not accept a verdict merely
+because its IDs are valid.
 
 Add the `goal` directory to the project's `plugins` list:
 
@@ -88,6 +96,7 @@ status label alone is not proof that a task has been achieved.
 
 ```bash
 node --test rocm_tools/opencode/exl3-status/tests.mjs
+node --test rocm_tools/opencode/goal-adapter/tests.mjs
 python3 -m pytest rocm_tools/exl3_server/tests/test_metrics_cpu.py -q
 ```
 
