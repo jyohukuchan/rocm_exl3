@@ -23,19 +23,20 @@ export default {
         void refresh();
         onCleanup(() => { stopped = true; clearInterval(timer); });
         const text = createElement('text');
-        insert(text, () => {
-          const model = ctx.data.session.get(props.sessionID)?.model;
-          return model?.providerID === 'rocm-exl3' ? format(record()) : '';
-        });
+        // Records are written only by the rocm-exl3 provider hook. Session
+        // defaults can omit a model when an agent supplies its own model.
+        insert(text, () => format(record()));
         return text;
     };
     const disposers = [ctx.ui.slot({ append: 'prompt.footer.status', render: props =>
-      poll(props, async id => JSON.parse(await readFile(stateFile(id), 'utf8')), formatMetrics, null) })];
+      poll(props, async id => JSON.parse(await readFile(stateFile(id), 'utf8')),
+        record => record ? formatMetrics(record) : '', null) })];
     if (ctx.options.goalFormatter) {
       const { formatGoalSidebar } = await import(ctx.options.goalFormatter);
       disposers.push(ctx.ui.slot({ append: 'sidebar.content', render: props => poll(props,
         async id => {
           const root = ctx.data.session.get(id)?.location?.directory ?? ctx.location?.directory;
+          if (ctx.options.goalDirectory && root !== ctx.options.goalDirectory) return '';
           return root ? formatGoalSidebar(root, id) : '';
         }, value => value, '') }));
     }
