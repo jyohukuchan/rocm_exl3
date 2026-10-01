@@ -69,12 +69,14 @@ class RoutingCFG:
     router_bias: torch.Tensor | None = None
     tid2eid: torch.Tensor | None = None
     e_score_bias_vl: torch.Tensor | None = None   # DeepSeek-V4 vision: selection bias for image rows
+    expert_map: torch.Tensor | None = None       # original expert ID -> storage slot
 
 def routing_std(bsz, cfg, y, params):
     if bsz == 1:
         if cfg.gate_tensor_t is None:
             cfg.gate_tensor_t = cfg.gate_tensor.T.contiguous()
-        ext.routing_std(
+        route = ext.routing_std if cfg.expert_map is None else ext.routing_std_mapped
+        args = (
             y,
             cfg.gate_tensor,
             cfg.router_logits_bsz1,
@@ -84,6 +86,9 @@ def routing_std(bsz, cfg, y, params):
             cfg.gate_tensor_t,
             None,
         )
+        if cfg.expert_map is not None:
+            args += (cfg.expert_map,)
+        route(*args)
         return cfg.selected_experts_bsz1, cfg.routing_weights_bsz1
     else:
         activate_all_experts = params.get("activate_all_experts")
@@ -94,12 +99,15 @@ def routing_std(bsz, cfg, y, params):
                 torch.arange(start = 0, end = cfg.num_experts, dtype = torch.long, device = y.device)
                 .repeat((bsz, 1))
             )
+            if cfg.expert_map is not None:
+                selected_experts = cfg.expert_map.long().unsqueeze(0).expand(bsz, -1)
             if cfg.per_expert_scale is not None:
                 routing_weights *= cfg.per_expert_scale.unsqueeze(0)
             return selected_experts, routing_weights
         else:
             router_logits, selected_experts, routing_weights = _routing_buffers(cfg, bsz, y.device)
-            ext.routing_std(
+            route = ext.routing_std if cfg.expert_map is None else ext.routing_std_mapped
+            args = (
                 y,
                 cfg.gate_tensor,
                 router_logits,
@@ -109,6 +117,9 @@ def routing_std(bsz, cfg, y, params):
                 None,
                 None,
             )
+            if cfg.expert_map is not None:
+                args += (cfg.expert_map,)
+            route(*args)
         return selected_experts, routing_weights
 
 

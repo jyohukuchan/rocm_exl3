@@ -162,6 +162,14 @@ def _dev_index(value):
     return int(tail) if tail.isdigit() else None
 
 
+def _expert_orders(args):
+    path = getattr(args, "tp_expert_order", None)
+    if not path:
+        return {}
+    from exllamav3.util.expert_placement import load_orders
+    return load_orders(path)
+
+
 def parse_cache_quant(spec):
     """'-cq 5,4' -> (5, 4); '8' -> (8, 8); None/'' -> None (FP16 caches).
     Mirrors model_init's split semantics and CacheLayer_quant's 2..8 assert,
@@ -344,6 +352,10 @@ def validate_runtime_args(args):
 
     if st["gpu_split_error"]:
         problems.append(st["gpu_split_error"])
+
+    if getattr(args, "tp_expert_order", None):
+        if not st["tensor_parallel"] or getattr(args, "tp_moe_tensor_split", False):
+            problems.append("--tp-expert-order requires -tp without --tp_moe_tensor_split")
 
     if st["tensor_parallel"]:
         # model_init asserts these rules at load time; surface them as clear
@@ -909,7 +921,8 @@ def _load_verified_tp(args, settings, log, requirements):
                    progressbar=False, tensor_p=True, tp_backend="nccl",
                    tp_output_device=settings["tp_output_device"],
                    tp_dev_limits=tp_dev_limits,
-                   tp_options={"moe_tensor_split": bool(getattr(args, "tp_moe_tensor_split", False))},
+                   tp_options={"moe_tensor_split": bool(getattr(args, "tp_moe_tensor_split", False)),
+                               "expert_order": _expert_orders(args)},
                    verbose=settings["load_verbose"])
 
         loaded_tp = bool(getattr(model, "loaded_tp", False))

@@ -387,6 +387,8 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
 
         self.routing_cfg = None
         self.experts_cfg = None
+        self.tp_expert_order = None
+        self.expert_map = None
 
         # Persistent broadcast targets for TP ranks without the router (see forward)
         self.bcast_sel_bsz1 = None
@@ -729,6 +731,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             n_group = self.n_group,
             topk_group = self.topk_group,
             per_expert_scale = self.per_expert_scale,
+            expert_map = self.expert_map,
         )
 
 
@@ -914,6 +917,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         self.routing_cfg = None
         self.experts_cfg = None
         self.e_score_correction_bias = None
+        self.expert_map = None
         self.tid2eid = None
         self.per_expert_scale = None
         self.bcast_sel_bsz1 = None
@@ -1356,6 +1360,14 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
 
 
     def make_tp_allocation(self, options: dict) -> list[TPAllocation]:
+        order = (options.get("expert_order") or {}).get(self.key)
+        self.tp_expert_order = None
+        if order is not None:
+            from ..util.expert_placement import validate_order
+            self.tp_expert_order = validate_order(order, self.num_experts)
+        if self.tp_expert_order is not None:
+            if self.router_type != "std" or options.get("moe_tensor_split", False):
+                raise ValueError("Expert placement permutations require std routing and expert-parallel TP")
         storage = 0
         storage += self.routing_gate.storage_size()
         if self.shared_gate:
@@ -1365,6 +1377,8 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         for d in self.downs: storage += d.storage_size()
         # The latent projections are replicated on every rank
         storage_d = 0
+        if self.tp_expert_order is not None:
+            storage_d += self.num_experts * torch.int32.itemsize
         if self.latent_in is not None:
             storage_d += self.latent_in.storage_size() + self.latent_out.storage_size()
         if self.tp_router_replicated():
@@ -1443,9 +1457,10 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             "e_score_correction_bias": producer.send(self.e_score_correction_bias),
             "e_score_bias_vl": producer.send(self.e_score_bias_vl) if self.e_score_bias_vl is not None else None,
             "per_expert_scale": producer.send(self.per_expert_scale),
-            "gates": [_export(self.gates[i]) for i in range(self.num_experts)] if self.gated else None,
-            "ups": [_export(self.ups[i]) for i in range(self.num_experts)],
-            "downs": [_export(self.downs[i]) for i in range(self.num_experts)],
+            "expert_order": self.tp_expert_order,
+            "gates": [_export(self.gates[i]) for i in (self.tp_expert_order or range(self.num_experts))] if self.gated else None,
+            "ups": [_export(self.ups[i]) for i in (self.tp_expert_order or range(self.num_experts))],
+            "downs": [_export(self.downs[i]) for i in (self.tp_expert_order or range(self.num_experts))],
             "shared_experts": self.shared_experts.tp_export(plan, producer) \
                 if self.shared_experts is not None else None,
             "shared_experts_post_norm": _export(self.shared_experts_post_norm),
@@ -1544,6 +1559,13 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         )
 
         module.device = device
+        order = exported.get("expert_order")
+        if order is not None:
+            from ..util.expert_placement import inverse_order, validate_order
+            if not hasattr(ext, "routing_std_mapped"):
+                raise RuntimeError("Rebuild the native extension for mapped expert routing")
+            module.tp_expert_order = validate_order(order, module.num_experts)
+            module.expert_map = torch.tensor(inverse_order(order), dtype=torch.int32, device=device)
         module.e_score_correction_bias = consumer.recv(exported["e_score_correction_bias"], cuda = True)
         if exported.get("e_score_bias_vl") is not None:
             module.e_score_bias_vl = consumer.recv(exported["e_score_bias_vl"], cuda = True)

@@ -84,6 +84,19 @@ void routing_std
     const c10::optional<at::Tensor>& bias
 );
 
+void routing_std_mapped
+(
+    const at::Tensor& hidden,
+    const at::Tensor& gate,
+    at::Tensor scores,
+    at::Tensor topk_indices,
+    at::Tensor topk_weights,
+    const c10::optional<at::Tensor>& per_expert_scale,
+    const c10::optional<at::Tensor>& gate_t,
+    const c10::optional<at::Tensor>& bias,
+    const at::Tensor& expert_map
+);
+
 void routing_std_logits
 (
     at::Tensor scores,

@@ -774,6 +774,10 @@ class Model_TPMixin:
             components = []
             for m in modules:
                 components += m.make_tp_allocation(tp_options)
+            order_keys = set((tp_options.get("expert_order") or {}).keys())
+            unused = order_keys - {c.key for c in components if c.channel_unit == "experts"}
+            if unused:
+                raise ValueError(f"Expert placement contains unknown or unsupported MoE layers: {sorted(unused)}")
             allocator = TPAllocator(
                 components,
                 num_tokens = max_chunk_size,

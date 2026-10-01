@@ -109,6 +109,12 @@ def test_cache_and_context_validation_is_fail_closed():
     assert any("exceeds -cs" in p for p in problems)
 
 
+@pytest.mark.parametrize("overrides", [{}, {"tensor_parallel": True, "tp_moe_tensor_split": True}])
+def test_expert_placement_requires_expert_parallel_tp(overrides):
+    problems, _ = runtime.validate_runtime_args(args(tp_expert_order="order.json", **overrides))
+    assert any("--tp-expert-order requires" in p for p in problems)
+
+
 def test_validated_happy_path_and_generic_stay_clean(monkeypatch):
     monkeypatch.setenv(runtime.NGRAM_MLOCK_ENV, "1")
     problems, requirements = runtime.validate_runtime_args(verified_args())

@@ -70,6 +70,8 @@ def add_args(
     parser.add_argument("-tp_linear", "--tp_max_parallelism_linear", type = int, help = "(TP) Maximum parallelism for linear (output) layers", default = None)
     parser.add_argument("-tp_linear_attn", "--tp_max_parallelism_linear_attn", type = int, help = "(TP) Maximum parallelism for linear-attention layers", default = None)
     parser.add_argument("-tp_moe_ts", "--tp_moe_tensor_split", action = "store_true", help = "(TP) Use tensor split for MoE layers rather than expert parallelism")
+    parser.add_argument("--tp-expert-order", dest="tp_expert_order", type=str, default=None,
+                        help="(TP) JSON expert storage permutations for std expert-parallel MoE")
 
     parser.add_argument("-swa_full", "--swa_full", action = "store_true", help = f"Use full cache for SWA layers. Default is recurrent mode with snapshots")
     parser.add_argument("-ambs", "--autosplit_max_batch_size", type = int, help = f"Max batch size to account for when loading in autosplit mode (default: {default_autosplit_max_batch_size})", default = default_autosplit_max_batch_size)
@@ -325,6 +327,11 @@ def init(
     tp_options = {
         "moe_tensor_split": args.tp_moe_tensor_split
     }
+    if getattr(args, "tp_expert_order", None):
+        if not args.tensor_parallel or args.tp_moe_tensor_split:
+            raise ValueError("--tp-expert-order requires -tp without --tp_moe_tensor_split")
+        from .util.expert_placement import load_orders
+        tp_options["expert_order"] = load_orders(args.tp_expert_order)
 
     # Parallelism limits
     tp_dev_limits = {}

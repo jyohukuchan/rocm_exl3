@@ -443,6 +443,7 @@ __global__ void routing_ds3_nogroup_kernel
 }
 
 
+template <bool MAPPED>
 __launch_bounds__(MAX_NUM_EXPERTS)
 __global__ void routing_std_topk_kernel
 (
@@ -453,7 +454,8 @@ __global__ void routing_std_topk_kernel
     const half* __restrict__ bias,
     int num_experts,
     int K,
-    int bsz
+    int bsz,
+    const int32_t* __restrict__ expert_map
 )
 {
     int row = blockIdx.x;
@@ -505,7 +507,7 @@ __global__ void routing_std_topk_kernel
         {
             if (per_expert_scale)
                 e *= __bfloat162float(per_expert_scale[out_idx]);
-            topk_indices[lane_id] = (int64_t) out_idx;
+            topk_indices[lane_id] = (int64_t) (MAPPED ? expert_map[out_idx] : out_idx);
             topk_weights[lane_id] = __float2half_rn(e);
         }
     }
@@ -1114,7 +1116,7 @@ topk_indices: int64, shape (bsz, k)
 topk_weights: float16, shape (bsz, k)
 */
 
-void routing_std
+static void routing_std_common
 (
     const at::Tensor& hidden,
     const at::Tensor& gate,
@@ -1123,7 +1125,8 @@ void routing_std
     at::Tensor topk_weights,
     const c10::optional<at::Tensor>& per_expert_scale,
     const c10::optional<at::Tensor>& gate_t,
-    const c10::optional<at::Tensor>& bias
+    const c10::optional<at::Tensor>& bias,
+    const int32_t* expert_map
 )
 {
     const at::cuda::OptionalCUDAGuard device_guard(scores.device());
@@ -1157,20 +1160,73 @@ void routing_std
     size_t shmem = (num_experts + num_warps) * sizeof(float);
 
     TORCH_CHECK_DTYPE_OPT(bias, kHalf);
-    routing_std_topk_kernel<<<bsz, num_threads, shmem, stream>>>
-    (
-        (const half*) scores.data_ptr(),
-        (int64_t*) topk_indices.data_ptr(),
-        (half*) topk_weights.data_ptr(),
-        (const bfloat16*) OPTPTR(per_expert_scale),
-        (const half*) OPTPTR(bias),
-        num_experts,
-        K,
-        bsz
-    );
+    if (expert_map)
+    {
+        routing_std_topk_kernel<true><<<bsz, num_threads, shmem, stream>>>
+        (
+            (const half*) scores.data_ptr(),
+            (int64_t*) topk_indices.data_ptr(),
+            (half*) topk_weights.data_ptr(),
+            (const bfloat16*) OPTPTR(per_expert_scale),
+            (const half*) OPTPTR(bias),
+            num_experts,
+            K,
+            bsz,
+            expert_map
+        );
+    }
+    else
+    {
+        routing_std_topk_kernel<false><<<bsz, num_threads, shmem, stream>>>
+        (
+            (const half*) scores.data_ptr(),
+            (int64_t*) topk_indices.data_ptr(),
+            (half*) topk_weights.data_ptr(),
+            (const bfloat16*) OPTPTR(per_expert_scale),
+            (const half*) OPTPTR(bias),
+            num_experts,
+            K,
+            bsz,
+            nullptr
+        );
+    }
     cuda_check(cudaPeekAtLastError());
 }
 
+
+void routing_std
+(
+    const at::Tensor& hidden,
+    const at::Tensor& gate,
+    at::Tensor scores,
+    at::Tensor topk_indices,
+    at::Tensor topk_weights,
+    const c10::optional<at::Tensor>& per_expert_scale,
+    const c10::optional<at::Tensor>& gate_t,
+    const c10::optional<at::Tensor>& bias
+)
+{
+    routing_std_common(hidden, gate, scores, topk_indices, topk_weights, per_expert_scale, gate_t, bias, nullptr);
+}
+
+void routing_std_mapped
+(
+    const at::Tensor& hidden,
+    const at::Tensor& gate,
+    at::Tensor scores,
+    at::Tensor topk_indices,
+    at::Tensor topk_weights,
+    const c10::optional<at::Tensor>& per_expert_scale,
+    const c10::optional<at::Tensor>& gate_t,
+    const c10::optional<at::Tensor>& bias,
+    const at::Tensor& expert_map
+)
+{
+    TORCH_CHECK_DTYPE(expert_map, kInt);
+    TORCH_CHECK(expert_map.is_contiguous() && expert_map.dim() == 1 && expert_map.numel() == gate.size(1), "expert map must be a contiguous int32 vector of global expert count");
+    TORCH_CHECK(expert_map.device() == scores.device(), "expert map device mismatch");
+    routing_std_common(hidden, gate, scores, topk_indices, topk_weights, per_expert_scale, gate_t, bias, (const int32_t*) expert_map.data_ptr());
+}
 
 void routing_std_logits
 (
@@ -1208,7 +1264,7 @@ void routing_std_logits
     if (use_topk)
     {
         size_t shmem = (num_experts + num_warps) * sizeof(float);
-        routing_std_topk_kernel<<<bsz, num_threads, shmem, stream>>>
+        routing_std_topk_kernel<false><<<bsz, num_threads, shmem, stream>>>
         (
             (const half*) scores.data_ptr(),
             (int64_t*) topk_indices.data_ptr(),
@@ -1217,7 +1273,8 @@ void routing_std_logits
             nullptr,
             num_experts,
             K,
-            bsz
+            bsz,
+            nullptr
         );
     }
     else

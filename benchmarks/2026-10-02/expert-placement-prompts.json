@@ -1,0 +1,152 @@
+{
+  "settings": {
+    "thinking": true,
+    "reasoning_effort": "xhigh",
+    "temperature": 0,
+    "max_tokens": 512
+  },
+  "train": [
+    {
+      "id": "train-00",
+      "category": "ja_coding",
+      "prompt": "Pythonで、TTL付きLRUキャッシュを実装してください。スレッド安全性、get/put/delete、期限切れと例外の扱いを含め、日本語で説明してください。"
+    },
+    {
+      "id": "train-01",
+      "category": "ja_coding",
+      "prompt": "Pythonで非同期HTTPリクエストを指数バックオフ付きで再試行する関数を設計してください。タイムアウト、キャンセル、再試行できないエラーを区別し、日本語で説明してください。"
+    },
+    {
+      "id": "train-02",
+      "category": "ja_coding",
+      "prompt": "TypeScriptで discriminated union を使い、成功・失敗・読み込み中の状態を型安全に扱う例を書いてください。日本語で説明してください。"
+    },
+    {
+      "id": "train-03",
+      "category": "ja_coding",
+      "prompt": "Python関数 parse_duration(text) を作ってください。例は2h30m、90s、3dです。重複単位や負数や未知の単位を拒否し、単体テストも示してください。"
+    },
+    {
+      "id": "train-04",
+      "category": "ja_coding",
+      "prompt": "PostgreSQLで日ごとのイベント件数と7日移動平均を求めるSQLを書いてください。イベントがない日を0として扱い、日本語で説明してください。"
+    },
+    {
+      "id": "train-05",
+      "category": "ja_coding",
+      "prompt": "Rustで整数の文字列を安全にパースする小さなライブラリを設計してください。独自Error型、FromStr、境界値テストを示し、日本語で説明してください。"
+    },
+    {
+      "id": "train-06",
+      "category": "ja_coding",
+      "prompt": "Pythonで有向グラフのトポロジカルソートを実装してください。循環の検出、孤立頂点、重複辺を考慮し、日本語で説明してください。"
+    },
+    {
+      "id": "train-07",
+      "category": "ja_coding",
+      "prompt": "次のPythonコードのバグを修正し、変更理由を日本語で説明してください。\ndef remove_even(xs):\n    for x in xs:\n        if x % 2 == 0:\n            xs.remove(x)\n    return xs\n"
+    },
+    {
+      "id": "train-08",
+      "category": "ja_chat",
+      "prompt": "夕焼けの空が赤くなる仕組みを、中学生にもわかる日本語で説明してください。昼の空が青い理由との関係も含めてください。"
+    },
+    {
+      "id": "train-09",
+      "category": "ja_chat",
+      "prompt": "次の架空の会議を日本語で要約してください。Aは金曜に試作品を出すと言い、Bはテストを先に終えるべきだと主張した。Cは木曜にテスト結果をまとめることを提案し、全員が合意した。決定事項と担当の不明点を分けてください。"
+    },
+    {
+      "id": "train-10",
+      "category": "ja_chat",
+      "prompt": "観葉植物の水やりを忘れがちな架空の登場人物と、几帳面な友人の短い会話を書いてください。ユーモアのある日本語でお願いします。"
+    },
+    {
+      "id": "train-11",
+      "category": "ja_chat",
+      "prompt": "量子化とモデルのメモリ帯域の関係を、図を使わずに日本語で説明してください。計算量とメモリ量は区別してください。"
+    },
+    {
+      "id": "train-12",
+      "category": "ja_chat",
+      "prompt": "初めてプログラミングを学ぶ架空の人物に、変数・関数・ループの違いを具体例付きで日本語で説明してください。"
+    },
+    {
+      "id": "train-13",
+      "category": "ja_chat",
+      "prompt": "赤・青・緑の3種類のカードを各2枚持っています。無作為に2枚引くとき同じ色になる確率を、順序を区別する場合としない場合の両方で説明してください。"
+    },
+    {
+      "id": "train-14",
+      "category": "ja_chat",
+      "prompt": "4人が円卓に座る並び方はいくつありますか。回転を同じと考え、鏡映は区別します。数え方を日本語で説明してください。"
+    },
+    {
+      "id": "train-15",
+      "category": "ja_chat",
+      "prompt": "日常のメモを整理する方法を、タグ方式とフォルダ方式で比較してください。具体的な架空のメモを例に、日本語で説明してください。"
+    }
+  ],
+  "eval": [
+    {
+      "id": "eval-00",
+      "category": "ja_coding",
+      "prompt": "Pythonで容量固定のFIFOキューを実装してください。push/pop/peek、満杯と空の例外、簡単な使用例を含め、日本語で説明してください。"
+    },
+    {
+      "id": "eval-01",
+      "category": "ja_coding",
+      "prompt": "Pythonでディレクトリ構造を表す辞書を深さ優先で走査する関数を書いてください。循環参照を検出し、フルパスを返す例を日本語で説明してください。"
+    },
+    {
+      "id": "eval-02",
+      "category": "ja_coding",
+      "prompt": "TypeScriptでPromiseの同時実行数を制限するmapLimit関数を書いてください。入力順の結果を保ち、例外とキャンセルの方針を日本語で説明してください。"
+    },
+    {
+      "id": "eval-03",
+      "category": "ja_coding",
+      "prompt": "PythonでCSV文字列をパースする関数を作ってください。引用符、カンマを含むフィールド、改行、二重引用符のエスケープを考慮し、日本語で説明してください。"
+    },
+    {
+      "id": "eval-04",
+      "category": "ja_coding",
+      "prompt": "Rustで固定長リングバッファを設計してください。push/popとIteratorの例を示し、所有権と境界の扱いを日本語で説明してください。"
+    },
+    {
+      "id": "eval-05",
+      "category": "ja_coding",
+      "prompt": "次の関数を修正し、日本語で問題点とテストを示してください。\ndef unique(xs, seen=set()):\n    out = []\n    for x in xs:\n        if x not in seen:\n            seen.add(x)\n            out.append(x)\n    return out\n"
+    },
+    {
+      "id": "eval-06",
+      "category": "ja_chat",
+      "prompt": "虹ができる仕組みを、小学生向けと高校生向けの2通りで日本語で説明してください。"
+    },
+    {
+      "id": "eval-07",
+      "category": "ja_chat",
+      "prompt": "次の架空の打ち合わせを要約してください。Dは資料を水曜までに更新する、Eは図の確認を木曜に行う、Fは金曜に発表の練習を行うことになった。未決なのは会場と開始時刻です。"
+    },
+    {
+      "id": "eval-08",
+      "category": "ja_chat",
+      "prompt": "片付けが苦手な架空の人物の机を整理する手順を提案してください。15分で終わる計画を日本語で示してください。"
+    },
+    {
+      "id": "eval-09",
+      "category": "ja_chat",
+      "prompt": "料理が得意なロボットと、味見係の猫の短い会話を書いてください。穏やかなユーモアのある日本語にしてください。"
+    },
+    {
+      "id": "eval-10",
+      "category": "ja_chat",
+      "prompt": "青い球4個と赤い球3個の袋から2個を同時に引きます。異なる色になる確率を、日本語で計算過程付きで説明してください。"
+    },
+    {
+      "id": "eval-11",
+      "category": "ja_chat",
+      "prompt": "アルゴリズムの安定なソートとは何ですか。名前と点数の架空のデータを例に、日本語で説明してください。"
+    }
+  ]
+}
