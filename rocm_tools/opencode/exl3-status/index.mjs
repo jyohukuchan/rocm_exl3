@@ -24,7 +24,9 @@ export default {
     }, { providerID: 'rocm-exl3' });
     await ctx.session.hook('http.response', event => {
       if (event.kind !== 'primary') return;
-      const nonce = event.request.headers.get('x-exl3-display-request');
+      // Some V2 provider drivers retain the pre-hook Request in this event.
+      // Primary requests are serialized within a session; retain its nonce.
+      const nonce = event.request.headers.get('x-exl3-display-request') ?? latest.get(event.sessionID);
       if (!nonce) return;
       if (!event.response.ok) {
         void save(event.sessionID, nonce, { phase: 'unavailable' }).catch(() => {});
