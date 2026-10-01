@@ -371,6 +371,14 @@ retaining the pooled history. Rebuild the native extension to use the compact
 graph path; older extensions use the eager path. Set `EXL3_QSA_FULL_RAW=1`
 before starting the engine to restore the full raw plane for comparison.
 
+For the V620 pair with vision on GPU0 and MTP on GPU1, the
+[2026-10-02 memory-balance check](../../doc/v620_tp_memory_balance.md) selected
+`-gs 28.375,27.625` at 512Ki. It reduced the sampled whole-card peak difference
+to about 0.20 GiB with comparable coding-request speeds. A 768Ki allocation plus
+short inference passed with `-gs 28.5,27.5 -cs 786432 --context-limit 786432`;
+this is not a full-768Ki input validation. Historical reproduction commands retain
+their recorded reference budgets.
+
 Start the power helper below before executing this server command.
 The server itself does not require root. The measured Engram configuration
 needs a 34 GiB memlock limit and `nofile=65536` on the inference process. Apply
