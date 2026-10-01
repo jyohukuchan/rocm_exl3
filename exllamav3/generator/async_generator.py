@@ -87,7 +87,13 @@ class AsyncGenerator:
         # land in. The sync generator still owns scheduling and serial assignment.
         assert job.job not in self.jobs
         self.jobs[job.job] = job
-        self.generator.enqueue(job.job)
+        try:
+            self.generator.enqueue(job.job)
+        except BaseException:
+            # prepare_for_queue can reject a request before the sync queue takes
+            # ownership. Do not leave an async delivery entry for that job.
+            del self.jobs[job.job]
+            raise
 
         # Condition.notify_all() must run while holding the condition lock, so schedule a tiny coroutine instead of
         # trying to notify directly from this synchronous method.

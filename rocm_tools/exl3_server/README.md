@@ -349,6 +349,43 @@ generation job. A successful SSE response ends with a finish-reason chunk and `[
 completion token counts where the runtime has them; `stream_options.include_usage`
 adds usage to the final SSE chunk.
 
+`/health` reports active versus queued jobs. An absent, failed, or stopped
+generator returns 503 with a safe status code; native exception text is not
+exposed. Generation failures return 503 (or an SSE error event if streaming has
+already started), never a successful empty completion. Optional
+`--request-timeout SECONDS` returns `inference_timeout` and cancels the owned
+job, including queued work. The default is zero, with no deadline. Failure or
+cancellation of an `n`-choice request releases its other choices, including if
+constructing a later choice fails.
+
+For bounded crash/hang recovery, run the optional supervisor in the same PID
+namespace as the engine:
+
+```bash
+python -m rocm_tools.exl3_server.supervisor \
+  --health-url http://127.0.0.1:3953/health \
+  --status-file /private/run/engine-status.json \
+  --startup-timeout 300 --unhealthy-timeout 90 --max-restarts 3 -- \
+  python -m rocm_tools.exl3_server.server -m /path/to/model -port 3953
+```
+
+It retries after process exit or sustained failed health, kills only the process
+group it created (including orphaned engine workers), and never resets a GPU.
+Its private status file records starting/ready/unhealthy/restarting/failed
+states and restart count. It exits nonzero when its retry budget is exhausted;
+an intentional SIGTERM/SIGINT cleans up and exits zero. A native call can block
+the inference event loop, so an in-process deadline alone cannot recover that
+case; the supervisor remains outside it. Set the health grace above normal
+single-step prefill latency and use a startup grace large enough for model/RAM
+loading.
+
+The supervisor must not wrap host-side `docker exec`: run it inside the
+container, with the command and health endpoint belonging to that engine.
+If using the one-client power helper, supervise a complete launch session which
+creates a fresh helper/socket on each attempt; its socket cannot be reused after
+engine disconnect. The existing live V620 service is not automatically replaced
+or restarted when installing these files.
+
 The server logs a private JSONL audit only when `--audit-log` is supplied. Do
 not put API keys in that path or in an OpenCode project file committed to a
 repository.

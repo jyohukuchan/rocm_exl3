@@ -441,6 +441,41 @@ async def test_http_errors_context_model_and_cancellation(http_state):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("path", ["/v1/chat/completions", "/v1/completions", "/completion"])
+async def test_model_failure_is_not_a_successful_empty_response(http_state, monkeypatch, stream, path):
+    class FailedJob(FakeJob):
+        async def _iter(self):
+            raise RuntimeError("PRIVATE_REQUEST_CONTENT")
+            yield
+
+    job = FailedJob([])
+    monkeypatch.setattr(server, "make_job", lambda *args, **kwargs: job)
+    response = await request_json("POST", path, {
+        "messages": [{"role": "user", "content": "hi"}], "prompt": "hi", "stream": stream})
+    assert response.status_code == (200 if stream else 503)
+    assert "inference_failed" in response.text
+    assert "PRIVATE_REQUEST_CONTENT" not in response.text
+    assert job.cancelled
+    assert '"finish_reason": "stop"' not in response.text
+
+
+@pytest.mark.asyncio
+async def test_failed_enqueue_does_not_leave_async_job_registered():
+    class RejectQueue:
+        def enqueue(self, _job):
+            raise ValueError("too large")
+    generator = server.AsyncGenerator.__new__(server.AsyncGenerator)
+    generator.generator = RejectQueue()
+    generator.jobs = {}
+    generator.error = None
+    async_job = SimpleNamespace(job=object())
+    with pytest.raises(ValueError):
+        generator.enqueue(async_job)
+    assert generator.jobs == {}
+
+
+@pytest.mark.asyncio
 async def test_async_generator_close_clears_sync_queue_before_waking_consumers():
     class FakeSyncGenerator:
         def __init__(self):

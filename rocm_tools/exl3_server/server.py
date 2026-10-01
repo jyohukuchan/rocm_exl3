@@ -84,6 +84,7 @@ from rocm_tools.exl3_server import protocol
 from rocm_tools.exl3_server import schema as structured
 from rocm_tools.exl3_server import runtime as serving_runtime
 from rocm_tools.exl3_server.metrics import inference_metrics, timing_footer
+from rocm_tools.exl3_server.lifecycle import GenerationFailure, job_results, create_and_collect, readiness
 
 DEFAULT_DRY_BREAKERS = ("\n", ":", "\"", "*")
 
@@ -348,6 +349,8 @@ def make_job(req: SamplingFields, ids: torch.Tensor, max_new: int,
              stop: str | list[str] | None, identifier: int = 0,
              ignore_eos: bool = False, filters: list | None = None) -> AsyncJob:
     a = state.args
+    if readiness(state.generator)["status"] != "ok":
+        raise GenerationFailure()
     return AsyncJob(
         state.generator,
         input_ids = ids,
@@ -399,7 +402,7 @@ async def collect_job(job: AsyncJob, request: Request | None = None) -> tuple[st
     final = {}
     watch = DisconnectWatch(request, job) if request is not None else None
     try:
-        async for r in job:
+        async for r in job_results(job, getattr(state.args, "request_timeout", 0)):
             text += r.get("text", "")
             if r.get("eos"):
                 final = r
@@ -666,13 +669,15 @@ async def validation_error(_request: Request, exc: RequestValidationError):
     }})
 
 
+@app.exception_handler(GenerationFailure)
+async def generation_error(_request: Request, exc: GenerationFailure):
+    return JSONResponse(exc.payload(), status_code=exc.status)
+
+
 @app.get("/health")
 async def health():
-    error = getattr(state.generator, "error", None)
-    if state.generator is None or error:
-        return JSONResponse({"status": "unavailable", "error": str(error) if error else "not ready"},
-                            status_code=503)
-    return {"status": "ok"}
+    report = readiness(state.generator)
+    return JSONResponse(report, status_code=200 if report["status"] == "ok" else 503)
 
 
 @app.get("/props")
@@ -828,7 +833,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 if prefix:
                     for event in parser.feed(prefix):
                         yield chunk(protocol.event_to_chat_delta(event))
-                async for r in job:
+                async for r in job_results(job, getattr(state.args, "request_timeout", 0)):
                     for event in parser.feed(r.get("text", "")):
                         delta = protocol.event_to_chat_delta(event)
                         if delta:
@@ -854,6 +859,10 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
                 yield "[DONE]"
                 audit_chat(body, cmpl_id, parsed, final, streamed=True)
                 log_request("chat (stream)", final)
+            except GenerationFailure as e:
+                if not watch.disconnected:
+                    yield sse(e.payload())
+                    yield "[DONE]"
             except protocol.ProtocolError as e:
                 if state.audit_log:
                     with Path(state.audit_log).open("a", encoding="utf-8") as f:
@@ -869,13 +878,12 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
 
         return CancellingStreamResponse(stream())
 
-    jobs = []
-    for i in range(body.n):
+    def create_choice(i):
         local_plan = plan if i == 0 else structured.prepare_constraints(
             state.tokenizer, tools, choice, body.parallel_tool_calls, body.response_format,
             thinking=thinking)
-        jobs.append(make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters))
-    results = await asyncio.gather(*(collect_job(j, request) for j in jobs))
+        return make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters)
+    results = await create_and_collect(body.n, create_choice, lambda job: collect_job(job, request))
     choices, finals = [], []
     try:
         for i, (text, final) in enumerate(results):
@@ -952,7 +960,7 @@ async def completions(request: Request, body: CompletionRequest):
             done = False
             watch = DisconnectWatch(request, job)
             try:
-                async for r in job:
+                async for r in job_results(job, getattr(state.args, "request_timeout", 0)):
                     text = r.get("text", "")
                     full_text += text
                     if text:
@@ -969,6 +977,14 @@ async def completions(request: Request, body: CompletionRequest):
                             usage = usage_dict(final) if include_usage else None)
                 yield "[DONE]"
                 log_request("completion (stream)", final)
+            except GenerationFailure as e:
+                if not watch.disconnected:
+                    yield sse(e.payload())
+                    yield "[DONE]"
+            except protocol.ProtocolError:
+                yield sse({"error": {"message": "Invalid structured model output.",
+                                      "type": "server_error", "code": "invalid_model_output"}})
+                yield "[DONE]"
             finally:
                 watch.stop()
                 if not done:
@@ -981,12 +997,11 @@ async def completions(request: Request, body: CompletionRequest):
         # iterator deterministically, so the finally-cancel above always runs
         return CancellingStreamResponse(stream())
 
-    jobs = []
-    for i in range(body.n):
+    def create_choice(i):
         local_plan = plan if i == 0 else structured.prepare_constraints(
             state.tokenizer, response_format=body.response_format, thinking=False)
-        jobs.append(make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters))
-    results = await asyncio.gather(*(collect_job(j, request) for j in jobs))
+        return make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters)
+    results = await create_and_collect(body.n, create_choice, lambda job: collect_job(job, request))
     choices = []
     finals = []
     for i, (text, fin) in enumerate(results):
@@ -1153,7 +1168,7 @@ async def native_completion(request: Request, body: NativeCompletionRequest):
             done = False
             watch = DisconnectWatch(request, job)
             try:
-                async for r in job:
+                async for r in job_results(job, getattr(state.args, "request_timeout", 0)):
                     text = r.get("text", "")
                     tids = r.get("token_ids")
                     if tids is not None:
@@ -1169,6 +1184,9 @@ async def native_completion(request: Request, body: NativeCompletionRequest):
                     return
                 yield sse(final_payload("", tokens_all, final))
                 log_request("native completion (stream)", final)
+            except GenerationFailure as e:
+                if not watch.disconnected:
+                    yield sse(e.payload())
             finally:
                 watch.stop()
                 if not done:
@@ -1186,7 +1204,7 @@ async def native_completion(request: Request, body: NativeCompletionRequest):
     final = {}
     watch = DisconnectWatch(request, job)
     try:
-        async for r in job:
+        async for r in job_results(job, getattr(state.args, "request_timeout", 0)):
             text += r.get("text", "")
             tids = r.get("token_ids")
             if tids is not None:
@@ -1297,6 +1315,8 @@ if __name__ == "__main__":
     parser.add_argument("--audit-log", default=None, help="Private JSONL request/result audit (no credentials)")
     parser.add_argument("--include-timings", action="store_true",
                         help="Append timings to plain chat answers (off by default; request include_timings overrides)")
+    parser.add_argument("--request-timeout", type=float, default=0,
+                        help="Optional generation deadline including queue time, in seconds; 0 disables")
     parser.add_argument("-xtcp", "--xtc_probability", type = float, default = 0.0, help = "XTC probability, 0 to disable (default)")
     parser.add_argument("-xtct", "--xtc_threshold", type = float, default = 0.1, help = "XTC threshold, default = 0.1")
     parser.add_argument("-drym", "--dry_multiplier", type = float, default = 0.0, help = "DRY multiplier, 0 to disable (default)")
