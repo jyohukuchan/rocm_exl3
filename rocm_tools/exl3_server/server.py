@@ -103,6 +103,7 @@ class ServerState:
     draft_cache = None
     generator: AsyncGenerator | None = None
     model_name: str = "exl3-model"
+    plain_model_name: str | None = None
     context_length: int = 0
     stop_token_ids: list[int] = []
     has_chat_template: bool = False
@@ -480,6 +481,11 @@ def flatten_content(content: Any) -> str:
     return str(content)
 
 
+def check_model(name):
+    if name is not None and name not in {state.model_name, state.plain_model_name}:
+        raise HTTPException(404, f"Unknown model {name!r}; use {state.model_name!r}")
+
+
 def chat_controls(req: ChatCompletionRequest) -> tuple[list, Any, dict]:
     try:
         tools = protocol.normalize_tool_definitions(req.tools)
@@ -717,14 +723,14 @@ async def models(request: Request):
     return {
         "object": "list",
         "data": [{
-            "id": state.model_name,
+            "id": name,
             "object": "model",
             "created": int(time.time()),
             "owned_by": "exl3_server",
             "context_length": state.context_length,
             "max_output_tokens": state.max_output_tokens,
             "capabilities": {"tools": True, "input": ["text", "image"] if state.vision is not None else ["text"], "output": ["text"]},
-        }],
+        } for name in [state.model_name] + ([state.plain_model_name] if state.plain_model_name else [])],
     }
 
 
@@ -771,8 +777,7 @@ def audit_chat(body, response_id, parsed, final, *, streamed):
 
 
 async def prepare_chat(body):
-    if body.model is not None and body.model != state.model_name:
-        raise HTTPException(404, f"Unknown model {body.model!r}; use {state.model_name!r}")
+    check_model(body.model)
     if not 1 <= body.n <= 8:
         raise HTTPException(400, "n must be in 1..8")
     tools, choice, kwargs = chat_controls(body)
@@ -810,7 +815,8 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     check_auth(request)
     received_at = request.scope["exl3_received_at"]
     show_timings = (body.include_timings if body.include_timings is not None
-                    else getattr(state.args, "include_timings", False))
+                    else getattr(state.args, "include_timings", False)
+                    and not (state.plain_model_name and body.model == state.plain_model_name))
     tools, choice, thinking, plan, prefix, ids, embeddings = await prepare_chat(body)
     max_new = token_budget(ids.shape[-1], body.max_completion_tokens or body.max_tokens)
     cmpl_id = f"chatcmpl-{uuid.uuid4().hex}"
@@ -938,8 +944,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
 @app.post("/v1/completions")
 async def completions(request: Request, body: CompletionRequest):
     check_auth(request)
-    if body.model is not None and body.model != state.model_name:
-        raise HTTPException(404, f"Unknown model {body.model!r}")
+    check_model(body.model)
     try:
         plan = structured.prepare_constraints(state.tokenizer, response_format=body.response_format,
                                                thinking=False)
@@ -1243,6 +1248,9 @@ async def native_completion(request: Request, body: NativeCompletionRequest):
 def main(args):
     state.args = args
     state.model_name = args.served_model_name or Path(args.model_dir).name
+    state.plain_model_name = args.plain_model_name
+    if state.plain_model_name == state.model_name:
+        raise ValueError("--plain-model-name must differ from the primary served model name")
 
     # Default the cache to the model's native max context (like llama.cpp's n_ctx_train
     # default). Long-context models advertise huge maximums, so warn about the allocation.
@@ -1271,6 +1279,11 @@ def main(args):
         raise
     for name in ("model", "config", "cache", "tokenizer", "draft_model", "draft_cache"):
         setattr(state, name, getattr(state.runtime, name))
+    if state.model.output_device is not None:
+        output_device = state.model.output_device
+        device = torch.device("cuda", output_device) if isinstance(output_device, int) else torch.device(output_device)
+        if device.type == "cuda":
+            torch.cuda.set_device(device)
     state.context_length = state.runtime.context_length
     state.max_output_tokens = args.max_output_tokens or args.max_response_tokens or 8192
     if args.max_response_tokens:
@@ -1341,6 +1354,7 @@ if __name__ == "__main__":
     parser.add_argument("--audit-log", default=None, help="Private JSONL request/result audit (no credentials)")
     parser.add_argument("--include-timings", action="store_true",
                         help="Append timings to plain chat answers (off by default; request include_timings overrides)")
+    parser.add_argument("--plain-model-name", help="Optional alias of the same model with the timing footer disabled by default")
     parser.add_argument("--request-timeout", type=float, default=0,
                         help="Optional generation deadline including queue time, in seconds; 0 disables")
     parser.add_argument("--vision", action="store_true", help="Load and enable the model's image component")

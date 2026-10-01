@@ -172,6 +172,13 @@ Client provider bodies can also send the request field, such as OpenCode's
 model `body` or LibreChat's endpoint `addParams`. Neither existing client
 configuration is enabled automatically.
 
+For clients whose automatic titles reuse the same model parameters, start with
+`--plain-model-name qwen38-local-plain` and select that alias as the title model.
+It uses the same weights/cache and retains `exl3_metrics`, but defaults to no
+footer even when `--include-timings` is enabled. An explicit request setting
+still overrides it. This avoids inserting timing text into saved conversation
+titles without guessing a request's purpose from its prompt.
+
 Prefill uses only uncached input tokens and the engine's prefill time. Decode
 uses generated tokens, including reasoning, and the engine's generation time.
 Draft acceptance is accepted draft tokens divided by accepted plus rejected

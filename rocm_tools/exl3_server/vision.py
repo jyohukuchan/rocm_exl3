@@ -1,5 +1,6 @@
 """Bounded image preprocessing and reusable native EXL3 image embeddings."""
 import asyncio
+from contextlib import nullcontext
 import base64
 from collections import OrderedDict
 import hashlib
@@ -119,7 +120,7 @@ def decode_image(data, max_input_pixels):
 
 
 class VisionRuntime:
-    def __init__(self, model, *, device=0, max_pixels=262144, max_input_pixels=16777216,
+    def __init__(self, model, *, device=None, max_pixels=262144, max_input_pixels=16777216,
                  max_bytes=20 * 1024**2, max_images=16, cache_bytes=128 * 1024**2, allow_remote=False):
         self.model = model
         self.device = device
@@ -154,11 +155,12 @@ class VisionRuntime:
                     try:
                         # Serialize the GPU preprocessing with inference's event
                         # loop; do not overlap two callers mutating vision_pp.
-                        embedding = self.model.get_image_embeddings(tokenizer=tokenizer, image=image)
+                        import torch
+                        with torch.cuda.device(self.device) if self.device is not None else nullcontext():
+                            embedding = self.model.get_image_embeddings(tokenizer=tokenizer, image=image)
                         embedding.embeddings = embedding.embeddings.cpu()
                         if embedding.deepstack_embeddings:
                             embedding.deepstack_embeddings = [t.cpu() for t in embedding.deepstack_embeddings]
-                        import torch
                         if not all(bool(torch.isfinite(t).all()) for t in
                                    [embedding.embeddings] + (embedding.deepstack_embeddings or [])):
                             raise GenerationFailure("image_inference_failed")
