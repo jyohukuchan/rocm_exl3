@@ -522,9 +522,9 @@ class BCAttn:
             cap = self.qsa_layer.pooled.shape[0] * self.qsa_layer.pooled.shape[1]
             s_max = -(-cap // 128) * 128
             scores = sbuf("bca_qsa_scores", R, s_max)
-            # The scoring kernel writes only [0, T); the warmup top-k scans the full static
-            # width, so the tail must hold -inf from this one-time fill (the captured graph
-            # patches the top-k scan width to T afterwards)
+            # The scoring kernel writes only [0, T). Top-k narrows to that live
+            # prefix on every call, including eager/warmup calls; the shared
+            # tail may contain scores from another slot or a longer request.
             scores.fill_(-float("inf"))
             pool_idx = sbuf("bca_qsa_pool_idx", R, kp_pool, dtype = torch.int32)
             indices = sbuf("bca_qsa_indices", R, k_pad, dtype = torch.int32)

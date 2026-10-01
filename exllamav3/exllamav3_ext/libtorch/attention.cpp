@@ -692,7 +692,14 @@ void BC_Attention::run_gr
                 graph->record_param(s.k_qsa_fewq->handle(), GP_end, 0);
             }
         }
-        dsa_topk_gr(s.qsa_scores, s.qsa_pool_idx, qsa_topk, graph);
+        // The score workspace is shared and persists across jobs/slots. Fewq
+        // writes only [0, t_scan), so its tail can contain scores from a longer
+        // request. Select only live entries on eager/warmup calls as well as
+        // graph replays; narrow keeps the static row stride and pointer intact.
+        TORCH_CHECK(t_scan > 0 && t_scan <= s.qsa_scores.size(1),
+                    "BC_Attention: QSA score scan exceeds its workspace");
+        at::Tensor live_scores = s.qsa_scores.narrow(1, 0, t_scan);
+        dsa_topk_gr(live_scores, s.qsa_pool_idx, qsa_topk, graph);
         {
             std::vector<void*> args =
             {

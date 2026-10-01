@@ -830,6 +830,9 @@ def _dsa_pool_expand_kernel(
         v = tl.where((ti >= 0) & (ti < P - 1), tv, v)
 
     v = tl.where(offs < SEL * P + (P - 1 if TAIL else 0), v, -1)
+    # A stale/corrupt selection must never become a page-table read beyond the
+    # query's visible context. Valid complete pools and the tail are unchanged.
+    v = tl.where((v >= 0) & (v < vis), v, -1)
     tl.store(out + r * K_pad + offs, v, mask = offs < K_pad)
 
 # Packed-pool prefill staging: the gathered kernel dequantizes every selected entry per query

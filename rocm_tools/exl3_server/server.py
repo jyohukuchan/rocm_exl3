@@ -775,6 +775,12 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     max_new = token_budget(ids.shape[-1], body.max_completion_tokens or body.max_tokens)
     cmpl_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
+    # Record admission before GPU work: a native fault cannot produce the usual
+    # completion audit. Keep message text, tool arguments and credentials out.
+    print(f" -- chat start: id={cmpl_id} unix_s={time.time():.3f} "
+          f"stream={body.stream} prompt_tokens={ids.shape[-1]} max_new_tokens={max_new} "
+          f"tools={len(tools)} roles={','.join(m.get('role', '?') for m in body.messages)}",
+          flush=True)
 
     def parser_for(index=0):
         return protocol.IncrementalAssistantParser(
