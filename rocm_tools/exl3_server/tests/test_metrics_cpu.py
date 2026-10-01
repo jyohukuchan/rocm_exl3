@@ -30,3 +30,15 @@ def test_footer_missing_rates_and_exact_suffix_only():
     assert strip_timing_footer("answer" + footer + footer) == "answer"
     assert strip_timing_footer("quote" + footer + "\nmore") == "quote" + footer + "\nmore"
     assert strip_timing_footer("answer\nPrefill: 100 tok/s") == "answer\nPrefill: 100 tok/s"
+
+
+def test_draft_acceptance_uses_proposals_not_output_tokens_and_retains_v1_cleanup():
+    result = inference_metrics(dict(new_tokens=100, accepted_draft_tokens=6, rejected_draft_tokens=2))
+    assert result["draft_tokens"] == 8
+    assert result["draft_acceptance_rate"] == .75
+    assert "Draft: 75.00%" in timing_footer(result)
+    assert inference_metrics({})["draft_acceptance_rate"] is None
+    assert "Draft: N/A" in timing_footer(inference_metrics({}))
+    assert inference_metrics(dict(rejected_draft_tokens=4))["draft_acceptance_rate"] == 0
+    old = "\n\n<!-- exl3-timings:v1 -->\n*Prefill: 10.00 tok/s | Decode: N/A tok/s | Total: 1.00 s*\n<!-- /exl3-timings -->"
+    assert strip_timing_footer("answer" + old + timing_footer(result)) == "answer"

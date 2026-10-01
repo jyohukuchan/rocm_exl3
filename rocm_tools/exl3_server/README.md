@@ -106,7 +106,7 @@ a timing line to the assistant's answer. Both streaming and non-streaming work:
 The visible line looks like:
 
 ```text
-Prefill: 456.12 tok/s | Decode: 53.25 tok/s | Total: 16.09 s
+Prefill: 456.12 tok/s | Decode: 53.25 tok/s | Total: 16.09 s | Draft: 75.00%
 ```
 
 The footer is **off by default**. `--include-timings` enables it as a server
@@ -117,6 +117,12 @@ configuration is enabled automatically.
 
 Prefill uses only uncached input tokens and the engine's prefill time. Decode
 uses generated tokens, including reasoning, and the engine's generation time.
+Draft acceptance is accepted draft tokens divided by accepted plus rejected
+draft tokens. It is `N/A` when no draft tokens were proposed (including AR-only
+requests); it is not the fraction of output tokens produced by the draft.
+`exl3_metrics` also includes both draft counters, their sum, and the unrounded
+`draft_acceptance_rate`. Version 2 footers and earlier version 1 footers are both
+removed from assistant history.
 Unavailable phase rates are displayed as `N/A`. Total is measured from server
 ASGI request arrival to answer completion, including body parsing, template and
 grammar preparation, queueing, prefill, and generation. It excludes delivery to

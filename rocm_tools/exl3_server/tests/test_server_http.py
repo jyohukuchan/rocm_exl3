@@ -159,7 +159,8 @@ async def test_timing_footer_opt_in_and_wall_time(http_state, monkeypatch, strea
     monkeypatch.setattr(server, "make_job", queued_job)
     http_state.events[:] = [{"text": "hello", "eos": True, "eos_reason": "stop",
                            "new_tokens": 10, "prompt_tokens": 100, "cached_tokens": 80,
-                           "time_prefill": .2, "time_generate": .5}]
+                           "time_prefill": .2, "time_generate": .5,
+                           "accepted_draft_tokens": 3, "rejected_draft_tokens": 1}]
     body = {"messages": [{"role": "user", "content": "hi"}], "stream": stream,
             "stream_options": {"include_usage": True}}
     if option is not None:
@@ -171,6 +172,7 @@ async def test_timing_footer_opt_in_and_wall_time(http_state, monkeypatch, strea
     if expected:
         assert "Prefill: 100.00 tok/s | Decode: 20.00 tok/s | Total: 3.25 s" in text
         assert text.startswith("hello\n\n")
+        assert "Draft: 75.00%" in text
         assert final["usage"]["completion_tokens"] == 10
     else:
         assert text == "hello"
@@ -181,7 +183,7 @@ async def test_timing_footer_removed_before_tokenization_and_apply_template(http
     body = {"messages": [{"role": "user", "content": "hi"}], "include_timings": True}
     first = await request_json("POST", "/v1/chat/completions", body)
     answer = first.json()["choices"][0]["message"]["content"]
-    assert "exl3-timings:v1" in answer
+    assert "exl3-timings:v2" in answer
     body.update(messages=body["messages"] + [
         {"role": "assistant", "content": [{"type": "text", "text": answer}]},
         {"role": "user", "content": "continue"}], include_timings=False)
