@@ -213,7 +213,7 @@ def test_tool_argument_validation_is_schema_backed():
 
 def test_unsupported_response_format_is_not_silently_ignored():
     with pytest.raises(ProtocolError, match="json_object or json_schema"):
-        normalize_response_format({"type": "text"})
+        normalize_response_format({"type": "unsupported"})
 
 
 def test_nested_defs_are_carried_into_each_parameter_grammar_and_validator():

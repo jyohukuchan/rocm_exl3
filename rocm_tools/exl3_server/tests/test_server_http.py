@@ -142,6 +142,49 @@ def chat_payloads(response, stream):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("effort,native,thinking", [
+    ("none", None, False), ("minimal", "low", True), ("low", "low", True),
+    ("medium", "medium", True), ("high", "xhigh", True), ("xhigh", "xhigh", True)])
+@pytest.mark.parametrize("nested", [False, True])
+async def test_reasoning_aliases_and_default_xhigh(http_state, effort, native, thinking, nested):
+    server.state.default_template_kwargs = {"enable_thinking": True, "reasoning_effort": "xhigh"}
+    body = {"messages": [{"role": "user", "content": "hi"}], "response_format": {"type": "text"}}
+    body["chat_template_kwargs" if nested else "reasoning_effort"] = {"reasoning_effort": effort} if nested else effort
+    response = await request_json("POST", "/v1/chat/completions", body)
+    assert response.status_code == 200
+    kwargs = http_state.tokenizer.calls[-1][1]
+    assert kwargs.get("reasoning_effort") == native
+    assert kwargs["enable_thinking"] is thinking
+    response = await request_json("POST", "/v1/chat/completions", {"messages": body["messages"]})
+    assert response.status_code == 200
+    assert http_state.tokenizer.calls[-1][1]["reasoning_effort"] == "xhigh"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_explicit_text_response_allows_tools_and_timing_footer(http_state, stream):
+    response = await request_json("POST", "/v1/chat/completions", {
+        "messages": [{"role": "developer", "content": "follow rules"}, {"role": "user", "content": "hi"}],
+        "response_format": {"type": "text"}, "include_timings": True, "stream": stream,
+        "tools": TOOLS})
+    assert response.status_code == 200
+    text, _ = chat_payloads(response, stream)
+    assert "exl3-timings:v2" in text
+    assert http_state.tokenizer.calls[-1][0][0] == {"role": "system", "content": "follow rules"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["image_url", "input_audio", "file", "video", "unexpected"])
+async def test_unsupported_content_is_rejected_instead_of_silently_lost(http_state, kind):
+    body = {"messages": [{"role": "user", "content": [{"type": "text", "text": "describe"}, {"type": kind}]}]}
+    for path in ("/v1/chat/completions", "/apply-template"):
+        response = await request_json("POST", path, body)
+        assert response.status_code == 400
+        assert "Unsupported content type" in response.json()["error"]["message"]
+    assert not http_state.jobs
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.parametrize("cli,option,expected", [
     (False, None, False), (False, True, True),

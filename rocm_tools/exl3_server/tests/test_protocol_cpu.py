@@ -30,6 +30,35 @@ TOOLS = [{"type": "function", "function": {
 }}]
 
 
+def test_developer_history_keeps_instructions_in_one_leading_system_turn():
+    original = [{"role": "system", "content": "root rules"},
+                {"role": "developer", "content": "initial developer rules"},
+                {"role": "user", "content": "first question"},
+                {"role": "assistant", "content": "answer"},
+                {"role": "developer", "content": "new developer rules"},
+                {"role": "user", "content": "second question"}]
+    assert normalize_chat_messages(original)[1]["role"] == "developer"
+    adapted = messages_for_template(original)
+    assert [m["role"] for m in adapted] == ["system", "user", "assistant", "user"]
+    assert adapted[0]["content"].index("root rules") < adapted[0]["content"].index("initial developer rules") < adapted[0]["content"].index("new developer rules")
+    assert original[1]["role"] == "developer"
+
+
+def test_developer_real_qwen_template_accepts_combined_instructions():
+    import os
+    fixture = Path(os.environ.get("EXL3_SCHEMA_TEST_TOKENIZER", ""))
+    if not fixture.is_file():
+        pytest.skip("Model tokenizer fixture is not available")
+    from exllamav3 import Config, Tokenizer
+    tokenizer = Tokenizer(Config.from_directory(str(fixture.parent)))
+    rendered = tokenizer.hf_render_chat_template(messages_for_template([
+        {"role": "system", "content": "SYS_REQUIRED"},
+        {"role": "developer", "content": "DEV_REQUIRED"},
+        {"role": "user", "content": "question"}]), enable_thinking=False)
+    assert "SYS_REQUIRED" in rendered and "DEV_REQUIRED" in rendered
+    assert "<|im_start|>user\nquestion" in rendered
+
+
 def test_timing_footer_only_removed_from_assistant_text_history():
     from rocm_tools.exl3_server.metrics import timing_footer
     footer = timing_footer({"total_seconds": 1.})

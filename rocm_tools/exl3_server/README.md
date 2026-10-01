@@ -90,6 +90,23 @@ Chat Completions supports `messages`, `stream`, `n` for non-streaming requests,
 fields, `chat_template_kwargs`, `reasoning_effort`, `enable_thinking`, and
 `continue_final_message`. Unknown OpenAI-style request fields are ignored.
 
+`developer` instructions are accepted. For templates with a single system turn,
+all system/developer instructions are combined into the leading system message,
+with system instructions first and role labels when multiple instruction turns
+are present. Order within each role is preserved. This is a template adaptation,
+not an independently enforced OpenAI instruction hierarchy.
+
+`response_format: {"type": "text"}` means ordinary unconstrained text, including
+tool use and the optional timing footer. Reasoning levels `minimal` and `high`
+map to this model's native `low` and `xhigh`; `none` disables thinking. `low`,
+`medium`, and `xhigh` remain native values. These are prompt hints, not fixed
+reasoning-token budgets. Aliases work in top-level fields and template kwargs;
+the configured default remains xhigh when no override is supplied.
+
+Unsupported content parts (images when Vision is disabled, audio, files, video,
+and unknown types) return HTTP 400 instead of being silently discarded. Extracted
+file/OCR text can still be supplied as text. This applies to `/apply-template` too.
+
 ### Optional timing footer
 
 For `/v1/chat/completions`, set `"include_timings": true` in the request to append

@@ -78,8 +78,10 @@ def normalize_response_format(response_format: Any) -> dict | None:
     if not isinstance(response_format, dict):
         raise _error("response_format must be an object")
     kind = response_format.get("type")
+    if kind == "text":
+        return None
     if kind not in _SUPPORTED_RESPONSE_FORMATS:
-        raise _error("response_format.type must be json_object or json_schema")
+        raise _error("response_format.type must be text, json_object or json_schema")
     if kind == "json_object":
         # OpenAI's json_object mode promises a JSON object, with no user
         # properties specified.  LLGuidance can enforce this directly.

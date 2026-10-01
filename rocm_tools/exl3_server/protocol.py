@@ -123,9 +123,29 @@ def _text_content(content: Any) -> str:
             if isinstance(part, str):
                 out.append(part)
             elif isinstance(part, dict) and part.get("type") in ("text", "input_text"):
-                out.append(str(part.get("text", "")))
+                if not isinstance(part.get("text"), str):
+                    raise ProtocolError("text content parts require a text string")
+                out.append(part["text"])
+            else:
+                kind = part.get("type", "unknown") if isinstance(part, dict) else "unknown"
+                raise ProtocolError(f"Unsupported content type: {kind}; this request requires text input")
         return "".join(out)
-    return str(content)
+    raise ProtocolError("message content must be a string or an array of supported content parts")
+
+
+def reasoning_kwargs(kwargs: dict) -> dict:
+    """Adapt common client levels to this model's native low/medium/xhigh hints."""
+    result = dict(kwargs)
+    effort = result.get("reasoning_effort")
+    aliases = {"minimal": "low", "low": "low", "medium": "medium", "high": "xhigh", "xhigh": "xhigh"}
+    if effort == "none":
+        result["enable_thinking"] = False
+        result.pop("reasoning_effort", None)
+    elif effort is not None:
+        if not isinstance(effort, str) or effort not in aliases:
+            raise ProtocolError("reasoning_effort must be none, minimal, low, medium, high or xhigh")
+        result["reasoning_effort"] = aliases[effort]
+    return result
 
 
 def _remove_top_level_think(text: str) -> tuple[str, str]:
@@ -446,7 +466,7 @@ def normalize_chat_messages(messages: Iterable[dict]) -> list[dict]:
         if not isinstance(message, dict):
             raise ProtocolError("messages entries must be objects")
         role = message.get("role")
-        if role not in {"system", "user", "assistant", "tool"}:
+        if role not in {"system", "developer", "user", "assistant", "tool"}:
             raise ProtocolError(f"unsupported message role: {role}")
         item = {"role": role, "content": _text_content(message.get("content"))}
         if role == "assistant":
@@ -487,6 +507,19 @@ def messages_for_template(messages: Iterable[dict], tools: Iterable[dict] | None
     default.
     """
     normalized = normalize_chat_messages(messages)
+    # Qwen and many other HF templates support a single leading system turn,
+    # not OpenAI's developer role. Keep every instruction, distinguish its role,
+    # and preserve order within each role; never demote it to a user message.
+    instructions = [m for m in normalized if m["role"] in {"system", "developer"}]
+    if instructions:
+        ordered = sorted(instructions, key=lambda m: m["role"] != "system")
+        if len(ordered) == 1:
+            merged = ordered[0]["content"]
+        else:
+            merged = "System instructions take precedence over developer instructions.\n\n" + "\n\n".join(
+                f"{m['role'].capitalize()} instructions:\n{m['content']}" for m in ordered)
+        normalized = [{"role": "system", "content": merged}] + [
+            m for m in normalized if m["role"] not in {"system", "developer"}]
     schemas = _tool_schemas(tools)
     out = []
     for msg in normalized:

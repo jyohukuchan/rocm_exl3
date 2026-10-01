@@ -488,9 +488,11 @@ def chat_controls(req: ChatCompletionRequest) -> tuple[list, Any, dict]:
     if req.enable_thinking is not None:
         kwargs["enable_thinking"] = req.enable_thinking
     if req.reasoning_effort is not None:
-        if req.reasoning_effort not in {"low", "medium", "xhigh"}:
-            raise HTTPException(400, "reasoning_effort must be low, medium or xhigh")
         kwargs["reasoning_effort"] = req.reasoning_effort
+    try:
+        kwargs = protocol.reasoning_kwargs(kwargs)
+    except protocol.ProtocolError as e:
+        raise HTTPException(400, str(e)) from e
     selected = tools
     if choice == "none":
         selected = []
@@ -758,6 +760,8 @@ def prepare_chat(body):
     tools, choice, kwargs = chat_controls(body)
     thinking = bool(kwargs.get("enable_thinking", True))
     try:
+        if structured.normalize_response_format(body.response_format) is None:
+            body.response_format = None
         plan = structured.prepare_constraints(state.tokenizer, tools, choice,
                                                body.parallel_tool_calls, body.response_format,
                                                thinking=thinking)
@@ -1045,8 +1049,9 @@ async def apply_template(request: Request, body: ApplyTemplateRequest):
     kwargs = dict(state.default_template_kwargs)
     if body.chat_template_kwargs:
         kwargs.update(body.chat_template_kwargs)
-    kwargs, qwen_xml = _qwen_xml_template_kwargs(state.tokenizer, kwargs)
     try:
+        kwargs = protocol.reasoning_kwargs(kwargs)
+        kwargs, qwen_xml = _qwen_xml_template_kwargs(state.tokenizer, kwargs)
         messages = protocol.messages_for_template(
             body.messages, json_parameter_values=qwen_xml)
     except protocol.ProtocolError as e:
