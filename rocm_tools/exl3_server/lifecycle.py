@@ -13,6 +13,7 @@ class GenerationFailure(Exception):
             "inference_failed": "Inference failed; retry after the engine is ready.",
             "inference_timeout": "Inference exceeded the configured request deadline.",
             "generation_cancelled": "Generation ended before a completion was produced.",
+            "image_inference_failed": "Image inference failed; no image features were added to the prompt.",
         }.get(self.code, "Inference is unavailable."), "type": "server_error", "code": self.code}}
 
 

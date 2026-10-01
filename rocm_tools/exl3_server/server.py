@@ -111,6 +111,7 @@ class ServerState:
     runtime = None
     max_output_tokens: int = 8192
     audit_log: str | None = None
+    vision = None
 
 state = ServerState()
 
@@ -347,7 +348,8 @@ def finish_reason(eos_reason: str | None) -> str:
 
 def make_job(req: SamplingFields, ids: torch.Tensor, max_new: int,
              stop: str | list[str] | None, identifier: int = 0,
-             ignore_eos: bool = False, filters: list | None = None) -> AsyncJob:
+             ignore_eos: bool = False, filters: list | None = None,
+             embeddings: list | None = None) -> AsyncJob:
     a = state.args
     if readiness(state.generator)["status"] != "ok":
         raise GenerationFailure()
@@ -363,6 +365,7 @@ def make_job(req: SamplingFields, ids: torch.Tensor, max_new: int,
         stop_on_loop = (a.loop_window, a.loop_min_reps) if a.loop_window else None,
         identifier = identifier,
         filters = filters,
+        embeddings = embeddings,
     )
 
 
@@ -554,14 +557,15 @@ def _qwen_xml_template_kwargs(tokenizer: Any, kwargs: dict) -> tuple[dict, bool]
 
 
 def chat_prompt_ids(req: ChatCompletionRequest, *, instructions: str = "",
-                    generation_prefix: str = "") -> torch.Tensor:
+                    generation_prefix: str = "", embeddings=None) -> torch.Tensor:
     if not state.has_chat_template:
         raise HTTPException(400, "Model has no chat template; use /v1/completions")
     _tools, _choice, kwargs = chat_controls(req)
     kwargs, qwen_xml = _qwen_xml_template_kwargs(state.tokenizer, kwargs)
     try:
         messages = protocol.messages_for_template(
-            req.messages, _tools, json_parameter_values=qwen_xml)
+            req.messages, _tools, json_parameter_values=qwen_xml,
+            allow_images=state.vision is not None)
         if instructions:
             if messages[0]["role"] == "system":
                 messages[0]["content"] += "\n\n" + instructions
@@ -571,6 +575,8 @@ def chat_prompt_ids(req: ChatCompletionRequest, *, instructions: str = "",
         if req.continue_final_message:
             kwargs["continue_final_message"] = True
             add_gen = False
+        if embeddings:
+            kwargs["embeddings"] = embeddings
         ids = state.tokenizer.hf_chat_template(messages, add_generation_prompt=add_gen,
                                                **kwargs)
         if generation_prefix:
@@ -629,6 +635,12 @@ async def lifespan(app: FastAPI):
     finally:
         errors = await state.runtime.shutdown(state.generator, power)
         state.generator = None
+        if state.vision is not None:
+            try:
+                state.vision.close()
+            except Exception as exc:
+                errors.append(f"vision cleanup: {type(exc).__name__}")
+            state.vision = None
         if errors:
             raise RuntimeError("server cleanup failed: " + "; ".join(errors))
 
@@ -695,6 +707,7 @@ async def props():
         "default_template_kwargs": state.default_template_kwargs,
         "max_output_tokens": state.max_output_tokens,
         "runtime": state.runtime.report() if state.runtime is not None else {},
+        "vision": state.vision.report() if state.vision is not None else {"enabled": False},
     }
 
 
@@ -710,7 +723,7 @@ async def models(request: Request):
             "owned_by": "exl3_server",
             "context_length": state.context_length,
             "max_output_tokens": state.max_output_tokens,
-            "capabilities": {"tools": True, "input": ["text"], "output": ["text"]},
+            "capabilities": {"tools": True, "input": ["text", "image"] if state.vision is not None else ["text"], "output": ["text"]},
         }],
     }
 
@@ -757,7 +770,7 @@ def audit_chat(body, response_id, parsed, final, *, streamed):
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def prepare_chat(body):
+async def prepare_chat(body):
     if body.model is not None and body.model != state.model_name:
         raise HTTPException(404, f"Unknown model {body.model!r}; use {state.model_name!r}")
     if not 1 <= body.n <= 8:
@@ -765,17 +778,19 @@ def prepare_chat(body):
     tools, choice, kwargs = chat_controls(body)
     thinking = bool(kwargs.get("enable_thinking", True))
     try:
+        protocol.messages_for_template(body.messages, tools, allow_images=state.vision is not None)
         if structured.normalize_response_format(body.response_format) is None:
             body.response_format = None
         plan = structured.prepare_constraints(state.tokenizer, tools, choice,
                                                body.parallel_tool_calls, body.response_format,
                                                thinking=thinking)
+        embeddings = await state.vision.prepare(body.messages, state.tokenizer) if state.vision is not None else []
     except protocol.ProtocolError as e:
         raise HTTPException(400, str(e)) from e
     prefix = plan.generation_prefix or ""
     ids = chat_prompt_ids(body, instructions=plan.template_instructions,
-                          generation_prefix=prefix)
-    return tools, choice, thinking, plan, prefix, ids
+                          generation_prefix=prefix, embeddings=embeddings)
+    return tools, choice, thinking, plan, prefix, ids, embeddings
 
 
 def validate_chat_output(parsed, body, tools, choice, final):
@@ -796,7 +811,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     received_at = request.scope["exl3_received_at"]
     show_timings = (body.include_timings if body.include_timings is not None
                     else getattr(state.args, "include_timings", False))
-    tools, choice, thinking, plan, prefix, ids = prepare_chat(body)
+    tools, choice, thinking, plan, prefix, ids, embeddings = await prepare_chat(body)
     max_new = token_budget(ids.shape[-1], body.max_completion_tokens or body.max_tokens)
     cmpl_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
@@ -815,7 +830,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     if body.stream:
         if body.n != 1:
             raise HTTPException(400, "n > 1 is not supported with streaming")
-        job = make_job(body, ids, max_new, body.stop, filters=plan.filters)
+        job = make_job(body, ids, max_new, body.stop, filters=plan.filters, embeddings=embeddings)
         include_usage = bool((body.stream_options or {}).get("include_usage"))
 
         async def stream():
@@ -882,7 +897,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
         local_plan = plan if i == 0 else structured.prepare_constraints(
             state.tokenizer, tools, choice, body.parallel_tool_calls, body.response_format,
             thinking=thinking)
-        return make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters)
+        return make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters, embeddings=embeddings)
     results = await create_and_collect(body.n, create_choice, lambda job: collect_job(job, request))
     choices, finals = [], []
     try:
@@ -1068,7 +1083,7 @@ async def apply_template(request: Request, body: ApplyTemplateRequest):
         kwargs = protocol.reasoning_kwargs(kwargs)
         kwargs, qwen_xml = _qwen_xml_template_kwargs(state.tokenizer, kwargs)
         messages = protocol.messages_for_template(
-            body.messages, json_parameter_values=qwen_xml)
+            body.messages, json_parameter_values=qwen_xml, allow_images=state.vision is not None)
     except protocol.ProtocolError as e:
         raise HTTPException(400, str(e)) from e
     try:
@@ -1242,7 +1257,18 @@ def main(args):
                   f"Pass -cs to cap it (e.g. -cs 32768), or -cq to quantize it.", flush = True)
 
     # Load model, cache, tokenizer, optional draft model (same as chat.py)
-    state.runtime = serving_runtime.load_runtime(args, log=lambda msg: print(msg, flush=True))
+    # Load vision first so its resident weights count against actual free VRAM
+    # when TP autosplit places the text model. Context size is not reduced.
+    if args.vision:
+        from rocm_tools.exl3_server.vision import load_vision
+        state.vision = load_vision(args)
+    try:
+        state.runtime = serving_runtime.load_runtime(args, log=lambda msg: print(msg, flush=True))
+    except BaseException:
+        if state.vision is not None:
+            state.vision.close()
+            state.vision = None
+        raise
     for name in ("model", "config", "cache", "tokenizer", "draft_model", "draft_cache"):
         setattr(state, name, getattr(state.runtime, name))
     state.context_length = state.runtime.context_length
@@ -1317,6 +1343,13 @@ if __name__ == "__main__":
                         help="Append timings to plain chat answers (off by default; request include_timings overrides)")
     parser.add_argument("--request-timeout", type=float, default=0,
                         help="Optional generation deadline including queue time, in seconds; 0 disables")
+    parser.add_argument("--vision", action="store_true", help="Load and enable the model's image component")
+    parser.add_argument("--vision-device", type=int, default=0, help="GPU for the image component (default 0)")
+    parser.add_argument("--vision-max-pixels", type=int, default=262144, help="Preprocessed image pixel budget")
+    parser.add_argument("--vision-max-input-pixels", type=int, default=16777216, help="Decoded input image pixel limit")
+    parser.add_argument("--vision-max-images", type=int, default=16, help="Maximum images across a conversation")
+    parser.add_argument("--vision-cache-mb", type=int, default=128, help="CPU image embedding cache limit")
+    parser.add_argument("--vision-remote-urls", action="store_true", help="Allow public HTTP(S) image fetching; data URLs work by default")
     parser.add_argument("-xtcp", "--xtc_probability", type = float, default = 0.0, help = "XTC probability, 0 to disable (default)")
     parser.add_argument("-xtct", "--xtc_threshold", type = float, default = 0.1, help = "XTC threshold, default = 0.1")
     parser.add_argument("-drym", "--dry_multiplier", type = float, default = 0.0, help = "DRY multiplier, 0 to disable (default)")

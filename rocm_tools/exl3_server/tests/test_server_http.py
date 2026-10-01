@@ -70,7 +70,7 @@ def http_state(monkeypatch):
                            dry_penalty_last_n=0, loop_window=0)
     names = ("args", "tokenizer", "model_name", "context_length",
              "has_chat_template", "default_template_kwargs", "generator",
-             "runtime", "max_output_tokens")
+             "runtime", "max_output_tokens", "vision")
     old = {name: getattr(server.state, name) for name in names}
     server.state.args = args
     server.state.tokenizer = tok
@@ -80,6 +80,7 @@ def http_state(monkeypatch):
     server.state.has_chat_template = True
     server.state.default_template_kwargs = {}
     server.state.runtime = None
+    server.state.vision = None
     events = [{"text": "hello", "eos": True, "eos_reason": "stop",
                "new_tokens": 1, "prompt_tokens": 3, "cached_tokens": 0,
                "time_prefill": 0.1, "time_generate": 0.1}]
@@ -495,6 +496,85 @@ async def test_librechat_tool_history_title_and_new_conversation_in_one_server(h
         assert short.status_code == 200
         assert short.json()["choices"][0]["message"]["content"] == "hello"
     assert all(not job.cancelled for job in http_state.jobs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_vision_embedding_reaches_template_and_generation_job(http_state, monkeypatch, stream):
+    from test_vision_cpu import VisionModel, image_part
+    from rocm_tools.exl3_server.vision import VisionRuntime
+    server.state.vision = VisionRuntime(VisionModel())
+    received = []
+    original = server.make_job
+    def capture(*args, **kwargs):
+        received.append(kwargs['embeddings'])
+        return original(*args, **kwargs)
+    monkeypatch.setattr(server, "make_job", capture)
+    body = {"messages": [{"role": "user", "content": [image_part(), {"type": "text", "text": "describe"}]}], "stream": stream}
+    response = await request_json("POST", "/v1/chat/completions", body)
+    assert response.status_code == 200
+    assert len(received[0]) == 1
+    messages, kwargs = http_state.tokenizer.calls[-1]
+    assert messages[0]["content"][0] == {"type": "image"}
+    assert kwargs['embeddings'] is received[0]
+    again = await request_json("POST", "/v1/chat/completions", body)
+    assert again.status_code == 200 and received[1][0] is received[0][0]
+    models = await request_json("GET", "/v1/models", {})
+    assert models.json()['data'][0]['capabilities']['input'] == ['text', 'image']
+
+
+@pytest.mark.parametrize("arch,rows,expected", [("gfx1201", 64, "reconstruct"), ("gfx1201", 1, "native"), ("gfx1030", 64, "native"), ("gfx1100", 64, "native")])
+def test_cooperative_linear_guard_is_cached_and_preserves_native_decode(monkeypatch, arch, rows, expected):
+    from exllamav3.modules.quant.exl3 import LinearEXL3
+    queried = []
+    monkeypatch.setattr(torch.version, "hip", "test")
+    def properties(device):
+        queried.append(device)
+        return SimpleNamespace(gcnArchName=arch)
+    monkeypatch.setattr(torch.cuda, "get_device_properties", properties)
+    linear = LinearEXL3.__new__(LinearEXL3)
+    linear.config = SimpleNamespace(infer_params=SimpleNamespace(no_reconstruct=True))
+    linear.key = "test"
+    linear.trellis = SimpleNamespace(device=torch.device("cuda:0"))
+    linear.bc = SimpleNamespace(run_alloc=lambda *args: "native")
+    linear.reconstruct_hgemm = lambda *args: "reconstruct"
+    linear.out_features = 4
+    linear.default_out_dtype = torch.float16
+    x = torch.zeros((rows, 4), dtype=torch.float16)
+    assert linear.forward(x, {}) == expected
+    assert linear.forward(x, {}) == expected
+    assert len(queried) == (0 if rows == 1 else 1)
+
+
+def test_tp_embedding_transfer_cache_stays_bounded_and_reuses_descriptors(monkeypatch):
+    from exllamav3.model import model_tp_shared as shared
+    monkeypatch.setattr(torch.cuda, "set_device", lambda *args: None)
+    monkeypatch.setattr(shared, "MAX_CACHE_PER_PROCESS", 16)
+    producer = shared.SMProducer(buffer_size=1024)
+    consumer = shared.SMConsumer(producer, device=0, pin_memory=False)
+    try:
+        tensors = [torch.full((2,), i, dtype=torch.float32) for i in range(4)]
+        for i, tensor in enumerate(tensors):
+            producer.clear()
+            descriptor = producer.send(tensor, cache_id=id(tensor))
+            assert torch.equal(consumer.recv(descriptor), tensor)
+            assert producer.cache_size <= 16 and consumer.cache_size <= 16
+            offset = producer.next_offset
+            repeated = producer.send(tensor, cache_id=id(tensor))
+            assert repeated['method'] == 'cached'
+            assert producer.next_offset == offset
+            assert torch.equal(consumer.recv(repeated), tensor)
+        assert len(producer.cached_cpu_tensors) == len(consumer.cached_cpu_tensors) == 2
+        assert id(tensors[0]) not in producer.cached_cpu_tensors
+        assert id(tensors[0]) not in consumer.cached_cpu_tensors
+        producer.clear()
+        again = producer.send(tensors[0], cache_id=id(tensors[0]))
+        assert torch.equal(consumer.recv(again), tensors[0])
+        assert producer.cache_size == consumer.cache_size == 16
+    finally:
+        consumer.arena = None
+        consumer.close()
+        producer.close()
 
 
 @pytest.mark.asyncio

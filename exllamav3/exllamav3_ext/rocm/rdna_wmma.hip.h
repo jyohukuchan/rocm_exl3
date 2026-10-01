@@ -362,9 +362,10 @@ __device__ __forceinline__ void mma_sync(
 #elif defined(__gfx1200__) || defined(__gfx1201__)
     // RDNA4: the gfx11 WMMA encodings do not exist -- LLVM fails instruction
     // selection on this intrinsic ("Cannot select: llvm.amdgcn.wmma.f32...").
-    // The only live instantiations reaching this wrapper are the fused-MoE
-    // comp units, and rocm_py steers MoE to the per-expert path on gfx120x,
-    // so this body is unreachable at runtime there. Trap rather than emulate:
+    // Cooperative GEMM and fused-MoE instantiate this wrapper. Python EXL3
+    // Linears use reconstruct+hgemm for multi-row gfx12 input, and MoE needs
+    // its own fallback; direct unsupported C++ callers must not reach it.
+    // Trap rather than emulate:
     // silent wrong numbers are the one unacceptable outcome, and a real gfx12
     // WMMA port (half-size fragments, no operand duplication across wave
     // halves) needs RDNA4 hardware to validate the layout -- not done yet.

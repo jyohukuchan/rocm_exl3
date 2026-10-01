@@ -107,6 +107,46 @@ Unsupported content parts (images when Vision is disabled, audio, files, video,
 and unknown types) return HTTP 400 instead of being silently discarded. Extracted
 file/OCR text can still be supplied as text. This applies to `/apply-template` too.
 
+### Image input
+
+Start with `--vision --vision-device 0` to load the checkpoint's vision component
+and enable OpenAI `image_url` parts in user messages. The default remains
+text-only. `/v1/models` advertises image input only when the component is loaded.
+Images are converted to RGB with EXIF orientation applied and transparency on
+white, encoded, and passed as native EXL3 embeddings to both target and MTP.
+
+```json
+{
+  "model": "qwen38-local",
+  "messages": [{"role": "user", "content": [
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,...", "detail": "auto"}},
+    {"type": "text", "text": "この画像を説明してください"}
+  ]}]
+}
+```
+
+PNG, JPEG, WebP and static GIF data URLs work by default. Optional
+`--vision-remote-urls` allows public HTTP(S) URLs; DNS results and redirects are
+checked and connections use the validated address. Private addresses and local
+file URLs are rejected. Image bytes are capped at 20 MiB, decoded pixels at
+16,777,216, images per conversation at 16. `--vision-max-pixels` defaults to
+262,144; `detail: low` uses at most 65,536 (subject to the model's minimum).
+Processor, count and cache limits have corresponding `--vision-*` flags.
+
+`--vision-cache-mb` bounds the CPU embedding cache (default 128 MiB). Repeated
+image data/budget pairs reuse aliases so returning image history can reuse its
+KV prefix; evicted images are encoded again. The TP tensor caches are also
+byte-accounted and bounded. Nonfinite image features fail before creating a
+generation job. Video/audio and images in system/developer/assistant messages
+remain unsupported. `/apply-template` renders image placeholders, not pixels;
+raw completion endpoints do not accept image embeddings.
+
+Vision loads before text autosplit so resident weights count against available
+VRAM. It does not lower the configured context. See
+[the image verification report](../../doc/vision_api_validation.md) for V620 TP2/MTP
+checks, R9700's safe Linear fallback, and the distinction between image encoder
+checks and full inference.
+
 ### Optional timing footer
 
 For `/v1/chat/completions`, set `"include_timings": true` in the request to append

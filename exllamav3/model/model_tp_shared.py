@@ -78,6 +78,9 @@ class SMProducer:
         nbytes = tensor.element_size() * tensor.numel()
         nbytes_align = (nbytes + 127) // 128 * 128
 
+        if cache_id is not None and cache_id in self.cached_cpu_tensors:
+            return {"method": "cached", "cache_id": cache_id}
+
         # Fall back on slow sharing if buffer too small
         if self.next_offset + nbytes_align >= self.buffer_size:
             tensor.share_memory_()
@@ -109,8 +112,10 @@ class SMProducer:
                     "cache_id": cache_id,
                 }
             while self.cache_size + nbytes > MAX_CACHE_PER_PROCESS:
-                self.cached_cpu_tensors.pop(next(iter(self.cached_cpu_tensors)))
+                removed = self.cached_cpu_tensors.pop(next(iter(self.cached_cpu_tensors)))
+                self.cache_size -= removed.numel() * removed.element_size()
             self.cached_cpu_tensors[cache_id] = tensor
+            self.cache_size += nbytes
             # print("caching send:", cache_id)
 
         # Data is now buffered in shared memory space, store metadata and offset
@@ -245,8 +250,10 @@ class SMConsumer:
                 # print("caching recv:", cache_id)
                 assert not cuda, "Cannot share cached tensor for CUDA"
                 while self.cache_size + nbytes > MAX_CACHE_PER_PROCESS:
-                    self.cached_cpu_tensors.pop(next(iter(self.cached_cpu_tensors)))
+                    removed = self.cached_cpu_tensors.pop(next(iter(self.cached_cpu_tensors)))
+                    self.cache_size -= removed.numel() * removed.element_size()
                 self.cached_cpu_tensors[cache_id] = tensor.clone(memory_format = torch.contiguous_format)
+                self.cache_size += nbytes
 
         # Slice before cloning
         if slice_dim is not None:

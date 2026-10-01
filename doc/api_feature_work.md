@@ -3,7 +3,8 @@
 Requested scope: implement the medium-or-higher priority integration work, add
 draft acceptance to the opt-in timing footer, then implement Responses API.
 Each completed work item is tested and pushed separately. The active LibreChat
-inference process must remain running while source changes are prepared.
+inference process was initially left running while source changes were prepared.
+On 2026-10-02 the user authorized stopping/restarting it for deployment and checks.
 
 | Item | Source state | Validation / remaining work |
 |---|---|---|
@@ -11,13 +12,12 @@ inference process must remain running while source changes are prepared.
 | Developer, text response format, reasoning aliases, unsupported input errors | Implemented, pushed as `7a458fa` | 133 tests including actual Qwen tokenizer template rendering |
 | Failure/cancellation cleanup, readiness, bounded supervisor | Implemented, pushed as `d7fa490` | 149 tests including real CPU process crash and failed-health recovery; no live GPU crash/reset attempted |
 | Sanitized client request regression fixtures | Implemented | Actual LibreChat/Firecrawl and OpenCode shapes, stripped conversation/schema annotations; real tokenizer/LLGuidance tests and one-server API transition regression |
-| Vision API wiring and ROCm/TP/MTP verification | Pending | Preserve 512Ki context; verify available VRAM, preprocessing, embeddings, image history and resource ownership |
+| Vision API wiring and ROCm/TP/MTP verification | Implemented and deployed | 170 tests; V620/R9700 encoders; V620 TP2/MTP red/blue inference and returning image history; 512Ki allocation retained. Browser upload check remains |
 | Logprobs | Pending | Wire native probabilities with correct visible-token/UTF-8 alignment and SSE/non-stream parity |
 | Responses API | Pending, after preceding items | Text/image input, instructions, tools, reasoning, structured output, streaming events, response history and client verification |
 
-The running service still uses its earlier imports. Pushing Python changes does
-not reload an already running engine. New-source tests run in separate CPU test
-processes inside the existing container; they do not stop or reload LibreChat's
-model. Live deployment and GPU validation remain separate completion gates.
+The `vision-api-01` service loads the new API and Vision code. Further Python
+changes require a restart to deploy. CPU tests run in separate processes.
+Live deployment and GPU validation remain separate completion gates.
 Long-context batch ≥2 and CORS changes were ranked below the requested threshold
 for the current batch-one local configuration.

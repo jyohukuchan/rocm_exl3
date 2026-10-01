@@ -17,6 +17,23 @@ class LinearEXL3:
 
     quant_type: str = "exl3"
 
+    @property
+    def cooperative_gemm_supported(self):
+        # The gfx12 WMMA wrapper intentionally traps. It is reached by the
+        # small multi-row GEMM too, including Qwen's vision merger. Cache this
+        # per weight/device; single-row decode and gfx10/gfx11 remain native.
+        cache = getattr(self, "_cooperative_gemm_support", None)
+        if cache is None:
+            cache = self._cooperative_gemm_support = {}
+        device = self.trellis.device
+        if device not in cache:
+            supported = True
+            if torch.version.hip and device.type == "cuda":
+                arch = torch.cuda.get_device_properties(device).gcnArchName.split(":", 1)[0]
+                supported = not arch.startswith("gfx12")
+            cache[device] = supported
+        return cache[device]
+
     def __init__(
         self,
         config: Config | None,
@@ -133,6 +150,8 @@ class LinearEXL3:
         if not reconstruct:
             rows = x.numel() // x.shape[-1]
             if rows <= AUTO_RECONSTRUCT_THRESHOLD or self.config.infer_params.no_reconstruct:
+                if rows > 1 and not self.cooperative_gemm_supported:
+                    return self.reconstruct_hgemm(x, out_dtype)
                 dtype = out_dtype or self.default_out_dtype
                 return self.bc.run_alloc(x, self.out_features, dtype == torch.float)
 

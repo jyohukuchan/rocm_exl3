@@ -456,7 +456,23 @@ def validate_parallel_tool_calls(tool_calls: Iterable[dict], *, parallel_tool_ca
         raise ProtocolError("multiple tool calls require parallel_tool_calls=true")
 
 
-def normalize_chat_messages(messages: Iterable[dict]) -> list[dict]:
+def _message_content(content, role, allow_images):
+    if not (allow_images and isinstance(content, list)
+            and any(isinstance(p, dict) and p.get("type") == "image_url" for p in content)):
+        return _text_content(content)
+    if role != "user":
+        raise ProtocolError("Images are supported only in user messages")
+    parts = []
+    for part in content:
+        if isinstance(part, dict) and part.get("type") == "image_url":
+            # HF receives a marker, never the original URL or base64 payload.
+            parts.append({"type": "image"})
+        else:
+            parts.append({"type": "text", "text": _text_content([part])})
+    return parts
+
+
+def normalize_chat_messages(messages: Iterable[dict], *, allow_images=False) -> list[dict]:
     """Preserve tool-call IDs, assistant calls, content and reasoning history."""
     if not isinstance(messages, list) or not messages:
         raise ProtocolError("messages must be a non-empty array")
@@ -468,7 +484,7 @@ def normalize_chat_messages(messages: Iterable[dict]) -> list[dict]:
         role = message.get("role")
         if role not in {"system", "developer", "user", "assistant", "tool"}:
             raise ProtocolError(f"unsupported message role: {role}")
-        item = {"role": role, "content": _text_content(message.get("content"))}
+        item = {"role": role, "content": _message_content(message.get("content"), role, allow_images)}
         if role == "assistant":
             item["content"] = strip_timing_footer(item["content"])
         if "name" in message:
@@ -492,7 +508,7 @@ def normalize_chat_messages(messages: Iterable[dict]) -> list[dict]:
 
 
 def messages_for_template(messages: Iterable[dict], tools: Iterable[dict] | None = None,
-                          *, json_parameter_values: bool = False) -> list[dict]:
+                          *, json_parameter_values: bool = False, allow_images=False) -> list[dict]:
     """Return HF-template messages with assistant arguments as typed objects.
 
     ``normalize_chat_messages`` intentionally keeps OpenAI's JSON argument
@@ -506,7 +522,7 @@ def messages_for_template(messages: Iterable[dict], tools: Iterable[dict] | None
     expects JSON-quoted strings; generic HF templates retain typed values by
     default.
     """
-    normalized = normalize_chat_messages(messages)
+    normalized = normalize_chat_messages(messages, allow_images=allow_images)
     # Qwen and many other HF templates support a single leading system turn,
     # not OpenAI's developer role. Keep every instruction, distinguish its role,
     # and preserve order within each role; never demote it to a user message.

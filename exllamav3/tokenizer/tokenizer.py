@@ -747,7 +747,24 @@ class Tokenizer:
                     f"{len(embeddings)} embedding(s)"
                 )
             for embedding in embeddings:
-                rendered = rendered.replace(image_placeholder, embedding.text_alias, 1)
+                # Qwen's native MMEmbedding already includes vision start/end,
+                # while its HF template also wraps image_pad in those tokens.
+                # Replace the complete wrapped placeholder in that case, so
+                # aliases splice exactly one pair of delimiters into the input.
+                position = rendered.find(image_placeholder)
+                token_list = embedding.token_list
+                pieces = self.get_id_to_piece_list(True)
+                if len(token_list) == embedding.mm_length + 2 \
+                        and 0 <= token_list[0] < len(pieces) \
+                        and 0 <= token_list[-1] < len(pieces):
+                    start_piece, end_piece = pieces[token_list[0]], pieces[token_list[-1]]
+                    begin = position - len(start_piece)
+                    end = position + len(image_placeholder) + len(end_piece)
+                    if begin >= 0 and rendered[begin:position] == start_piece \
+                            and rendered[position + len(image_placeholder):end] == end_piece:
+                        rendered = rendered[:begin] + embedding.text_alias + rendered[end:]
+                        continue
+                rendered = rendered[:position] + embedding.text_alias + rendered[position + len(image_placeholder):]
             return self.encode(
                 rendered,
                 encode_special_tokens = True,
