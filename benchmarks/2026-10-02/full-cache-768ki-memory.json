@@ -1,0 +1,145 @@
+{
+  "capacity_tokens": 786432,
+  "prompt_tokens": 786395,
+  "generated_tokens_requested": 32,
+  "draft_tokens": 4,
+  "synthetic_history": true,
+  "quality_evaluation": false,
+  "stages": [
+    {
+      "stage": "tail_prefill",
+      "position": 786176
+    },
+    {
+      "stage": "tail_prefill",
+      "position": 786394
+    }
+  ],
+  "target_cache": [
+    {
+      "device": 0,
+      "layers": [
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        },
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        },
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        },
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        },
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        },
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        },
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        }
+      ]
+    },
+    {
+      "device": 1,
+      "layers": [
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        },
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        },
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        },
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        },
+        {
+          "pages": 3072,
+          "tokens": 786432,
+          "bytes": 566231040
+        }
+      ]
+    }
+  ],
+  "draft_cache": [
+    {
+      "pages": 3072,
+      "tokens": 786432,
+      "bytes": 566231040
+    }
+  ],
+  "board_peak_bytes": [
+    33810251776,
+    33481515008
+  ],
+  "elapsed_seconds": 11.715525086969137,
+  "allocated_pages": 3072,
+  "prefill_begin": 784128,
+  "prefill_tokens_evaluated": 2266,
+  "prefill_chunk": 2048,
+  "generated_tokens": 32,
+  "finite_logits_elements": 7938464,
+  "target_max_end_exclusive": 786430,
+  "accepted_draft_tokens": 19,
+  "rejected_draft_tokens": 33,
+  "passed": true,
+  "date": "2026-10-02",
+  "hardware": "Radeon Pro V620 x2 (gfx1030), TP2/RCCL",
+  "model": "Qwen3.8 Flash Next EXL3 3.05bpw, original 3-bit MTP",
+  "target_budgets_gib": [
+    28.5,
+    27.5
+  ],
+  "cache_bits": [
+    5,
+    4
+  ],
+  "batch": 1,
+  "vision_loaded": true,
+  "cache_bytes": 7361003520,
+  "ranks_memory": [
+    {
+      "device": 0,
+      "torch_allocated_bytes": 31246870528,
+      "torch_peak_bytes": 31822762496,
+      "torch_reserved_bytes": 31960596480
+    },
+    {
+      "device": 1,
+      "torch_allocated_bytes": 31693990912,
+      "torch_peak_bytes": 32138268160,
+      "torch_reserved_bytes": 32323403776
+    }
+  ],
+  "board_peak_gib": [
+    31.488250732421875,
+    31.182090759277344
+  ],
+  "method": "All target/draft cache tensors initialized over all pages. CPU random token IDs and metadata cover the full capacity. Prefix computations skipped; two real tail-prefill chunks plus fixed-MTP4 generation executed. Memory/shape check, not model quality."
+}

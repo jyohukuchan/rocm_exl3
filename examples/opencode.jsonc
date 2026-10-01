@@ -22,8 +22,8 @@
             "output": ["text"]
           },
           "limit": {
-            "context": 524288,
-            "input": 491520,
+            "context": 786432,
+            "input": 753664,
             "output": 32768
           },
           "compatibility": {

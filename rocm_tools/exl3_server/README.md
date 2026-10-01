@@ -29,16 +29,17 @@ OpenCode v2.0.12 uses an OpenAI-compatible provider definition. Copy
 [`examples/opencode.jsonc`](../../examples/opencode.jsonc) to a project-level
 `opencode.jsonc`, then change only the local key if the server was started with
 one. The example points to `http://127.0.0.1:3953/v1`, advertises a
-524,288-token context, reserves 491,520 input tokens and 32,768 output tokens, and
+786,432-token context, reserves 753,664 input tokens and 32,768 output tokens, and
 uses `enable_thinking: true` with `reasoning_effort: xhigh`. The original
 OpenCode coding sample was validated with `low`; future coding tasks use `xhigh`.
 Set `enable_thinking: false` for text-only smoke checks.
 
-Match the server allocation to this client configuration with `-cs 524288
---context-limit 524288 --max-output-tokens 32768`, and use
+Match the server allocation to this client configuration with `-gs 28.5,27.5 -cs 786432
+--context-limit 786432 --max-output-tokens 32768`, and use
 `-ctk '{"enable_thinking":true,"reasoning_effort":"xhigh"}'` for the same server
-defaults. The 2026-10-01 batch1 V620 pair check confirmed this cache allocation
-with K5/V4 and short coding/API requests; it did not validate a full 512Ki input.
+defaults. The [2026-10-02 full-cache memory probe](../../doc/full_cache_768ki_memory.md)
+confirmed 768Ki allocation, tail prefill and MTP at the end of a synthetically
+filled cache. It did not evaluate full-context language/retrieval quality.
 The earlier dated OpenCode sample in the validation report used a 32Ki cache.
 
 The [QSA request transition fix](../../doc/qsa_request_transition_fix.md) prevents
@@ -375,8 +376,9 @@ For the V620 pair with vision on GPU0 and MTP on GPU1, the
 [2026-10-02 memory-balance check](../../doc/v620_tp_memory_balance.md) selected
 `-gs 28.375,27.625` at 512Ki. It reduced the sampled whole-card peak difference
 to about 0.20 GiB with comparable coding-request speeds. A 768Ki allocation plus
-short inference passed with `-gs 28.5,27.5 -cs 786432 --context-limit 786432`;
-this is not a full-768Ki input validation. Historical reproduction commands retain
+short inference passed with `-gs 28.5,27.5 -cs 786432 --context-limit 786432`.
+The subsequent [near-full-cache memory check](../../doc/full_cache_768ki_memory.md)
+made that the deployed default. Historical reproduction commands retain
 their recorded reference budgets.
 
 Start the power helper below before executing this server command.

@@ -3,7 +3,9 @@
 2026-10-02 (Asia/Tokyo). Adjusting the existing target-model `-gs` budgets
 reduced the memory imbalance without introducing CPU offload, splitting QSA
 heads, changing quantization, or adding communication stages. The current
-service retains a 512Ki cache and uses `-gs 28.375,27.625`.
+service used a 512Ki cache and `-gs 28.375,27.625` during these measurements.
+The subsequent [full-cache memory probe](full_cache_768ki_memory.md) promoted
+768Ki with `-gs 28.5,27.5` to the current default.
 
 ## Why equal budgets do not produce equal whole-device usage
 
@@ -70,8 +72,8 @@ the same model, MTP, cache, power helper and process limits. Change only:
 
 Budgets are ordered by the inference process's GPU IDs, not the host
 `rocm-smi` index. They sum to the same 56 GiB target budget in these comparisons.
-Restart the model to apply them. The 512Ki setting is the deployed default;
-the 768Ki setting remains a tested capacity option.
+Restart the model to apply them. Following the later memory probe, the 768Ki
+setting is the deployed default; 512Ki remains an option with more headroom.
 
 Recheck the budgets when changing cache capacity, batch slots, draft placement,
 or vision placement. The target cache cost is incorporated in each new TP plan,

@@ -86,6 +86,7 @@ python -m pytest -q -p no:cacheprovider rocm_tools/rdna2/tests/test_qsa_compact_
 ```
 
 Use the existing [server configuration](../rocm_tools/exl3_server/README.md).
-The K5/V4, 512Ki, TP2/MTP, batch1, xhigh, vision and optional timing-footer
-settings are retained in the deployed service. The comparison requests disabled
-thinking per request; they did not change the server default.
+The K5/V4, TP2/MTP, batch1, xhigh, vision and optional timing-footer settings
+are retained. The subsequent [memory probe](full_cache_768ki_memory.md) raised
+the deployed capacity to 768Ki. These comparison requests disabled thinking
+per request; they did not change the server's thinking default.
