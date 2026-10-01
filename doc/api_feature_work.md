@@ -9,8 +9,8 @@ inference process must remain running while source changes are prepared.
 |---|---|---|
 | Draft acceptance footer | Implemented, pushed as `9f43559` | 112 API tests; denominator is accepted + rejected; old v1 footer cleanup retained |
 | Developer, text response format, reasoning aliases, unsupported input errors | Implemented, pushed as `7a458fa` | 133 tests including actual Qwen tokenizer template rendering |
-| Failure/cancellation cleanup, readiness, bounded supervisor | Implemented | 149 tests including real CPU process crash and failed-health recovery; no live GPU crash/reset attempted |
-| Sanitized client request regression fixtures | Pending | Preserve actual client transport/schema shapes without publishing private conversation bodies |
+| Failure/cancellation cleanup, readiness, bounded supervisor | Implemented, pushed as `d7fa490` | 149 tests including real CPU process crash and failed-health recovery; no live GPU crash/reset attempted |
+| Sanitized client request regression fixtures | Implemented | Actual LibreChat/Firecrawl and OpenCode shapes, stripped conversation/schema annotations; real tokenizer/LLGuidance tests and one-server API transition regression |
 | Vision API wiring and ROCm/TP/MTP verification | Pending | Preserve 512Ki context; verify available VRAM, preprocessing, embeddings, image history and resource ownership |
 | Logprobs | Pending | Wire native probabilities with correct visible-token/UTF-8 alignment and SSE/non-stream parity |
 | Responses API | Pending, after preceding items | Text/image input, instructions, tools, reasoning, structured output, streaming events, response history and client verification |

@@ -1,0 +1,2320 @@
+{
+  "model": "qwen38-local",
+  "messages": [
+    {
+      "role": "user",
+      "content": "匿名化された会話です。短く答えてください。"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "reasoning_content": "Consider the synthetic request.",
+      "tool_calls": [
+        {
+          "id": "call_0",
+          "type": "function",
+          "function": {
+            "name": "search_mcp_firecrawl",
+            "arguments": "{\"query\": \"synthetic input\", \"limit\": 10}"
+          }
+        },
+        {
+          "id": "call_1",
+          "type": "function",
+          "function": {
+            "name": "research_search_papers_mcp_firecrawl",
+            "arguments": "{\"query\": \"synthetic input\", \"k\": 20}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_0",
+      "content": "Synthetic tool result"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_1",
+      "content": "Synthetic tool result"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "reasoning_content": "Consider the synthetic request.",
+      "tool_calls": [
+        {
+          "id": "call_2",
+          "type": "function",
+          "function": {
+            "name": "scrape_mcp_firecrawl",
+            "arguments": "{\"url\": \"https://example.com\", \"formats\": [\"markdown\"], \"onlyMainContent\": true, \"maxAge\": 0}"
+          }
+        },
+        {
+          "id": "call_3",
+          "type": "function",
+          "function": {
+            "name": "scrape_mcp_firecrawl",
+            "arguments": "{\"url\": \"https://example.com\", \"formats\": [\"markdown\"], \"onlyMainContent\": true, \"maxAge\": 0}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_2",
+      "content": "Synthetic tool result"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_3",
+      "content": "Synthetic tool result"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "reasoning_content": "Consider the synthetic request.",
+      "tool_calls": [
+        {
+          "id": "call_4",
+          "type": "function",
+          "function": {
+            "name": "scrape_mcp_firecrawl",
+            "arguments": "{\"url\": \"https://example.com\", \"formats\": [\"markdown\"], \"onlyMainContent\": true, \"maxAge\": 0}"
+          }
+        },
+        {
+          "id": "call_5",
+          "type": "function",
+          "function": {
+            "name": "scrape_mcp_firecrawl",
+            "arguments": "{\"url\": \"https://example.com\", \"formats\": [\"markdown\"], \"onlyMainContent\": true, \"maxAge\": 0}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_4",
+      "content": "Synthetic tool result"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_5",
+      "content": "Synthetic tool result"
+    },
+    {
+      "role": "assistant",
+      "content": null,
+      "reasoning_content": "Consider the synthetic request.",
+      "tool_calls": [
+        {
+          "id": "call_6",
+          "type": "function",
+          "function": {
+            "name": "scrape_mcp_firecrawl",
+            "arguments": "{\"url\": \"https://example.com\", \"formats\": [\"markdown\"], \"onlyMainContent\": true, \"maxAge\": 0}"
+          }
+        },
+        {
+          "id": "call_7",
+          "type": "function",
+          "function": {
+            "name": "scrape_mcp_firecrawl",
+            "arguments": "{\"url\": \"https://example.com\", \"formats\": [\"markdown\"], \"onlyMainContent\": true, \"maxAge\": 0}"
+          }
+        }
+      ]
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_6",
+      "content": "Synthetic tool result"
+    },
+    {
+      "role": "tool",
+      "tool_call_id": "call_7",
+      "content": "Synthetic tool result"
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_scrape",
+      "function": {
+        "name": "scrape_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "formats": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "markdown",
+                  "html",
+                  "rawHtml",
+                  "screenshot",
+                  "links",
+                  "summary",
+                  "changeTracking",
+                  "branding",
+                  "json",
+                  "query",
+                  "audio"
+                ]
+              }
+            },
+            "jsonOptions": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string"
+                },
+                "schema": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "queryOptions": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string",
+                  "maxLength": 10000
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "directQuote",
+                    "freeform"
+                  ]
+                }
+              },
+              "required": [
+                "prompt"
+              ],
+              "additionalProperties": false
+            },
+            "screenshotOptions": {
+              "type": "object",
+              "properties": {
+                "fullPage": {
+                  "type": "boolean"
+                },
+                "quality": {
+                  "type": "number"
+                },
+                "viewport": {
+                  "type": "object",
+                  "properties": {
+                    "width": {
+                      "type": "number"
+                    },
+                    "height": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "width",
+                    "height"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "parsers": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "pdf"
+                ]
+              }
+            },
+            "pdfOptions": {
+              "type": "object",
+              "properties": {
+                "maxPages": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10000
+                }
+              },
+              "additionalProperties": false
+            },
+            "onlyMainContent": {
+              "type": "boolean"
+            },
+            "redactPII": {
+              "type": "boolean"
+            },
+            "includeTags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "excludeTags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "waitFor": {
+              "type": "number"
+            },
+            "actions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "wait",
+                      "screenshot",
+                      "scroll",
+                      "scrape",
+                      "click",
+                      "write",
+                      "press",
+                      "executeJavascript",
+                      "generatePDF"
+                    ]
+                  },
+                  "selector": {
+                    "type": "string"
+                  },
+                  "milliseconds": {
+                    "type": "number"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  },
+                  "direction": {
+                    "type": "string",
+                    "enum": [
+                      "up",
+                      "down"
+                    ]
+                  },
+                  "script": {
+                    "type": "string"
+                  },
+                  "fullPage": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            },
+            "mobile": {
+              "type": "boolean"
+            },
+            "skipTlsVerification": {
+              "type": "boolean"
+            },
+            "removeBase64Images": {
+              "type": "boolean"
+            },
+            "location": {
+              "type": "object",
+              "properties": {
+                "country": {
+                  "type": "string"
+                },
+                "languages": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "storeInCache": {
+              "type": "boolean"
+            },
+            "zeroDataRetention": {
+              "type": "boolean"
+            },
+            "maxAge": {
+              "type": "number"
+            },
+            "lockdown": {
+              "type": "boolean"
+            },
+            "proxy": {
+              "type": "string",
+              "enum": [
+                "basic",
+                "stealth",
+                "enhanced",
+                "auto"
+              ]
+            },
+            "profile": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "saveChanges": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "name"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_map",
+      "function": {
+        "name": "map_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "search": {
+              "type": "string"
+            },
+            "sitemap": {
+              "type": "string",
+              "enum": [
+                "include",
+                "skip",
+                "only"
+              ]
+            },
+            "includeSubdomains": {
+              "type": "boolean"
+            },
+            "limit": {
+              "type": "number"
+            },
+            "ignoreQueryParameters": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_search",
+      "function": {
+        "name": "search_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "highlights": {
+              "type": "boolean"
+            },
+            "limit": {
+              "type": "number"
+            },
+            "tbs": {
+              "type": "string"
+            },
+            "filter": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "includeDomains": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253,
+                "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$"
+              }
+            },
+            "excludeDomains": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253,
+                "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$"
+              }
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "web",
+                      "images",
+                      "news"
+                    ]
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            },
+            "categories": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "github",
+                  "research",
+                  "pdf",
+                  "developer"
+                ]
+              }
+            },
+            "enterprise": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "default",
+                  "anon",
+                  "zdr"
+                ]
+              }
+            },
+            "scrapeOptions": {
+              "type": "object",
+              "properties": {
+                "formats": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "markdown",
+                      "html",
+                      "rawHtml",
+                      "screenshot",
+                      "links",
+                      "summary",
+                      "changeTracking",
+                      "branding",
+                      "json",
+                      "query",
+                      "audio"
+                    ]
+                  }
+                },
+                "jsonOptions": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "schema": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "queryOptions": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string",
+                      "maxLength": 10000
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "directQuote",
+                        "freeform"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "prompt"
+                  ],
+                  "additionalProperties": false
+                },
+                "screenshotOptions": {
+                  "type": "object",
+                  "properties": {
+                    "fullPage": {
+                      "type": "boolean"
+                    },
+                    "quality": {
+                      "type": "number"
+                    },
+                    "viewport": {
+                      "type": "object",
+                      "properties": {
+                        "width": {
+                          "type": "number"
+                        },
+                        "height": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "width",
+                        "height"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "parsers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "pdf"
+                    ]
+                  }
+                },
+                "pdfOptions": {
+                  "type": "object",
+                  "properties": {
+                    "maxPages": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10000
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "onlyMainContent": {
+                  "type": "boolean"
+                },
+                "redactPII": {
+                  "type": "boolean"
+                },
+                "includeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "waitFor": {
+                  "type": "number"
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "wait",
+                          "screenshot",
+                          "scroll",
+                          "scrape",
+                          "click",
+                          "write",
+                          "press",
+                          "executeJavascript",
+                          "generatePDF"
+                        ]
+                      },
+                      "selector": {
+                        "type": "string"
+                      },
+                      "milliseconds": {
+                        "type": "number"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      },
+                      "direction": {
+                        "type": "string",
+                        "enum": [
+                          "up",
+                          "down"
+                        ]
+                      },
+                      "script": {
+                        "type": "string"
+                      },
+                      "fullPage": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  }
+                },
+                "mobile": {
+                  "type": "boolean"
+                },
+                "skipTlsVerification": {
+                  "type": "boolean"
+                },
+                "removeBase64Images": {
+                  "type": "boolean"
+                },
+                "location": {
+                  "type": "object",
+                  "properties": {
+                    "country": {
+                      "type": "string"
+                    },
+                    "languages": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "storeInCache": {
+                  "type": "boolean"
+                },
+                "zeroDataRetention": {
+                  "type": "boolean"
+                },
+                "maxAge": {
+                  "type": "number"
+                },
+                "lockdown": {
+                  "type": "boolean"
+                },
+                "proxy": {
+                  "type": "string",
+                  "enum": [
+                    "basic",
+                    "stealth",
+                    "enhanced",
+                    "auto"
+                  ]
+                },
+                "profile": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "saveChanges": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_search_feedback",
+      "function": {
+        "name": "search_feedback_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "searchId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "rating": {
+              "type": "string",
+              "enum": [
+                "good",
+                "bad",
+                "partial"
+              ]
+            },
+            "valuableSources": {
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            },
+            "missingContent": {
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "topic": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "topic"
+                ]
+              }
+            },
+            "querySuggestions": {
+              "type": "string",
+              "maxLength": 2000
+            }
+          },
+          "required": [
+            "searchId",
+            "rating"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_feedback",
+      "function": {
+        "name": "feedback_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "enum": [
+                "search",
+                "scrape",
+                "parse",
+                "map"
+              ]
+            },
+            "jobId": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "rating": {
+              "type": "string",
+              "enum": [
+                "good",
+                "bad",
+                "partial"
+              ]
+            },
+            "issues": {
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^[a-z0-9][a-z0-9_-]*$"
+              }
+            },
+            "tags": {
+              "maxItems": 20,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "pattern": "^[a-z0-9][a-z0-9_-]*$"
+              }
+            },
+            "note": {
+              "type": "string",
+              "maxLength": 4000
+            },
+            "valuableSources": {
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 1000
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            },
+            "missingContent": {
+              "maxItems": 50,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "topic": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "topic"
+                ]
+              }
+            },
+            "querySuggestions": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "pageNumbers": {
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "metadata": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "endpoint",
+            "jobId",
+            "rating"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_crawl",
+      "function": {
+        "name": "crawl_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "excludePaths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "includePaths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "maxDiscoveryDepth": {
+              "type": "number"
+            },
+            "sitemap": {
+              "type": "string",
+              "enum": [
+                "skip",
+                "include",
+                "only"
+              ]
+            },
+            "limit": {
+              "type": "number"
+            },
+            "allowExternalLinks": {
+              "type": "boolean"
+            },
+            "allowSubdomains": {
+              "type": "boolean"
+            },
+            "crawlEntireDomain": {
+              "type": "boolean"
+            },
+            "delay": {
+              "type": "number"
+            },
+            "maxConcurrency": {
+              "type": "number"
+            },
+            "webhook": {
+              "type": "string"
+            },
+            "webhookHeaders": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": false
+            },
+            "deduplicateSimilarURLs": {
+              "type": "boolean"
+            },
+            "ignoreQueryParameters": {
+              "type": "boolean"
+            },
+            "scrapeOptions": {
+              "type": "object",
+              "properties": {
+                "formats": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "markdown",
+                      "html",
+                      "rawHtml",
+                      "screenshot",
+                      "links",
+                      "summary",
+                      "changeTracking",
+                      "branding",
+                      "json",
+                      "query",
+                      "audio"
+                    ]
+                  }
+                },
+                "jsonOptions": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "schema": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "queryOptions": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string",
+                      "maxLength": 10000
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "directQuote",
+                        "freeform"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "prompt"
+                  ],
+                  "additionalProperties": false
+                },
+                "screenshotOptions": {
+                  "type": "object",
+                  "properties": {
+                    "fullPage": {
+                      "type": "boolean"
+                    },
+                    "quality": {
+                      "type": "number"
+                    },
+                    "viewport": {
+                      "type": "object",
+                      "properties": {
+                        "width": {
+                          "type": "number"
+                        },
+                        "height": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "width",
+                        "height"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "parsers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "pdf"
+                    ]
+                  }
+                },
+                "pdfOptions": {
+                  "type": "object",
+                  "properties": {
+                    "maxPages": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10000
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "onlyMainContent": {
+                  "type": "boolean"
+                },
+                "redactPII": {
+                  "type": "boolean"
+                },
+                "includeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "waitFor": {
+                  "type": "number"
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "wait",
+                          "screenshot",
+                          "scroll",
+                          "scrape",
+                          "click",
+                          "write",
+                          "press",
+                          "executeJavascript",
+                          "generatePDF"
+                        ]
+                      },
+                      "selector": {
+                        "type": "string"
+                      },
+                      "milliseconds": {
+                        "type": "number"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      },
+                      "direction": {
+                        "type": "string",
+                        "enum": [
+                          "up",
+                          "down"
+                        ]
+                      },
+                      "script": {
+                        "type": "string"
+                      },
+                      "fullPage": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  }
+                },
+                "mobile": {
+                  "type": "boolean"
+                },
+                "skipTlsVerification": {
+                  "type": "boolean"
+                },
+                "removeBase64Images": {
+                  "type": "boolean"
+                },
+                "location": {
+                  "type": "object",
+                  "properties": {
+                    "country": {
+                      "type": "string"
+                    },
+                    "languages": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "storeInCache": {
+                  "type": "boolean"
+                },
+                "zeroDataRetention": {
+                  "type": "boolean"
+                },
+                "maxAge": {
+                  "type": "number"
+                },
+                "lockdown": {
+                  "type": "boolean"
+                },
+                "proxy": {
+                  "type": "string",
+                  "enum": [
+                    "basic",
+                    "stealth",
+                    "enhanced",
+                    "auto"
+                  ]
+                },
+                "profile": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "saveChanges": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "url"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_check_crawl_status",
+      "function": {
+        "name": "check_crawl_status_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_extract",
+      "function": {
+        "name": "extract_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "urls": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "prompt": {
+              "type": "string"
+            },
+            "schema": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": false
+            },
+            "allowExternalLinks": {
+              "type": "boolean"
+            },
+            "enableWebSearch": {
+              "type": "boolean"
+            },
+            "includeSubdomains": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "urls"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_agent",
+      "function": {
+        "name": "agent_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "prompt": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 10000
+            },
+            "urls": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "schema": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "prompt"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_agent_status",
+      "function": {
+        "name": "agent_status_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_interact",
+      "function": {
+        "name": "interact_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "scrapeId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            },
+            "prompt": {
+              "type": "string",
+              "minLength": 1
+            },
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "language": {
+              "type": "string",
+              "enum": [
+                "bash",
+                "python",
+                "node"
+              ]
+            },
+            "timeout": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 300
+            },
+            "scrapeOptions": {
+              "type": "object",
+              "properties": {
+                "formats": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "markdown",
+                      "html",
+                      "rawHtml",
+                      "screenshot",
+                      "links",
+                      "summary",
+                      "changeTracking",
+                      "branding",
+                      "json",
+                      "query",
+                      "audio"
+                    ]
+                  }
+                },
+                "jsonOptions": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string"
+                    },
+                    "schema": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "queryOptions": {
+                  "type": "object",
+                  "properties": {
+                    "prompt": {
+                      "type": "string",
+                      "maxLength": 10000
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": [
+                        "directQuote",
+                        "freeform"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "prompt"
+                  ],
+                  "additionalProperties": false
+                },
+                "screenshotOptions": {
+                  "type": "object",
+                  "properties": {
+                    "fullPage": {
+                      "type": "boolean"
+                    },
+                    "quality": {
+                      "type": "number"
+                    },
+                    "viewport": {
+                      "type": "object",
+                      "properties": {
+                        "width": {
+                          "type": "number"
+                        },
+                        "height": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "width",
+                        "height"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "parsers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "pdf"
+                    ]
+                  }
+                },
+                "pdfOptions": {
+                  "type": "object",
+                  "properties": {
+                    "maxPages": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 10000
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "onlyMainContent": {
+                  "type": "boolean"
+                },
+                "redactPII": {
+                  "type": "boolean"
+                },
+                "includeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "excludeTags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "waitFor": {
+                  "type": "number"
+                },
+                "actions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "wait",
+                          "screenshot",
+                          "scroll",
+                          "scrape",
+                          "click",
+                          "write",
+                          "press",
+                          "executeJavascript",
+                          "generatePDF"
+                        ]
+                      },
+                      "selector": {
+                        "type": "string"
+                      },
+                      "milliseconds": {
+                        "type": "number"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "key": {
+                        "type": "string"
+                      },
+                      "direction": {
+                        "type": "string",
+                        "enum": [
+                          "up",
+                          "down"
+                        ]
+                      },
+                      "script": {
+                        "type": "string"
+                      },
+                      "fullPage": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "type"
+                    ]
+                  }
+                },
+                "mobile": {
+                  "type": "boolean"
+                },
+                "skipTlsVerification": {
+                  "type": "boolean"
+                },
+                "removeBase64Images": {
+                  "type": "boolean"
+                },
+                "location": {
+                  "type": "object",
+                  "properties": {
+                    "country": {
+                      "type": "string"
+                    },
+                    "languages": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "storeInCache": {
+                  "type": "boolean"
+                },
+                "zeroDataRetention": {
+                  "type": "boolean"
+                },
+                "maxAge": {
+                  "type": "number"
+                },
+                "lockdown": {
+                  "type": "boolean"
+                },
+                "proxy": {
+                  "type": "string",
+                  "enum": [
+                    "basic",
+                    "stealth",
+                    "enhanced",
+                    "auto"
+                  ]
+                },
+                "profile": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "saveChanges": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "name"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_interact_stop",
+      "function": {
+        "name": "interact_stop_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "scrapeId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "scrapeId"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_parse",
+      "function": {
+        "name": "parse_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "formats": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "markdown",
+                  "html",
+                  "rawHtml",
+                  "links",
+                  "summary",
+                  "json",
+                  "query"
+                ]
+              }
+            },
+            "jsonOptions": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string"
+                },
+                "schema": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            },
+            "queryOptions": {
+              "type": "object",
+              "properties": {
+                "prompt": {
+                  "type": "string",
+                  "maxLength": 10000
+                },
+                "mode": {
+                  "type": "string",
+                  "enum": [
+                    "directQuote",
+                    "freeform"
+                  ]
+                }
+              },
+              "required": [
+                "prompt"
+              ],
+              "additionalProperties": false
+            },
+            "parsers": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "pdf"
+                ]
+              }
+            },
+            "pdfOptions": {
+              "type": "object",
+              "properties": {
+                "maxPages": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10000
+                }
+              },
+              "additionalProperties": false
+            },
+            "onlyMainContent": {
+              "type": "boolean"
+            },
+            "redactPII": {
+              "type": "boolean"
+            },
+            "includeTags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "excludeTags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "removeBase64Images": {
+              "type": "boolean"
+            },
+            "skipTlsVerification": {
+              "type": "boolean"
+            },
+            "storeInCache": {
+              "type": "boolean"
+            },
+            "zeroDataRetention": {
+              "type": "boolean"
+            },
+            "maxAge": {
+              "type": "number"
+            },
+            "proxy": {
+              "type": "string",
+              "enum": [
+                "basic",
+                "auto"
+              ]
+            },
+            "filePath": {
+              "type": "string",
+              "minLength": 1
+            },
+            "contentType": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "filePath"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_monitor_create",
+      "function": {
+        "name": "monitor_create_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "body": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": false
+            },
+            "page": {
+              "type": "string"
+            },
+            "pages": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "queries": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "searchWindow": {
+              "type": "string",
+              "enum": [
+                "5m",
+                "15m",
+                "1h",
+                "6h",
+                "24h",
+                "7d"
+              ]
+            },
+            "maxResults": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            },
+            "includeDomains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "excludeDomains": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "goal": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "scheduleText": {
+              "type": "string"
+            },
+            "timezone": {
+              "type": "string"
+            },
+            "email": {
+              "type": "string"
+            },
+            "includeDiffs": {
+              "type": "boolean"
+            },
+            "webhookUrl": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_monitor_list",
+      "function": {
+        "name": "monitor_list_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "limit": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_monitor_get",
+      "function": {
+        "name": "monitor_get_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_monitor_update",
+      "function": {
+        "name": "monitor_update_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "body": {
+              "type": "object",
+              "propertyNames": {
+                "type": "string"
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "id",
+            "body"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_monitor_delete",
+      "function": {
+        "name": "monitor_delete_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_monitor_run",
+      "function": {
+        "name": "monitor_run_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_monitor_checks",
+      "function": {
+        "name": "monitor_checks_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running",
+                "completed",
+                "failed",
+                "partial",
+                "skipped_overlap"
+              ]
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_monitor_check",
+      "function": {
+        "name": "monitor_check_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "checkId": {
+              "type": "string"
+            },
+            "limit": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "skip": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "pageStatus": {
+              "type": "string",
+              "enum": [
+                "same",
+                "new",
+                "changed",
+                "removed",
+                "error"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "checkId"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_research_search_papers",
+      "function": {
+        "name": "research_search_papers_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "k": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "authors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "categories": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_research_inspect_paper",
+      "function": {
+        "name": "research_inspect_paper_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "paperId": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "paperId"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_research_related_papers",
+      "function": {
+        "name": "research_related_papers_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "seed_ids": {
+              "minItems": 1,
+              "maxItems": 10,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "intent": {
+              "type": "string",
+              "minLength": 1
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "similar",
+                "citers",
+                "references"
+              ]
+            },
+            "k": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "rerank": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "seed_ids",
+            "intent"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_research_read_paper",
+      "function": {
+        "name": "research_read_paper_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "paperId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "question": {
+              "type": "string",
+              "minLength": 1
+            },
+            "k": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          "required": [
+            "paperId",
+            "question"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_research_search_github",
+      "function": {
+        "name": "research_search_github_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "k": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "type": "function",
+      "serverToolName": "firecrawl_developer_search",
+      "function": {
+        "name": "developer_search_mcp_firecrawl",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "minLength": 1
+            },
+            "k": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "skills": {
+              "type": "string",
+              "enum": [
+                "only"
+              ]
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "temperature": 0,
+  "max_tokens": 4096,
+  "stream": true,
+  "reasoning_effort": "xhigh",
+  "chat_template_kwargs": {
+    "enable_thinking": true,
+    "reasoning_effort": "xhigh"
+  }
+}

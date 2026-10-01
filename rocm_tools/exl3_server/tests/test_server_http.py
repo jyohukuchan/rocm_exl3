@@ -476,6 +476,28 @@ async def test_failed_enqueue_does_not_leave_async_job_registered():
 
 
 @pytest.mark.asyncio
+async def test_librechat_tool_history_title_and_new_conversation_in_one_server(http_state):
+    from pathlib import Path
+    body = json.loads((Path(__file__).parent / "fixtures/librechat_firecrawl.json").read_text())
+    server.state.model_name = body["model"]
+    conversation = await request_json("POST", "/v1/chat/completions", body)
+    assert conversation.status_code == 200
+    assert "[DONE]" in conversation.text
+    rendered = http_state.tokenizer.calls[-1][0]
+    assert len([m for m in rendered if m["role"] == "tool"]) == 8
+    for assistant in (m for m in rendered if m.get("tool_calls")):
+        assert len(assistant["tool_calls"]) == 2
+        assert all(isinstance(c["function"]["arguments"], dict) for c in assistant["tool_calls"])
+    for prompt in ("Generate a synthetic conversation title", "新しい会話です"):
+        short = await request_json("POST", "/v1/chat/completions", {
+            "model": body["model"], "messages": [{"role": "user", "content": prompt}],
+            "stream": False, "reasoning_effort": "xhigh"})
+        assert short.status_code == 200
+        assert short.json()["choices"][0]["message"]["content"] == "hello"
+    assert all(not job.cancelled for job in http_state.jobs)
+
+
+@pytest.mark.asyncio
 async def test_async_generator_close_clears_sync_queue_before_waking_consumers():
     class FakeSyncGenerator:
         def __init__(self):
