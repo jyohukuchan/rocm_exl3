@@ -101,6 +101,11 @@ completed 32 MTP1 tokens; board peaks were 31.549/31.197 GiB. This memory
 check used one active full-cache job; three 9K-context workers were exercised
 separately. [Dated verification](../../benchmarks/2026-10-02/opencode-batch3.json).
 
+If loading a large MoE block exceeds the startup worker wait, set
+`EXL3_TP_LOAD_TIMEOUT=600`. The local launcher uses this load-only allowance;
+inference dispatch waits and the RCCL timeout remain unchanged. A startup retry
+was required during this setup, followed by successful batch-three verification.
+
 ## API surface
 
 The main endpoints are:
