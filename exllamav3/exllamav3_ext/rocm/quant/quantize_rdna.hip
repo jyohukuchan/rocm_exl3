@@ -11,10 +11,11 @@
 //                                       is excluded from the ROCm build.
 //
 // Deviations, both marked RDNA below:
-//   - quantize_tiles_use_optimized() returns false: the dense specialisations
-//     (quantize_tiles_optimized.cuh) are CUDA-arch-tuned and not ported.
+//   - quantize_tiles_use_optimized() is a RDNA table, not the CUDA one: the dense
+//     specialisation is ported (quantize_tiles_optimized_rdna.hip.h) and enabled
+//     for K = 4 only; every other K keeps the plain kernel.
 //   - quantize_codebook() and its ATen event / allocator includes are dropped;
-//     it is only reachable from the optimized path.
+//     the only enabled optimized K (4) never reaches it.
 //
 // The failure the include swap fixes is in test_distribution_kernel, which calls
 // decode_3inst_f<0/1/2> from codebook.cuh -- the error lands on the kernel's
@@ -79,9 +80,9 @@ static const std::array<fp_quantize_tiles_kernel, 8> quantize_tiles_optimized_in
 
 
 // RDNA: quantize_codebook (the global LUT of the sm_120 dense specialisation) is not
-// built. It is only reached when quantize_tiles_use_optimized() is true, never the case
-// here (below), and it would pull ATen/cuda/CUDAEvent.h and c10's caching allocator
-// through the shim for nothing.
+// built. The launcher passes a null LUT; the only enabled optimized K (4, below) never
+// reads it, and it would pull ATen/cuda/CUDAEvent.h and c10's caching allocator through
+// the shim for nothing.
 
 
 // Which architectures run the dense specializations (quantize_tiles_optimized.cuh) for a given K
@@ -91,14 +92,20 @@ static const std::array<fp_quantize_tiles_kernel, 8> quantize_tiles_optimized_in
 // extension through quantize_tiles_scratch, so the layouts always agree
 bool quantize_tiles_use_optimized(int major, int minor, int K, int cb)
 {
-    // RDNA: always the original kernels. quantize_tiles_optimized.cuh is tuned for the
-    // sm_86 / sm_89 / sm_120 register files and (through quantize_tiles_kernel.cuh ->
-    // codebook.cuh) reaches inline PTX; it has no RDNA sibling. (major, minor) is the gfx
-    // number here anyway -- gfx1151 reports (11, 5) -- so the upstream table would misfire.
-    // EXL3_QT_OPTIMIZED is deliberately ignored: the "optimized" getters in comp_units_rdna
-    // return the plain kernel, whose scratch layout differs.
-    (void) major; (void) minor; (void) K; (void) cb;
-    return false;
+    // RDNA: the dense specialisation is ported as quantize_tiles_optimized_rdna.hip.h
+    // (include swap over the bit-exact RDNA codebook) and enabled for K = 4, which is
+    // the trunk/MTP bitrate and needs no global codebook LUT. Other K stay on the plain
+    // kernel: K = 6 wants quantize_codebook (CUDA-only), K = 2/3 carry the upstream
+    // initial-state fix (different results), and (major, minor) is the gfx number here
+    // anyway -- gfx1151 reports (11, 5) -- so the upstream table would misfire.
+    // EXL3_QT_OPTIMIZED overrides the choice for K = 4 only; forcing other K would
+    // desync the scratch layout from the plain getters in comp_units_rdna.
+    (void) major; (void) minor; (void) cb;
+    if (K != 4)
+        return false;
+    if (const char* env = std::getenv("EXL3_QT_OPTIMIZED"))
+        return env[0] == '1';
+    return true;
 }
 
 // Kernel and launch geometry for one (K, codebook, L) on the current device: which implementation,
@@ -214,7 +221,7 @@ void quantize_tiles
     }
     const int max_batch_size = (int) MIN(scratch_tiles, (int64_t) blocks_per_sm * DevCtx::instance().get_num_sms(device));
     TORCH_CHECK(max_batch_size > 0, "quantize_tiles scratch must hold at least one tile");
-    const half2* lut = nullptr;   // RDNA: never optimized, no codebook LUT (see quantize_tiles_use_optimized)
+    const half2* lut = nullptr;   // RDNA: the only optimized K (4) ignores the LUT; K = 6 stays plain
 
     for (int batch_i = 0; batch_i < num_tiles; batch_i += max_batch_size)
     {
