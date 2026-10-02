@@ -1,0 +1,24 @@
+{
+  "torch": "2.12.0+rocm7.2",
+  "hip": "7.2.53211",
+  "gpu": "gfx1201",
+  "gemm_shape": [
+    2048,
+    6144
+  ],
+  "gemm_seconds": {
+    "fp32": 0.025391500804107636,
+    "fp16_to_fp32": 0.0012518789037130774
+  },
+  "hessian_relative_frobenius_error": 2.6262332539772615e-06,
+  "wide_chunked_hessian_relative_error": 2.2783996200814727e-07,
+  "nonfinite_rows_excluded": 2,
+  "head_rows": 16,
+  "head_reference_rows": 5,
+  "head_capture_seconds": {
+    "False": 0.46080604288727045,
+    "True": 0.11054014298133552
+  },
+  "head_hessian_bitwise_equal": true,
+  "head_captured_tokens": 32768
+}

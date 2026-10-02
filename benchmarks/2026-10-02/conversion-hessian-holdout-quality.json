@@ -1,0 +1,173 @@
+{
+  "manifest_sha256": "7e8eafc5ccd8ff7f67adbe3e6394744db536a106592fc03fa4e775af3e0352f4",
+  "positions": 2723,
+  "metadata": [
+    {
+      "model": "/work/models/qwen3.5-2b-bf16",
+      "backend": "transformers",
+      "tokenizer_sha256": {
+        "tokenizer.json": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        "tokenizer_config.json": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+        "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+      },
+      "runtime": {
+        "repo_base_commit": "09ec3035f4b6e06ea5ffd44481728ba9fab4c799",
+        "engine_python_sha256": "7a4bcce53edd84f17b1a8e93d8e9dea8f517818890531fb24b2a41c3c16f2761",
+        "collector_sha256": "8c5ad49a616535134400e31a024987827104649a2ff29269340055975e84d43e",
+        "native_sha256": null
+      },
+      "parameter_dtype": "torch.bfloat16",
+      "manifest_sha256": "7e8eafc5ccd8ff7f67adbe3e6394744db536a106592fc03fa4e775af3e0352f4",
+      "torch": "2.12.0+rocm7.2",
+      "hip": "7.2.53211",
+      "gpu": "gfx1201",
+      "wall_collection_s": 6.754511164966971,
+      "weights_sha256": {
+        "model.safetensors-00001-of-00001.safetensors": "aa33250c4fc64891ddfaba3a314fd9542ea371843c387178b425fbcc5ed680b1"
+      }
+    },
+    {
+      "model": "/work/models/qwen3.5-2b-exl3-4bpw-r9700",
+      "backend": "exl3",
+      "tokenizer_sha256": {
+        "tokenizer.json": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        "tokenizer_config.json": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+        "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+      },
+      "runtime": {
+        "repo_base_commit": "09ec3035f4b6e06ea5ffd44481728ba9fab4c799",
+        "engine_python_sha256": "7a4bcce53edd84f17b1a8e93d8e9dea8f517818890531fb24b2a41c3c16f2761",
+        "collector_sha256": "8c5ad49a616535134400e31a024987827104649a2ff29269340055975e84d43e",
+        "native_sha256": "e93763d22f2704a42f39bc0164b3e6123e645d7a5743677f8d3e2bc24c61eda6"
+      },
+      "parameter_dtype": "EXL3 weights / engine FP16 activations",
+      "manifest_sha256": "7e8eafc5ccd8ff7f67adbe3e6394744db536a106592fc03fa4e775af3e0352f4",
+      "torch": "2.12.0+rocm7.2",
+      "hip": "7.2.53211",
+      "gpu": "gfx1201",
+      "wall_collection_s": 4.369401194155216,
+      "weights_sha256": {
+        "model.safetensors": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12"
+      }
+    },
+    {
+      "model": "/work/models/qwen3.5-2b-exl3-4bpw-h16-head",
+      "backend": "exl3",
+      "tokenizer_sha256": {
+        "tokenizer.json": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        "tokenizer_config.json": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+        "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+      },
+      "runtime": {
+        "repo_base_commit": "09ec3035f4b6e06ea5ffd44481728ba9fab4c799",
+        "engine_python_sha256": "7a4bcce53edd84f17b1a8e93d8e9dea8f517818890531fb24b2a41c3c16f2761",
+        "collector_sha256": "8c5ad49a616535134400e31a024987827104649a2ff29269340055975e84d43e",
+        "native_sha256": "e93763d22f2704a42f39bc0164b3e6123e645d7a5743677f8d3e2bc24c61eda6"
+      },
+      "parameter_dtype": "EXL3 weights / engine FP16 activations",
+      "manifest_sha256": "7e8eafc5ccd8ff7f67adbe3e6394744db536a106592fc03fa4e775af3e0352f4",
+      "torch": "2.12.0+rocm7.2",
+      "hip": "7.2.53211",
+      "gpu": "gfx1201",
+      "wall_collection_s": 4.446544896112755,
+      "weights_sha256": {
+        "model.safetensors": "2efab08c82331ae38b5dfe305ef066ede955abf75a34267dfd4828df0c286ec7"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "holdout-ja-narrative",
+      "positions": 457,
+      "bf16_to_baseline_kl": 0.03495659995628717,
+      "bf16_to_candidate_kl": 0.03912572024730526,
+      "baseline_to_candidate_kl": 0.04937669184464898,
+      "reference_nll": 3.4551758557252303,
+      "baseline_nll": 3.483272198170032,
+      "candidate_nll": 3.5100589590604585,
+      "baseline_candidate_top1_agreement": 0.8293216630196937
+    },
+    {
+      "id": "holdout-ja-observation",
+      "positions": 487,
+      "bf16_to_baseline_kl": 0.026698471884346077,
+      "bf16_to_candidate_kl": 0.02903206513101037,
+      "baseline_to_candidate_kl": 0.04339791398756194,
+      "reference_nll": 3.223912504505781,
+      "baseline_nll": 3.2542853339061844,
+      "candidate_nll": 3.289831864863784,
+      "baseline_candidate_top1_agreement": 0.8480492813141683
+    },
+    {
+      "id": "holdout-ja-conversation",
+      "positions": 492,
+      "bf16_to_baseline_kl": 0.027520973723242123,
+      "bf16_to_candidate_kl": 0.029995834603664135,
+      "baseline_to_candidate_kl": 0.04251701896705859,
+      "reference_nll": 3.4743268619408187,
+      "baseline_nll": 3.497432129603161,
+      "candidate_nll": 3.4878293177633535,
+      "baseline_candidate_top1_agreement": 0.8638211382113821
+    },
+    {
+      "id": "holdout-ja-debugging",
+      "positions": 505,
+      "bf16_to_baseline_kl": 0.027673578675676228,
+      "bf16_to_candidate_kl": 0.029391772197884327,
+      "baseline_to_candidate_kl": 0.04431081234760297,
+      "reference_nll": 3.4266861558233472,
+      "baseline_nll": 3.4655166437455214,
+      "candidate_nll": 3.4599170913834736,
+      "baseline_candidate_top1_agreement": 0.8752475247524752
+    },
+    {
+      "id": "holdout-code-python",
+      "positions": 334,
+      "bf16_to_baseline_kl": 0.011969124277933764,
+      "bf16_to_candidate_kl": 0.011623876442762944,
+      "baseline_to_candidate_kl": 0.01758047130061409,
+      "reference_nll": 1.0803511217581463,
+      "baseline_nll": 1.0974257981945872,
+      "candidate_nll": 1.0778615573459456,
+      "baseline_candidate_top1_agreement": 0.9491017964071856
+    },
+    {
+      "id": "holdout-code-typescript",
+      "positions": 448,
+      "bf16_to_baseline_kl": 0.01013516379194852,
+      "bf16_to_candidate_kl": 0.011013513387306734,
+      "baseline_to_candidate_kl": 0.017644075205264845,
+      "reference_nll": 0.9807509546623396,
+      "baseline_nll": 0.9863591634007749,
+      "candidate_nll": 0.9993031812745696,
+      "baseline_candidate_top1_agreement": 0.953125
+    }
+  ],
+  "means": {
+    "bf16_to_baseline_kl": 0.023882129701936913,
+    "bf16_to_candidate_kl": 0.02586716642899417,
+    "baseline_to_candidate_kl": 0.03700759785480842,
+    "reference_nll": 2.713595219567524,
+    "baseline_nll": 2.7381358747090707,
+    "candidate_nll": 2.7459452087154133,
+    "baseline_candidate_top1_agreement": 0.882482556004407
+  },
+  "screening_gate": {
+    "max_mean_kl_increase_nats": 0.0023882129701936917,
+    "actual_mean_kl_increase_nats": 0.001985036727057257,
+    "per_case_limit": "max(0.002 nats, 20% of baseline KL)",
+    "per_case_passed": {
+      "holdout-ja-narrative": true,
+      "holdout-ja-observation": true,
+      "holdout-ja-conversation": true,
+      "holdout-ja-debugging": true,
+      "holdout-code-python": true,
+      "holdout-code-typescript": true
+    },
+    "passed": true
+  },
+  "limitations": "Six short text/code cases; no vision, MTP, long-context or capability evaluation."
+}

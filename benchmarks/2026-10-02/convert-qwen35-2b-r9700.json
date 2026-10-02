@@ -42,7 +42,7 @@
   "notes": [
     "GPU utilization 100% on R9700 during quantization; single-device default (--devices 0).",
     "embed_tokens stored unquantized at 16bpw (tied embeddings, 248320x2048).",
-    "user+sys >> wall indicates calibration-forward/quantize overlap across threads; sys time suggests pinned-staging copies are significant.",
+    "Host user/sys totals include all threads and do not establish overlap or identify the bottleneck. Follow-up work adds direct capture/quantize/advance wall timers.",
     "Baseline for the R9700 quantization-speedup work; no V620 comparison run yet (V620 pair busy serving the live TP2 server)."
   ],
   "determinism_check": {
@@ -50,7 +50,7 @@
     "rerun_wall_s": 1212.8,
     "rerun_model_safetensors_sha256": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12",
     "matches_baseline": true,
-    "note": "Wall time varied 17m27s vs 20m13s (host CPU contention) but output is bit-identical. SHA256 gate established for bit-preserving optimization work."
+    "note": "Wall time varied 17m27s vs 20m13s; the cause of this variation was not isolated. Output is bit-identical. SHA256 gate established for bit-preserving optimization work."
   },
   "optimization_bit_identical": {
     "change": "Ported quantize_tiles_optimized.cuh to RDNA (include swap over the bit-exact amdgcn codebook); enabled for K=4 only in quantize_rdna.hip; comp_units_rdna k4 returns the dense kernel. Commit 8d848c8.",
@@ -70,7 +70,7 @@
       "optimized": 948.5,
       "speedup": 1.1
     },
-    "negative_result": "NT 512->1024 on the plain K=4 kernel (bit-safe by the rank tie order) measured ~3% SLOWER; reverted. Occupancy is not the plain kernel bottleneck.",
-    "remaining": "capture/advance forward is ~2/3 of wall time and its per-row GEMMs cannot be batched without changing Hessian bits; K=6 dense path needs a RDNA port of quantize_codebook (~15% of quantize time)."
+    "negative_result": "NT 512->1024 on the plain K=4 kernel (bit-safe by the rank tie order) measured ~3% slower and was reverted; this one geometry comparison does not establish the limiting resource.",
+    "remaining": "The original estimate that capture/advance comprised ~2/3 of wall time was not directly measured. K=6 head/vision still use the plain kernel; its dense path needs a ROCm codebook-LUT port. Further work measures phase times and evaluates FP16-input/FP32-output Hessian products against BF16 and the original EXL3 model."
   }
 }

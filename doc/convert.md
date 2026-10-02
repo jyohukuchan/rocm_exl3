@@ -45,6 +45,10 @@ does.
 
 #### Performance
 
+- **--hessian_fp16**: Use FP16 activation inputs with FP32 matrix-product output and FP32 accumulation when collecting calibration Hessians. This can substantially accelerate calibration on GPUs with fast FP16 matrix hardware. All calibration rows/tokens are retained. Rounding changes can change the quantized model; compare quality against an existing conversion before adopting it for a new model. Requires a PyTorch/GPU combination supporting `torch.mm(..., out_dtype=torch.float32)` for FP16 inputs (validated with PyTorch 2.12 / ROCm 7.2 on R9700). CPU and non-FP16 activations retain the original path. The additional FP32 product tensor is capped at 256 MiB. Disabled by default and saved in the conversion checkpoint's arguments.
+
+- **--fast_head_capture**: For a terminal Linear output head, collect its input Hessian without computing logits for rows that are not used as reference outputs. All rows still contribute to the Hessian; the first five reference rows retain the original forward pass. This only removes unused computation and can be combined with `--hessian_fp16`. Disabled by default and saved in checkpoint arguments. Both options also propagate to multi-GPU calibration workers; the dated R9700 validation uses one GPU.
+
 - **-d / --devices *list***: Comma-separated list of GPU device IDs to use during quantization. By default only the first visible device (device 0) is used. Adding more devices can speed up quantization if there is sufficient PCIe bandwidth between them. This does not affect memory usage on the first GPU, and very little memory is used on the others, since only the most compute intensive operation (trellis encoding) is distributed.
 
 - **-dr / --device_ratios *list***: Ratio as comma-separated list. Determines how the encoding workload is distributed when using multiple devices. This is useful if using GPUs with dissimilar compute performance, to prevent slower GPUs from becoming bottlenecks. Ratios are relative, i.e. `1,1,3` is the same ratio as `3,3,9`. Recommendation is to omit this argument; by default, ratios are autotuned to maximize usage across GPUs.

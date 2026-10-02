@@ -1,0 +1,171 @@
+{
+  "manifest_sha256": "c337102b9a42586057c40447cd2f99c6252aa705a8fae0b9aebe0c97105e50d1",
+  "positions": 895,
+  "metadata": [
+    {
+      "model": "/work/models/qwen3.5-2b-bf16",
+      "backend": "transformers",
+      "parameter_dtype": "torch.bfloat16",
+      "manifest_sha256": "c337102b9a42586057c40447cd2f99c6252aa705a8fae0b9aebe0c97105e50d1",
+      "torch": "2.12.0+rocm7.2",
+      "hip": "7.2.53211",
+      "gpu": "gfx1201",
+      "wall_collection_s": 75.64839145494625,
+      "weights_sha256": {
+        "model.safetensors-00001-of-00001.safetensors": "aa33250c4fc64891ddfaba3a314fd9542ea371843c387178b425fbcc5ed680b1"
+      },
+      "tokenizer_sha256": {
+        "tokenizer.json": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        "tokenizer_config.json": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+        "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+      },
+      "provenance_checked_after_collection": {
+        "tokenizer_files_equal_to_source": true,
+        "note": "Collection completed before runtime-fingerprint metadata was added. Tokenizer file hashes verified afterward."
+      }
+    },
+    {
+      "model": "/work/models/qwen3.5-2b-exl3-4bpw-r9700",
+      "backend": "exl3",
+      "parameter_dtype": "EXL3 weights / engine FP16 activations",
+      "manifest_sha256": "c337102b9a42586057c40447cd2f99c6252aa705a8fae0b9aebe0c97105e50d1",
+      "torch": "2.12.0+rocm7.2",
+      "hip": "7.2.53211",
+      "gpu": "gfx1201",
+      "wall_collection_s": 3.8969628231134266,
+      "weights_sha256": {
+        "model.safetensors": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12"
+      },
+      "tokenizer_sha256": {
+        "tokenizer.json": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        "tokenizer_config.json": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+        "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+      },
+      "provenance_checked_after_collection": {
+        "tokenizer_files_equal_to_source": true,
+        "note": "Collection completed before runtime-fingerprint metadata was added. Tokenizer file hashes verified afterward.",
+        "native_sha256": "e93763d22f2704a42f39bc0164b3e6123e645d7a5743677f8d3e2bc24c61eda6",
+        "native_path_from_invocation": "/work/lib-r9700-opt/exllamav3_ext.cpython-312-x86_64-linux-gnu.so"
+      }
+    },
+    {
+      "model": "/work/models/qwen3.5-2b-exl3-4bpw-h16-head",
+      "backend": "exl3",
+      "tokenizer_sha256": {
+        "tokenizer.json": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        "tokenizer_config.json": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+        "vocab.json": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "merges.txt": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d"
+      },
+      "runtime": {
+        "repo_base_commit": "09ec3035f4b6e06ea5ffd44481728ba9fab4c799",
+        "engine_python_sha256": "7a4bcce53edd84f17b1a8e93d8e9dea8f517818890531fb24b2a41c3c16f2761",
+        "collector_sha256": "c39c197397ad534dff1693ab695abef6573c232b8096431b1040c1d87a7b3609",
+        "native_sha256": "e93763d22f2704a42f39bc0164b3e6123e645d7a5743677f8d3e2bc24c61eda6"
+      },
+      "parameter_dtype": "EXL3 weights / engine FP16 activations",
+      "manifest_sha256": "c337102b9a42586057c40447cd2f99c6252aa705a8fae0b9aebe0c97105e50d1",
+      "torch": "2.12.0+rocm7.2",
+      "hip": "7.2.53211",
+      "gpu": "gfx1201",
+      "wall_collection_s": 1.6151753419544548,
+      "weights_sha256": {
+        "model.safetensors": "2efab08c82331ae38b5dfe305ef066ede955abf75a34267dfd4828df0c286ec7"
+      }
+    }
+  ],
+  "cases": [
+    {
+      "id": "ja-cache",
+      "positions": 116,
+      "bf16_to_baseline_kl": 0.021305175059971985,
+      "bf16_to_candidate_kl": 0.02740947149833473,
+      "baseline_to_candidate_kl": 0.03989888072748895,
+      "reference_nll": 3.588980158360854,
+      "baseline_nll": 3.618357558724805,
+      "candidate_nll": 3.5973067647231667,
+      "baseline_candidate_top1_agreement": 0.896551724137931
+    },
+    {
+      "id": "ja-observation",
+      "positions": 124,
+      "bf16_to_baseline_kl": 0.025500255861194126,
+      "bf16_to_candidate_kl": 0.022674625493585693,
+      "baseline_to_candidate_kl": 0.03451769397007756,
+      "reference_nll": 3.3869151785382683,
+      "baseline_nll": 3.42898660649553,
+      "candidate_nll": 3.434638084847255,
+      "baseline_candidate_top1_agreement": 0.9032258064516129
+    },
+    {
+      "id": "en-concurrency",
+      "positions": 142,
+      "bf16_to_baseline_kl": 0.019563426587839598,
+      "bf16_to_candidate_kl": 0.017951918615216302,
+      "baseline_to_candidate_kl": 0.029707703873827637,
+      "reference_nll": 3.2968179100842674,
+      "baseline_nll": 3.327521800050027,
+      "candidate_nll": 3.328568181718219,
+      "baseline_candidate_top1_agreement": 0.9014084507042254
+    },
+    {
+      "id": "en-quantization",
+      "positions": 131,
+      "bf16_to_baseline_kl": 0.017871046191596178,
+      "bf16_to_candidate_kl": 0.020149160294639146,
+      "baseline_to_candidate_kl": 0.02761801535404464,
+      "reference_nll": 4.090320564202155,
+      "baseline_nll": 4.110971372541362,
+      "candidate_nll": 4.112088404422542,
+      "baseline_candidate_top1_agreement": 0.9236641221374046
+    },
+    {
+      "id": "code-python",
+      "positions": 191,
+      "bf16_to_baseline_kl": 0.011613060784823671,
+      "bf16_to_candidate_kl": 0.00907599024868096,
+      "baseline_to_candidate_kl": 0.014671569461016092,
+      "reference_nll": 0.6633583978746391,
+      "baseline_nll": 0.6807026597145588,
+      "candidate_nll": 0.669251964001482,
+      "baseline_candidate_top1_agreement": 0.9581151832460733
+    },
+    {
+      "id": "code-typescript",
+      "positions": 191,
+      "bf16_to_baseline_kl": 0.010033732373841127,
+      "bf16_to_candidate_kl": 0.009759998633860437,
+      "baseline_to_candidate_kl": 0.017079680159875116,
+      "reference_nll": 0.600182055010512,
+      "baseline_nll": 0.6169183450690002,
+      "candidate_nll": 0.6278629324094421,
+      "baseline_candidate_top1_agreement": 0.9581151832460733
+    }
+  ],
+  "means": {
+    "bf16_to_baseline_kl": 0.01663361246214762,
+    "bf16_to_candidate_kl": 0.01651121628327967,
+    "baseline_to_candidate_kl": 0.025485370788527296,
+    "reference_nll": 2.32582742363365,
+    "baseline_nll": 2.350631031666151,
+    "candidate_nll": 2.3489071678511437,
+    "baseline_candidate_top1_agreement": 0.9284916201117318
+  },
+  "screening_gate": {
+    "max_mean_kl_increase_nats": 0.0016633612462147623,
+    "actual_mean_kl_increase_nats": -0.000122396178867952,
+    "per_case_limit": "max(0.002 nats, 20% of baseline KL)",
+    "per_case_passed": {
+      "ja-cache": false,
+      "ja-observation": true,
+      "en-concurrency": true,
+      "en-quantization": true,
+      "code-python": true,
+      "code-typescript": true
+    },
+    "passed": false
+  },
+  "limitations": "Six short text/code cases; no vision, MTP, long-context or capability evaluation."
+}

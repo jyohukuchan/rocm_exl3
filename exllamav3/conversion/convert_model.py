@@ -92,6 +92,10 @@ parser.add_argument("-img", "--image_dump", action = "store_true", help = "Save 
 parser.add_argument("-cb", "--codebook", type = str, default = "mul1", help = "Codebook: mul1 (default), mcg or 3inst")
 parser.add_argument("-pm", "--parallel_mode", action = "store_true", help = "Deprecated (no-op): parallel mode is now the default; layers with fewer tensors than devices fall back to tile splitting")
 parser.add_argument("--max_module", type = int, help = "End quantization after this many modules, includes embedding and norm layers (for debug purposes)", default = None)
+parser.add_argument("--fast_head_capture", action="store_true", default=None,
+                    help="Skip unused terminal-head logits during input-Hessian capture")
+parser.add_argument("--hessian_fp16", action="store_true", default=None,
+                    help="Use FP16 activation products with FP32 output for calibration Hessians; can change weights")
 
 group = parser.add_mutually_exclusive_group()
 group.add_argument("--out_scales", type = str, default = "always", help = "Enable out channel scales (always/never/auto, default: always)")
@@ -261,6 +265,8 @@ def prepare(args) -> (dict, dict, bool, str):
         ("cal_data", False, ""),
         ("cal_rows", False, 250),
         ("cal_cols", False, 2048),
+        ("fast_head_capture", False, False),
+        ("hessian_fp16", False, False),
         ("checkpoint_interval", True, None),
         ("last_checkpoint_index", True, -1),
         ("devices", True, None),
@@ -782,6 +788,8 @@ def capture_module_parallel(
     current_slice,
     title,
     bad_rows,
+    fast_head=False,
+    hessian_fp16=False,
 ):
     """
     Run the Hessian-capture forward pass with calibration rows split across devices, each device forwarding its
@@ -807,6 +815,8 @@ def capture_module_parallel(
                 params = {
                     "attn_mode": "flash_attn_nc",
                     "capture": captures[t_idx],
+                    "hessian_fp16": hessian_fp16,
+                    "capture_only_input": fast_head and i >= num_ref_states,
                     "activate_all_experts": model.calibration_all_experts,
                     "input_ids": original_input_ids[i],
                 }
@@ -1150,6 +1160,7 @@ def main(args, job_state):
             sys.exit()
 
         # Collect output tensors
+        phase_times = {"capture": 0.0, "quantize": 0.0, "advance": 0.0}
         q_tensors = {}
         capture_H = None
         ref_states = {}
@@ -1190,6 +1201,9 @@ def main(args, job_state):
                 # are activated to ensure all down projections capture at least some calibration data. When the
                 # state is advanced later, only selected experts will be used.
                 if state is not None:
+                    capture_start = time.monotonic()
+                    fast_head = (args["fast_head_capture"] and isinstance(module, Linear)
+                                 and idx == len(model.modules) - 1)
                     capture_replicas = None
                     if parallel_calib and not module.caps.get("prefer_cpu"):
                         capture_replicas = load_parallel_calib_modules(
@@ -1208,6 +1222,8 @@ def main(args, job_state):
                             current_slice,
                             f" -- Capturing: {module.key}" + slice_str,
                             bad_rows,
+                            fast_head=fast_head,
+                            hessian_fp16=args["hessian_fp16"],
                         )
                         for rep in capture_replicas:
                             rep.unload()
@@ -1223,11 +1239,14 @@ def main(args, job_state):
                                 params = {
                                     "attn_mode": "flash_attn_nc",
                                     "capture": capture_H,
+                                    "hessian_fp16": args["hessian_fp16"],
                                     "activate_all_experts": model.calibration_all_experts,
                                     "input_ids": original_input_ids[i],
                                 }
                                 if slicing:
                                      params["q_mlp_slice"] = current_slice
+                                if fast_head and i >= num_ref_states:
+                                    params["capture_only_input"] = True
                                 get_preserve(i, params)
                                 rs = module.prepare_for_device(state[i], params)
                                 rs = module.forward(rs, params)
@@ -1251,6 +1270,7 @@ def main(args, job_state):
                                         bad_rows.add(i)
                                         print(f" !! Non-finite reference state in calibration row {i}, excluding row")
                                 rs = None
+                    phase_times["capture"] += time.monotonic() - capture_start
                     print(f" -- Captured: {module.key}" + slice_str, flush = True)
 
                     # More feedback
@@ -1290,6 +1310,7 @@ def main(args, job_state):
             # Quantize: one linear per device in parallel when the layer has enough
             # tensors to occupy every device, else tile-split each tensor across devices
             # (single large tensors, e.g. lm_head)
+            quant_start = time.monotonic()
             if (
                 len(linears) >= len(devices) and
                 all(strategy[l.key] <= 8 for l in linears)
@@ -1297,6 +1318,7 @@ def main(args, job_state):
                 quantize_linears_parallel(args, linears, config, strategy, idx, devices, eff_ratios("quant_thread"), capture_H, state)
             else:
                 quantize_linears_single(args, linears, config, strategy, idx, devices, eff_ratios("quant_tiles"), capture_H, state)
+            phase_times["quantize"] += time.monotonic() - quant_start
 
             # Collect converted module tensors
             for m in module:
@@ -1334,6 +1356,7 @@ def main(args, job_state):
         error = 0
         cos_error = 0
         sqnr_ = 0
+        advance_start = time.monotonic()
         if state is not None:
             if advance_replicas is not None:
                 error, cos_error, sqnr_, num_measured = advance_state_parallel(
@@ -1393,6 +1416,8 @@ def main(args, job_state):
                 cos_error /= n
                 sqnr_ /= n
                 check_bad_rows(bad_rows, len(state))
+        phase_times["advance"] = time.monotonic() - advance_start
+        print(" -- Phase times: " + ", ".join(f"{k}={v:.3f}s" for k, v in phase_times.items()), flush=True)
 
         # Feedback after module. Trim first so the reported RSS reflects what the job actually
         # retains, not what the allocator happens to be holding

@@ -1,0 +1,382 @@
+{
+  "date": "2026-10-02",
+  "hardware": "1x R9700 (gfx1201)",
+  "base_commit": "09ec303",
+  "conversion_command": "python convert.py -i /work/models/qwen3.5-2b-bf16 -w /work/runs/quant-opt-20261002/full-h16-head -o /work/models/qwen3.5-2b-exl3-4bpw-h16-head -b 4 --hessian_fp16 --fast_head_capture",
+  "args": {
+    "work_dir": "/work/runs/quant-opt-20261002/full-h16-head",
+    "in_dir": "/work/models/qwen3.5-2b-bf16",
+    "out_dir": "/work/models/qwen3.5-2b-exl3-4bpw-h16-head",
+    "shard_size": 8192,
+    "bits": 4.0,
+    "recipe": "",
+    "head_bits": 6,
+    "mtp_bits": 4,
+    "vision_bits": 0,
+    "hq": false,
+    "ngram_bits": 0,
+    "ngram_file": "",
+    "cal_data": "",
+    "cal_rows": 250,
+    "cal_cols": 2048,
+    "fast_head_capture": true,
+    "hessian_fp16": true,
+    "checkpoint_interval": 120,
+    "last_checkpoint_index": -1,
+    "devices": "0",
+    "device_ratios": "",
+    "codebook": "mul1",
+    "image_dump": false,
+    "verbose": false,
+    "apply_out_scales": true,
+    "max_module": null
+  },
+  "historical_wall_s": {
+    "plain_K4": 1046.6,
+    "plain_K4_repeat": 1212.8,
+    "dense_K4": 948.5
+  },
+  "candidate": {
+    "wall_s": 773.044,
+    "modules": [
+      {
+        "module": "model.language_model.embed_tokens",
+        "capture_s": 0.0,
+        "quantize_s": 0.0,
+        "advance_s": 1.125,
+        "module_wall_s": 2.2
+      },
+      {
+        "module": "model.language_model.layers.0",
+        "capture_s": 3.56,
+        "quantize_s": 11.528,
+        "advance_s": 3.414,
+        "module_wall_s": 20.73
+      },
+      {
+        "module": "model.language_model.layers.1",
+        "capture_s": 2.366,
+        "quantize_s": 7.811,
+        "advance_s": 2.114,
+        "module_wall_s": 14.61
+      },
+      {
+        "module": "model.language_model.layers.2",
+        "capture_s": 2.32,
+        "quantize_s": 7.809,
+        "advance_s": 1.932,
+        "module_wall_s": 14.59
+      },
+      {
+        "module": "model.language_model.layers.3",
+        "capture_s": 2.144,
+        "quantize_s": 9.01,
+        "advance_s": 2.521,
+        "module_wall_s": 16.97
+      },
+      {
+        "module": "model.language_model.layers.4",
+        "capture_s": 2.331,
+        "quantize_s": 7.709,
+        "advance_s": 2.048,
+        "module_wall_s": 15.61
+      },
+      {
+        "module": "model.language_model.layers.5",
+        "capture_s": 2.336,
+        "quantize_s": 7.808,
+        "advance_s": 1.94,
+        "module_wall_s": 15.54
+      },
+      {
+        "module": "model.language_model.layers.6",
+        "capture_s": 2.322,
+        "quantize_s": 7.709,
+        "advance_s": 1.887,
+        "module_wall_s": 15.34
+      },
+      {
+        "module": "model.language_model.layers.7",
+        "capture_s": 1.996,
+        "quantize_s": 7.007,
+        "advance_s": 1.623,
+        "module_wall_s": 11.76
+      },
+      {
+        "module": "model.language_model.layers.8",
+        "capture_s": 3.314,
+        "quantize_s": 7.909,
+        "advance_s": 1.915,
+        "module_wall_s": 16.7
+      },
+      {
+        "module": "model.language_model.layers.9",
+        "capture_s": 2.461,
+        "quantize_s": 8.009,
+        "advance_s": 2.0,
+        "module_wall_s": 16.28
+      },
+      {
+        "module": "model.language_model.layers.10",
+        "capture_s": 2.398,
+        "quantize_s": 7.709,
+        "advance_s": 1.91,
+        "module_wall_s": 13.33
+      },
+      {
+        "module": "model.language_model.layers.11",
+        "capture_s": 2.104,
+        "quantize_s": 7.011,
+        "advance_s": 1.551,
+        "module_wall_s": 12.27
+      },
+      {
+        "module": "model.language_model.layers.12",
+        "capture_s": 2.55,
+        "quantize_s": 7.714,
+        "advance_s": 1.889,
+        "module_wall_s": 15.86
+      },
+      {
+        "module": "model.language_model.layers.13",
+        "capture_s": 2.352,
+        "quantize_s": 7.711,
+        "advance_s": 1.869,
+        "module_wall_s": 15.8
+      },
+      {
+        "module": "model.language_model.layers.14",
+        "capture_s": 2.34,
+        "quantize_s": 7.712,
+        "advance_s": 1.919,
+        "module_wall_s": 15.74
+      },
+      {
+        "module": "model.language_model.layers.15",
+        "capture_s": 2.001,
+        "quantize_s": 7.017,
+        "advance_s": 1.535,
+        "module_wall_s": 14.31
+      },
+      {
+        "module": "model.language_model.layers.16",
+        "capture_s": 2.837,
+        "quantize_s": 7.815,
+        "advance_s": 1.859,
+        "module_wall_s": 13.64
+      },
+      {
+        "module": "model.language_model.layers.17",
+        "capture_s": 2.393,
+        "quantize_s": 7.709,
+        "advance_s": 1.869,
+        "module_wall_s": 15.9
+      },
+      {
+        "module": "model.language_model.layers.18",
+        "capture_s": 2.416,
+        "quantize_s": 7.708,
+        "advance_s": 1.884,
+        "module_wall_s": 15.71
+      },
+      {
+        "module": "model.language_model.layers.19",
+        "capture_s": 2.1,
+        "quantize_s": 7.008,
+        "advance_s": 1.537,
+        "module_wall_s": 14.43
+      },
+      {
+        "module": "model.language_model.layers.20",
+        "capture_s": 2.341,
+        "quantize_s": 7.71,
+        "advance_s": 1.917,
+        "module_wall_s": 15.75
+      },
+      {
+        "module": "model.language_model.layers.21",
+        "capture_s": 2.372,
+        "quantize_s": 7.708,
+        "advance_s": 1.846,
+        "module_wall_s": 15.71
+      },
+      {
+        "module": "model.language_model.layers.22",
+        "capture_s": 2.317,
+        "quantize_s": 7.708,
+        "advance_s": 1.856,
+        "module_wall_s": 15.54
+      },
+      {
+        "module": "model.language_model.layers.23",
+        "capture_s": 1.991,
+        "quantize_s": 7.109,
+        "advance_s": 1.531,
+        "module_wall_s": 14.36
+      },
+      {
+        "module": "model.language_model.norm",
+        "capture_s": 0.0,
+        "quantize_s": 0.0,
+        "advance_s": 0.526,
+        "module_wall_s": 3.8
+      },
+      {
+        "module": "lm_head",
+        "capture_s": 2.443,
+        "quantize_s": 126.111,
+        "advance_s": 31.766,
+        "module_wall_s": 163.7
+      }
+    ]
+  },
+  "baseline_partial_repeat": {
+    "wall_s": 104.06,
+    "modules": [
+      {
+        "module": "model.language_model.embed_tokens",
+        "capture_s": 0.0,
+        "quantize_s": 0.0,
+        "advance_s": 0.616,
+        "module_wall_s": 1.74
+      },
+      {
+        "module": "model.language_model.layers.0",
+        "capture_s": 11.75,
+        "quantize_s": 10.111,
+        "advance_s": 3.332,
+        "module_wall_s": 27.45
+      },
+      {
+        "module": "model.language_model.layers.1",
+        "capture_s": 9.163,
+        "quantize_s": 7.808,
+        "advance_s": 3.889,
+        "module_wall_s": 22.99
+      },
+      {
+        "module": "model.language_model.layers.2",
+        "capture_s": 9.108,
+        "quantize_s": 7.813,
+        "advance_s": 1.926,
+        "module_wall_s": 21.07
+      },
+      {
+        "module": "model.language_model.layers.3",
+        "capture_s": 9.893,
+        "quantize_s": 7.708,
+        "advance_s": 2.479,
+        "module_wall_s": 23.3
+      }
+    ]
+  },
+  "primary_quality": "conversion-hessian-primary-quality.json",
+  "capture_probe": "conversion-hessian-capture-probe.json",
+  "determinism": {
+    "default_partial_vs_original": [
+      {
+        "module": "model.language_model.embed_tokens.safetensors",
+        "match": true
+      },
+      {
+        "module": "model.language_model.layers.0.safetensors",
+        "match": true
+      },
+      {
+        "module": "model.language_model.layers.1.safetensors",
+        "match": true
+      },
+      {
+        "module": "model.language_model.layers.2.safetensors",
+        "match": true
+      },
+      {
+        "module": "model.language_model.layers.3.safetensors",
+        "match": true
+      }
+    ],
+    "h16_partial_vs_full": [
+      {
+        "module": "model.language_model.embed_tokens.safetensors",
+        "match": true
+      },
+      {
+        "module": "model.language_model.layers.0.safetensors",
+        "match": true
+      },
+      {
+        "module": "model.language_model.layers.1.safetensors",
+        "match": true
+      },
+      {
+        "module": "model.language_model.layers.2.safetensors",
+        "match": true
+      },
+      {
+        "module": "model.language_model.layers.3.safetensors",
+        "match": true
+      }
+    ]
+  },
+  "rejected_batching": {
+    "batch1_max_module3_s": 79.211,
+    "batch2_cpu_cat_max_module3_s": 88.362,
+    "batch2_gpu_cat_max_module4_s": 115.87,
+    "note": "Batching still slowed capture and advance after GPU concatenation; implementation not retained. max_module differs between early and later screens, so their wall totals are not a like-for-like comparison."
+  },
+  "limitations": [
+    "One full optimized conversion; historical end-to-end comparisons include run-to-run variation. Matched partial timing and isolated GEMM probe support the mechanism.",
+    "Primary mean KLD improves, but ja-cache case fails the predefined per-case screen. No default enablement or universal quality-equivalence claim."
+  ],
+  "holdout_quality": "conversion-hessian-holdout-quality.json",
+  "combined_quality": {
+    "positions": 3618,
+    "means": {
+      "bf16_to_baseline_kl": 0.022089033259258244,
+      "bf16_to_candidate_kl": 0.023552745373047662,
+      "baseline_to_candidate_kl": 0.0341572956921988,
+      "reference_nll": 2.6176714557862035,
+      "baseline_nll": 2.6422771586992826,
+      "candidate_nll": 2.647728225140642,
+      "baseline_candidate_top1_agreement": 0.8938640132669984
+    },
+    "groups": {
+      "japanese": {
+        "positions": 2181,
+        "bf16_to_baseline_kl": 0.02848520418362963,
+        "bf16_to_candidate_kl": 0.031000008120938262,
+        "baseline_to_candidate_kl": 0.04397236591882527,
+        "reference_nll": 3.404495763885843,
+        "baseline_nll": 3.435322641471702,
+        "candidate_nll": 3.444611611736114,
+        "baseline_candidate_top1_agreement": 0.859697386519945
+      },
+      "english": {
+        "positions": 273,
+        "bf16_to_baseline_kl": 0.01875133196546638,
+        "bf16_to_candidate_kl": 0.019006272681166458,
+        "baseline_to_candidate_kl": 0.028704959565799895,
+        "reference_nll": 3.6775829199357077,
+        "baseline_nll": 3.7034628036997153,
+        "candidate_nll": 3.7045430871184615,
+        "baseline_candidate_top1_agreement": 0.9120879120879121
+      },
+      "code": {
+        "positions": 1164,
+        "bf16_to_baseline_kl": 0.010887266650281606,
+        "bf16_to_candidate_kl": 0.010665036603059834,
+        "baseline_to_candidate_kl": 0.01704545685906699,
+        "reference_nll": 0.8948023443788771,
+        "baseline_nll": 0.9074525203730233,
+        "candidate_nll": 0.906737569225979,
+        "baseline_candidate_top1_agreement": 0.9536082474226805
+      }
+    },
+    "mean_kl_relative_change_pct": 6.626419982304688,
+    "nll_relative_change_pct": 0.2063018417054696,
+    "primary_gate_passed": false,
+    "holdout_gate_passed": true,
+    "note": "Held-out cases were created after the primary ja-cache failure to characterize it; the candidate was not retuned. Combined means do not supersede the failed primary per-case screen."
+  },
+  "adoption": "Opt-in experimental H16 option; no default enablement, primary per-case failure retained."
+}

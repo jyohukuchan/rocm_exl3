@@ -32,9 +32,10 @@ branch.
 | Engram single-owner CPU-RAM table + optional `EXL3_NGRAM_MLOCK=1` | 2× V620, TP2 | **Validated** — one 32,640,156,672-byte table, one owning rank, mlock/mincore residency audits | [doc/qwen38_v620_tp_config.json](doc/qwen38_v620_tp_config.json) |
 | K5/V4 quantized KV cache (QSA layers) | 2× V620, TP2 | **Validated** — default for the TP2 measurements; recurrent states keep their original FP32/BF16 types | [doc/v620_tp_decode_optimization.md](doc/v620_tp_decode_optimization.md) |
 | Max generated context | 2× V620, TP2, **batch 1 only** | 261,632 input + 256 output completed with fixed MTP4. **Batch 2–4 maximums are not established** — long-context tests were deferred by the operator | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md) |
-| R9700 (gfx1201 / RDNA4) | 1× R9700 | **Tested only through documented comparison adapters/workarounds** (64 KiB LDS build, MLP range-balance adapter, MoE reconstruct adapter). Not general RDNA4 support | [doc/r9700_vs_v620.md](doc/r9700_vs_v620.md) |
+| R9700 inference comparisons (gfx1201 / RDNA4) | 1× R9700 | **Tested through documented comparison adapters/workarounds** (64 KiB LDS build, MLP range-balance adapter, MoE reconstruct adapter). Not general RDNA4 support | [doc/r9700_vs_v620.md](doc/r9700_vs_v620.md) |
+| Qwen3.5-2B → EXL3 4bpw conversion | 1× R9700 | Dense K4 is bit-identical to the original converter. Optional FP16-input Hessians + head capture reduce the measured full conversion from 948.5 to 773.0 s; **H16 changes weights and fails one primary per-case quality screen**, so it remains opt-in | [2026-10-02 conversion study](doc/r9700_conversion_optimization.md) |
 | RDNA3 / RDNA3.5 (`gfx1100`…`gfx1151`) | — | **Inherited from the parent fork's gfx1151 validation; not independently rerun on this branch** after the TP / Qwen3.8 / kernel changes below. The parent's claims stand as the parent's, not ours | [doc/fork_changes.md](doc/fork_changes.md) |
-| CUDA path | NVIDIA | Upstream code; untouched by design except one shared-header race fix (see fork changes). Not tested here | — |
+| CUDA path | NVIDIA | Upstream native kernels retained; shared Python changes are not tested on NVIDIA here | — |
 
 ### What changed relative to the fork parent
 
@@ -153,7 +154,9 @@ batch 2–4 long-context maximums are not established.
   one locked Engram RAM table at a 32,768-token API context. See the
   [server guide](rocm_tools/exl3_server/README.md).
 - Vision/multimodal remains untested on ROCm (inherited status).
-- Full target-model quantization is not validated here. A limited official-source MTP
+- Full Qwen3.8-Flash-Next target-model quantization is not validated here. Smaller
+  Qwen3.5-2B full conversions on R9700 are covered by the
+  [conversion study](doc/r9700_conversion_optimization.md). A limited official-source MTP
   3/5-bit quantization comparison was performed on V620; see [the precision study](doc/qwen38_v620_mtp_precision.md). The main inference benchmarks use publicly distributed EXL3 checkpoints. The MIT licence covers the code, **not** the model
   weights.
 
@@ -174,7 +177,9 @@ batch 2–4 long-context maximums are not established.
   prefill).
 - **The batched expert-reconstruct tier is off by default** (`EXL3_ROCM_BATCH_RECON=1`).
   Batched recurrent checkpoint pruning is also opt-in (`EXL3_BATCH_RECURRENT_PRUNE=1`).
-- **fp16-accumulate `hgemm` and the sm_120 quantizer specialisations are CUDA-only.**
+- **fp16-accumulate `hgemm` remains CUDA-only.** The dense K4 quantizer now has a
+  bit-identical RDNA port; the other optimized quantizer specialisations are not
+  generally enabled on ROCm.
 - **The int8-activation GEMV is not ported** (disabled stub).
 - **HIP graph capture is off by default** (`EXL3_ROCM_HIP_GRAPHS=1` re-enables; known
   corruption/hang on ROCm 7.2.x).
@@ -596,6 +601,8 @@ of the output model.
 
 See the [conversion guide](doc/convert.md) for more information, or the 
 [self-calibration guide](doc/optimize.md). 
+R9700 timing, optional Hessian acceleration, and quality caveats are in the
+[2026-10-02 conversion study](doc/r9700_conversion_optimization.md).
 
 ## EXL3 quantization
 
