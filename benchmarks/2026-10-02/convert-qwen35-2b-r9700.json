@@ -1,0 +1,46 @@
+{
+  "date": "2026-10-02",
+  "task": "EXL3 conversion baseline: Qwen3.5-2B-BF16 -> EXL3 4bpw on 1x R9700",
+  "hardware": "1x Radeon AI PRO R9700 (gfx1201), container rocm-exl3-r9700",
+  "environment": {
+    "torch": "2.12.0+rocm7.2",
+    "hip": "7.2.53211",
+    "pytorch_rocm_arch": "gfx1201",
+    "extension": "/work/lib-r9700/exllamav3_ext.cpython-312-x86_64-linux-gnu.so (prebuilt, PYTHONPATH-shadowed)",
+    "rocm_sdk": "/opt/rocm/core-7.14"
+  },
+  "input": {
+    "model": "Qwen3.5-2B-BF16 (Qwen3_5ForConditionalGeneration, hybrid linear+full attention, MTP1, vision tower)",
+    "path_host": "~/datapool/rocm-exl3-rdna2/models/qwen3.5-2b-bf16",
+    "size_bytes": 4563402414
+  },
+  "command": "python convert.py -i /work/models/qwen3.5-2b-bf16 -w /work/build-qwen35-2b-4bpw-r9700 -o /work/models/qwen3.5-2b-exl3-4bpw-r9700 -b 4",
+  "devices": [0],
+  "result": {
+    "wall_s": 1046.6,
+    "user_s": 1638.7,
+    "sys_s": 513.5,
+    "start_epoch": 1790916502,
+    "end_epoch": 1790917549,
+    "final_bpw_excluding_head": 4.0,
+    "quantized_tensors": 362,
+    "output_dir_host": "~/datapool/rocm-exl3-rdna2/models/qwen3.5-2b-exl3-4bpw-r9700",
+    "output_model_safetensors_sha256": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12",
+    "output_size_bytes": 2526891043
+  },
+  "phase_breakdown_timed_module_blocks_s": {
+    "text_layers_24": 724.4,
+    "embed_tokens_plus_lm_head": 159.2,
+    "vision_blocks_27": 73.7,
+    "mtp_3_modules": 13.9,
+    "other": 2.7,
+    "timed_total": 973.8,
+    "unaccounted_startup_compile_write": 72.8
+  },
+  "notes": [
+    "GPU utilization 100% on R9700 during quantization; single-device default (--devices 0).",
+    "embed_tokens stored unquantized at 16bpw (tied embeddings, 248320x2048).",
+    "user+sys >> wall indicates calibration-forward/quantize overlap across threads; sys time suggests pinned-staging copies are significant.",
+    "Baseline for the R9700 quantization-speedup work; no V620 comparison run yet (V620 pair busy serving the live TP2 server)."
+  ]
+}
