@@ -43,11 +43,23 @@ does.
 
 - **-r / --resume**: Resume an interrupted job pointed to by **-w / --work_dir** from the latest checkpoint. If resuming a job, all other arguments such as input and output directories, bitrate etc. are restored from the old job, though some can be overridden. Note that resuming is now explicit, reversing the behavior from ExLlamaV2.
 
+  The saved fast head capture setting is preserved on resume unless it is
+  explicitly overridden with `--fast_head_capture` or
+  `--no_fast_head_capture`. Checkpoints from the historical FP16-Hessian
+  implementation that record `hessian_fp16=true` must be started fresh;
+  they cannot be resumed by the current converter. A legacy
+  `hessian_fp16=false` checkpoint field is discarded.
+
 #### Performance
 
-- **--hessian_fp16**: Use FP16 activation inputs with FP32 matrix-product output and FP32 accumulation when collecting calibration Hessians. This can substantially accelerate calibration on GPUs with fast FP16 matrix hardware. All calibration rows/tokens are retained. Rounding changes can change the quantized model; compare quality against an existing conversion before adopting it for a new model. Requires a PyTorch/GPU combination supporting `torch.mm(..., out_dtype=torch.float32)` for FP16 inputs (validated with PyTorch 2.12 / ROCm 7.2 on R9700). CPU and non-FP16 activations retain the original path. The additional FP32 product tensor is capped at 256 MiB. Disabled by default and saved in the conversion checkpoint's arguments.
+Conversions use FP32 Hessians with dense K4 and fast head capture enabled by
+default. No optimization flags are needed. The R9700 default-setting checks
+reproduced the reference Qwen3.5-2B module/model hashes; see
+[the 2026-10-02 verification](../benchmarks/2026-10-02/conversion-defaults.json).
 
-- **--fast_head_capture**: For a terminal Linear output head, collect its input Hessian without computing logits for rows that are not used as reference outputs. All rows still contribute to the Hessian; the first five reference rows retain the original forward pass. This only removes unused computation and can be combined with `--hessian_fp16`. Disabled by default and saved in checkpoint arguments. Both options also propagate to multi-GPU calibration workers; the dated R9700 validation uses one GPU.
+- **--fast_head_capture**: Compatibility alias that explicitly enables the default fast capture for a terminal Linear output head. It collects the input Hessian without computing logits for rows that are not used as reference outputs. All rows still contribute to the Hessian; the first five reference rows retain the original forward pass. The setting is saved in checkpoint arguments and propagates to multi-GPU calibration workers.
+
+- **--no_fast_head_capture**: Disable fast head capture for debugging or comparison. On resume, this explicitly overrides the saved fast head capture setting.
 
 - **-d / --devices *list***: Comma-separated list of GPU device IDs to use during quantization. By default only the first visible device (device 0) is used. Adding more devices can speed up quantization if there is sufficient PCIe bandwidth between them. This does not affect memory usage on the first GPU, and very little memory is used on the others, since only the most compute intensive operation (trellis encoding) is distributed.
 
@@ -74,6 +86,9 @@ does.
 ### Examples
 
 #### Converting
+
+The plain command uses dense K4 and the default fast head capture; no
+optimization flags are required.
 
 ```sh
 python convert.py -i /mnt/models/llama3.1-70b-instruct \

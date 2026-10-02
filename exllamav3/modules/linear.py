@@ -571,10 +571,7 @@ class Linear(Module):
         if params["capture"][self.qmap]["first_key"] == self.key:
             rows = np.prod(x.shape[:-1])
             dim = x.shape[-1]
-            half_hessian = params.get("hessian_fp16", False) and x.dtype == torch.half and x.is_cuda
-            x = x.view((rows, dim))
-            if not half_hessian:
-                x = x.to(torch.float, copy = True)
+            x = x.view((rows, dim)).to(torch.float, copy = True)
 
             # fp16 activation overflow (+-inf) would poison entire rows/columns of H through the
             # accumulation, and no diagonal damping can repair non-finite entries afterwards.
@@ -584,18 +581,7 @@ class Linear(Module):
                 x = x[finite]
                 rows = x.shape[0]
 
-            if half_hessian:
-                # FP16 activation products, FP32 GEMM output and FP32 H storage.
-                # Separate GEMM/add and matrix hardware can change rounding, so
-                # this is an explicit conversion option, not an inference change.
-                # Bound the extra FP32 GEMM result to 256 MiB for wide MLPs.
-                hessian = params["capture"][self.qmap]["H"]
-                block_rows = max(1, (256 * 1024**2) // (4 * dim))
-                for start in range(0, dim, block_rows):
-                    stop = min(start + block_rows, dim)
-                    hessian[start:stop].add_(torch.mm(x[:, start:stop].T, x, out_dtype=torch.float32))
-            else:
-                params["capture"][self.qmap]["H"].addmm_(x.T, x)
+            params["capture"][self.qmap]["H"].addmm_(x.T, x)
             params["capture"][self.qmap]["count"] += rows
 
 

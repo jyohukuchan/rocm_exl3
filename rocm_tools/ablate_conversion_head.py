@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Toggle fast_head_capture at a Qwen3.5 pre-norm checkpoint and rebuild.
 
-The calibration-Hessian mode is inherited unchanged from the source run. Its
+Only FP32-Hessian source runs are accepted. Their
 decoder weights/states and uncalibrated side-model tensors are copied, not
 requantized. Only the final norm/head run through the normal converter. A save
 hook stops after the new head tensors are on disk; normal compilation then
@@ -41,7 +41,8 @@ def main():
     parser.add_argument("--checkpoint", default="ckpt_old", choices=("ckpt", "ckpt_old"))
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--fast-head", choices=("on", "off"), required=True)
+    parser.add_argument("--fast-head", choices=("default", "on", "off"), default="default",
+                        help="Use the converter default, or force capture on/off")
     cli = parser.parse_args()
     source = cli.source_work.resolve()
     work = cli.work.resolve()
@@ -49,6 +50,8 @@ def main():
     if work.exists() or output.exists():
         raise FileExistsError("Use fresh work/output directories; source artifacts are never overwritten")
     source_args = json.loads((source / "args.json").read_text())
+    if source_args.pop("hessian_fp16", False):
+        raise ValueError("Source used removed hessian_fp16 mode; use a completed FP32-Hessian run")
     config_json = json.loads((Path(source_args["in_dir"]) / "config.json").read_text())
     if config_json.get("architectures") != ["Qwen3_5ForConditionalGeneration"]:
         raise ValueError("This checkpoint probe is validated only for dense Qwen3.5")
@@ -63,15 +66,15 @@ def main():
     work.mkdir(parents=True)
     shutil.copytree(source / "qtensors", work / "qtensors")
     shutil.copytree(checkpoint, work / "ckpt")
-    saved_args = dict(source_args, work_dir=str(work), out_dir=str(output),
-                      fast_head_capture=cli.fast_head == "on", max_module=None)
-    saved_args.setdefault("hessian_fp16", False)
+    saved_args = dict(source_args, work_dir=str(work), out_dir=str(output), max_module=None)
+    if cli.fast_head == "default":
+        saved_args.pop("fast_head_capture", None)
+    else:
+        saved_args["fast_head_capture"] = cli.fast_head == "on"
     (work / "args.json").write_text(json.dumps(saved_args, indent=2) + "\n")
     args, state, ok, error = conversion.prepare(conversion.parser.parse_args(["-w", str(work), "-r"]))
     if not ok:
         raise RuntimeError(error)
-    if args["hessian_fp16"] != bool(source_args.get("hessian_fp16", False)):
-        raise AssertionError("Hessian mode must not change after decoder calibration")
 
     models = []
     rewritten = []
@@ -126,7 +129,8 @@ def main():
         "source_work": str(source), "source_model": str(expected_model),
         "checkpoint": cli.checkpoint, "checkpoint_sha256": checkpoint_hashes,
         "next_module_idx": job["next_module_idx"], "source_fast_head_capture": bool(source_args.get("fast_head_capture", False)),
-        "fast_head_capture": args["fast_head_capture"], "hessian_fp16": args["hessian_fp16"],
+        "fast_head_capture": args["fast_head_capture"], "hessian_dtype": "float32",
+        "capture_selection": cli.fast_head,
         "rewritten_modules": rewritten, "differing_modules": differences,
         "module_files_checked": len(module_hashes), "output_model": str(output / "model.safetensors"),
         "expected_model_sha256": expected_hash, "model_sha256": actual_hash,

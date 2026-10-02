@@ -1,22 +1,27 @@
-# R9700 conversion optimization — 2026-10-02
+# R9700 conversion optimization — historical record (2026-10-02; commit `ef7f733`)
 
 Qwen3.5-2B-BF16 → EXL3 4bpw, one R9700 (`gfx1201`), PyTorch
-2.12.0+ROCm7.2. The existing dense K4 kernel is retained. Two optional
-conversion changes accelerate calibration:
+2.12.0+ROCm7.2. The existing dense K4 kernel is retained. This document is a
+historical record of the implementation and measurements preserved at commit `ef7f733`, before the
+experimental FP16-input Hessian path was removed. Its H16 results and commands
+are reproducible only at that commit; they do not describe the current
+converter or its defaults. The historical implementation included two
+conversion changes:
 
-- `--hessian_fp16`: multiply the already-FP16 activation matrices with FP32
+- Historical `--hessian_fp16`: multiply the already-FP16 activation matrices with FP32
   output, then add to the FP32 Hessian. This changes rounding and quantized
   weights. Every calibration row/token remains present. Wide matrices use
   output-row chunks to cap the additional FP32 product tensor at 256 MiB.
-- `--fast_head_capture`: collect the terminal Linear head's input Hessian but
+- Historical `--fast_head_capture`: collect the terminal Linear head's input Hessian but
   omit logits for rows beyond the first five reference rows. The input Hessian
   and sample count remain bit-identical in the head probe.
 
-Both are **off by default** and persisted in checkpoint arguments. They are
-wired into serial and multi-GPU capture; hardware validation here is single
-R9700. The live V620 inference service is unaffected.
+In that historical implementation both were **off by default** and persisted
+in checkpoint arguments. They were wired into serial and multi-GPU capture;
+hardware validation here is single R9700. The live V620 inference service is
+unaffected.
 
-## Timing
+## Historical timing
 
 All full conversions retain 250 × 2048 calibration tokens, 4bit text/MTP,
 6bit head/vision, and the default output scales/checkpoint interval.
@@ -25,15 +30,17 @@ All full conversions retain 250 × 2048 calibration tokens, 4bit text/MTP,
 |---|---:|
 | Original plain K4 | 1046.6 s |
 | Existing dense K4, bit-identical model | 948.5 s |
-| Dense K4 + both new options | **773.044 s** |
+| Dense K4 + historical H16 and fast head capture | **773.044 s** |
 
-The new full run is **18.5% shorter** than the previous dense-K4 run and 26.1%
-shorter than the original run. These are individual end-to-end measurements;
-the original repeat took 1212.8 s, so wall-time variation must not be mistaken
-for a precise universal speedup.
+The historical full run is **18.5% shorter** than the previous dense-K4 run and 26.1%
+shorter than the original run. The 773.044 s result includes the removed H16
+path and must not be read as the current default conversion time. These are
+individual end-to-end measurements; the original repeat took 1212.8 s, so
+wall-time variation must not be mistaken for a precise universal speedup.
 
-A subsequent default-setting partial conversion covered embedding plus the
-first four blocks. Matching those five modules against the new full run gives:
+A subsequent historical default-setting partial conversion covered embedding
+plus the first four blocks. Matching those five modules against the historical
+full run gives:
 
 | Matched modules | Default capture | New capture |
 |---|---:|---:|
@@ -53,12 +60,12 @@ Calibration batch2 was rejected: the first partial screen slowed from
 79.211 to 88.362 s. Moving concatenation onto the GPU did not improve capture
 or state advancement. That implementation is not included.
 
-## Quality and adoption status
+## Historical quality and adoption status
 
 The model SHA256 changes from
 `2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12`
 to `2efab08c82331ae38b5dfe305ef066ede955abf75a34267dfd4828df0c286ec7`.
-The default partial conversion reproduces the original five module files;
+The historical default partial conversion reproduces the original five module files;
 the H16 partial conversion reproduces the corresponding five files from the
 new full conversion.
 
@@ -97,13 +104,19 @@ Across both sets (12 cases, 3618 positions), mean KL is 0.02208903 → 0.0235527
 | English | 273 | 0.01875133 | 0.01900627 |
 | Code | 1164 | 0.01088727 | 0.01066504 |
 
-H16 is therefore an **opt-in experiment with model/data-dependent numerical
-changes**, not a generally quality-equivalent default. Short teacher-forced
-checks do not establish long-context, vision, MTP or task-level quality.
+H16 was therefore an **opt-in experiment with model/data-dependent numerical
+changes**, not a generally quality-equivalent default. It has since been
+removed from the converter. Short teacher-forced checks do not establish
+long-context, vision, MTP or task-level quality.
 
 ## Attribution: which optimization changed quality?
 
-The observed difference is attributable to **`--hessian_fp16`**. We toggled
+This attribution is historical and applies to commit `ef7f733`. The H16
+implementation and the commands below are not accepted by the current
+converter.
+
+The observed difference is attributable to historical
+**`--hessian_fp16`**. We toggled
 `--fast_head_capture` independently at both Hessian settings and reconstructed
 complete model files:
 
@@ -144,7 +157,7 @@ repeating the unaffected decoder and uncalibrated side models. The recorded
 tail times are **not full-conversion benchmarks**.
 
 ```bash
-# Within rocm-exl3-r9700, with the same PYTHONPATH as below. Use fresh destinations.
+# Historical ablation commands; run only at commit ef7f733 with fresh destinations.
 python rocm_tools/ablate_conversion_head.py \
   --source-work /work/build-qwen35-2b-4bpw-opt \
   --work /work/ablation-head-only --output /work/models/ablation-head-only \
@@ -157,12 +170,15 @@ python rocm_tools/ablate_conversion_head.py \
 
 Raw hashes, checkpoint provenance and compressed logs are in
 [`conversion-ablation.json`](../benchmarks/2026-10-02/conversion-ablation.json).
-To keep the demonstrated byte-equivalent improvements, retain dense K4 and
-use `--fast_head_capture` without `--hessian_fp16`.
+At commit `ef7f733`, the demonstrated byte-equivalent path was dense K4 with
+historical `--fast_head_capture` and without historical `--hessian_fp16`. In
+the current converter fast head capture is the default; the historical H16
+command below must not be copied to a current checkout.
 
-## Reproduction
+## Historical reproduction (commit `ef7f733` only)
 
-Inside the existing `rocm-exl3-r9700` container, `/src` is the repository and
+Inside the existing `rocm-exl3-r9700` container, check out commit `ef7f733`.
+The historical `/src` is the repository and
 `/work` is the benchmark/model volume. Use the same dense-K4 native library for
 all comparisons:
 

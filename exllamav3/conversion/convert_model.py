@@ -92,10 +92,11 @@ parser.add_argument("-img", "--image_dump", action = "store_true", help = "Save 
 parser.add_argument("-cb", "--codebook", type = str, default = "mul1", help = "Codebook: mul1 (default), mcg or 3inst")
 parser.add_argument("-pm", "--parallel_mode", action = "store_true", help = "Deprecated (no-op): parallel mode is now the default; layers with fewer tensors than devices fall back to tile splitting")
 parser.add_argument("--max_module", type = int, help = "End quantization after this many modules, includes embedding and norm layers (for debug purposes)", default = None)
-parser.add_argument("--fast_head_capture", action="store_true", default=None,
-                    help="Skip unused terminal-head logits during input-Hessian capture")
-parser.add_argument("--hessian_fp16", action="store_true", default=None,
-                    help="Use FP16 activation products with FP32 output for calibration Hessians; can change weights")
+head_capture = parser.add_mutually_exclusive_group()
+head_capture.add_argument("--fast_head_capture", action="store_true", default=None,
+                          help="Skip unused terminal-head logits during capture (default enabled)")
+head_capture.add_argument("--no_fast_head_capture", dest="fast_head_capture", action="store_false", default=None,
+                          help="Compute all terminal-head logits during capture (debug comparison)")
 
 group = parser.add_mutually_exclusive_group()
 group.add_argument("--out_scales", type = str, default = "always", help = "Enable out channel scales (always/never/auto, default: always)")
@@ -221,6 +222,12 @@ def prepare(args) -> (dict, dict, bool, str):
     if args.resume:
         in_args = load_dict("args.json", in_args)
         in_args["work_dir"] = args.work_dir
+        if in_args.pop("hessian_fp16", False):
+            raise ValueError(
+                "This checkpoint used the removed hessian_fp16 mode. "
+                "Start a new conversion in a fresh work directory; its existing weights and states "
+                "cannot be resumed as an FP32-Hessian conversion."
+            )
 
     prepare_env(in_args)
 
@@ -233,7 +240,7 @@ def prepare(args) -> (dict, dict, bool, str):
         if arg in args and vars(args)[arg] is not None:
             new = vars(args)[arg]
             if arg in in_args and in_args[arg] != new:
-                if not new:
+                if not new and arg != "fast_head_capture":
                     # An unset store_true flag (or a zero default) can't be told from "unspecified":
                     # the resumed job's saved value stands (e.g. --hq stays on when resuming without it)
                     return
@@ -265,8 +272,7 @@ def prepare(args) -> (dict, dict, bool, str):
         ("cal_data", False, ""),
         ("cal_rows", False, 250),
         ("cal_cols", False, 2048),
-        ("fast_head_capture", False, False),
-        ("hessian_fp16", False, False),
+        ("fast_head_capture", True, True),
         ("checkpoint_interval", True, None),
         ("last_checkpoint_index", True, -1),
         ("devices", True, None),
@@ -789,7 +795,6 @@ def capture_module_parallel(
     title,
     bad_rows,
     fast_head=False,
-    hessian_fp16=False,
 ):
     """
     Run the Hessian-capture forward pass with calibration rows split across devices, each device forwarding its
@@ -815,7 +820,6 @@ def capture_module_parallel(
                 params = {
                     "attn_mode": "flash_attn_nc",
                     "capture": captures[t_idx],
-                    "hessian_fp16": hessian_fp16,
                     "capture_only_input": fast_head and i >= num_ref_states,
                     "activate_all_experts": model.calibration_all_experts,
                     "input_ids": original_input_ids[i],
@@ -1223,7 +1227,6 @@ def main(args, job_state):
                             f" -- Capturing: {module.key}" + slice_str,
                             bad_rows,
                             fast_head=fast_head,
-                            hessian_fp16=args["hessian_fp16"],
                         )
                         for rep in capture_replicas:
                             rep.unload()
@@ -1239,7 +1242,6 @@ def main(args, job_state):
                                 params = {
                                     "attn_mode": "flash_attn_nc",
                                     "capture": capture_H,
-                                    "hessian_fp16": args["hessian_fp16"],
                                     "activate_all_experts": model.calibration_all_experts,
                                     "input_ids": original_input_ids[i],
                                 }

@@ -1,0 +1,84 @@
+{
+  "date": "2026-10-02",
+  "base_commit": "ef7f7338a51cc1e23b133ee277453dbf4465e69d",
+  "behavior": {
+    "hessian": "FP32 only; experimental CLI/compute path removed",
+    "fast_head_capture_default": true,
+    "dense_K4_default": true,
+    "debug_disable": "--no_fast_head_capture",
+    "legacy_resume": "H16=true rejected; false discarded; saved fast-head value preserved unless explicitly overridden"
+  },
+  "cli_prepare_checks": {
+    "passed": true,
+    "cases": [
+      "fresh conversion default True; no H16 field",
+      "debug disable overrides saved True",
+      "legacy FP32 missing fast-head field uses True",
+      "saved False retained unless explicitly enabled",
+      "legacy H16 rejected without mutation, even with override_anyway",
+      "removed CLI flag exits 2"
+    ]
+  },
+  "first_layer": [
+    {
+      "module": "model.language_model.embed_tokens.safetensors",
+      "sha256": "9e0a465ca39aea1939fa4d311cabbc38ddb9db6e060a1c5419a644cde57f59df",
+      "matches_baseline": true
+    },
+    {
+      "module": "model.language_model.layers.0.safetensors",
+      "sha256": "2d89c2e31e6dc79837fc6717a40db4f07ce9e2370961d4622a24ab9324c7a1cc",
+      "matches_baseline": true
+    }
+  ],
+  "capture_probe": {
+    "torch": "2.12.0+rocm7.2",
+    "hip": "7.2.53211",
+    "gpu": "gfx1201",
+    "hessian_dtype": "float32",
+    "nonfinite_rows_excluded": 2,
+    "head_rows": 16,
+    "head_reference_rows": 5,
+    "head_capture_seconds": {
+      "False": 0.4528606431558728,
+      "True": 0.1094419970177114
+    },
+    "head_hessian_bitwise_equal": true,
+    "head_captured_tokens": 32768
+  },
+  "default_head_reconstruction": {
+    "source_work": "/work/build-qwen35-2b-4bpw-opt",
+    "source_model": "/work/models/qwen3.5-2b-exl3-4bpw-opt/model.safetensors",
+    "checkpoint": "ckpt_old",
+    "checkpoint_sha256": {
+      "job.json": "784df8bd467cce8eb08a151a6d99f6651febbf494ae0e0260eb0e70b0883b432",
+      "state.safetensors": "1d180e4136bc095262fe23de27908e068ffd4d424d173eed04f2a9f9ec0516a7",
+      "original_input_ids.safetensors": "5944559371b46f7b604c7499d26cd3108ce9db33863decbf0138053dc9450b7e"
+    },
+    "next_module_idx": 25,
+    "source_fast_head_capture": false,
+    "fast_head_capture": true,
+    "hessian_dtype": "float32",
+    "capture_selection": "default",
+    "rewritten_modules": [
+      "model.language_model.norm.safetensors",
+      "lm_head.safetensors"
+    ],
+    "differing_modules": [],
+    "module_files_checked": 57,
+    "output_model": "/work/runs/quant-defaults-20261002/default-head-model/model.safetensors",
+    "expected_model_sha256": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12",
+    "model_sha256": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12",
+    "model_bitwise_equal": true,
+    "config_bitwise_equal": true,
+    "tail_conversion_seconds": 137.21595983905718,
+    "compile_seconds": 1.684714205795899,
+    "torch": "2.12.0+rocm7.2",
+    "hip": "7.2.53211",
+    "gpu": "gfx1201",
+    "native_sha256": "e93763d22f2704a42f39bc0164b3e6123e645d7a5743677f8d3e2bc24c61eda6",
+    "probe_sha256": "531f3391211b21d8c7a7c07be4007b412d6361ab7330e793b605adfc721e1ba7",
+    "scope": "Final norm/head recomputed with all calibration rows; decoder/uncalibrated side tensors reused. Not a full conversion benchmark."
+  },
+  "scope": "Fresh embedding/first-block conversion plus final norm/head recomputation from a reference checkpoint; complete compiled model checked by SHA. No new full-conversion timing."
+}

@@ -33,7 +33,7 @@ branch.
 | K5/V4 quantized KV cache (QSA layers) | 2× V620, TP2 | **Validated** — default for the TP2 measurements; recurrent states keep their original FP32/BF16 types | [doc/v620_tp_decode_optimization.md](doc/v620_tp_decode_optimization.md) |
 | Max generated context | 2× V620, TP2, **batch 1 only** | 261,632 input + 256 output completed with fixed MTP4. **Batch 2–4 maximums are not established** — long-context tests were deferred by the operator | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md) |
 | R9700 inference comparisons (gfx1201 / RDNA4) | 1× R9700 | **Tested through documented comparison adapters/workarounds** (64 KiB LDS build, MLP range-balance adapter, MoE reconstruct adapter). Not general RDNA4 support | [doc/r9700_vs_v620.md](doc/r9700_vs_v620.md) |
-| Qwen3.5-2B → EXL3 4bpw conversion | 1× R9700 | Dense K4 is bit-identical to the original converter. Optional FP16-input Hessians + head capture reduce the measured full conversion from 948.5 to 773.0 s; **H16 changes weights and fails one primary per-case quality screen**, so it remains opt-in | [2026-10-02 conversion study](doc/r9700_conversion_optimization.md) |
+| Qwen3.5-2B → EXL3 4bpw conversion | 1× R9700 | Dense K4 is bit-identical to the original converter, and fast head capture is enabled by default. The 773.0 s / 18.5% result in the historical study included a removed FP16-input Hessian path, so it is not a current-default benchmark | [historical 2026-10-02 conversion study](doc/r9700_conversion_optimization.md) |
 | RDNA3 / RDNA3.5 (`gfx1100`…`gfx1151`) | — | **Inherited from the parent fork's gfx1151 validation; not independently rerun on this branch** after the TP / Qwen3.8 / kernel changes below. The parent's claims stand as the parent's, not ours | [doc/fork_changes.md](doc/fork_changes.md) |
 | CUDA path | NVIDIA | Upstream native kernels retained; shared Python changes are not tested on NVIDIA here | — |
 
@@ -595,14 +595,20 @@ python convert.py -w <working_dir> -r
 python convert.py -h
 ```
 
+The plain conversion command uses dense K4 and the current default fast head
+capture; no optimization flags are required.
+
 The working directory is temporary storage for state checkpoints and for storing quantized tensors 
 until the converted model can be compiled. It should have enough free space to store an entire copy 
 of the output model.
 
 See the [conversion guide](doc/convert.md) for more information, or the 
 [self-calibration guide](doc/optimize.md). 
-R9700 timing, optional Hessian acceleration, and quality caveats are in the
-[2026-10-02 conversion study](doc/r9700_conversion_optimization.md).
+R9700 timing and the historical FP16-Hessian quality caveats are in the
+[2026-10-02 conversion study](doc/r9700_conversion_optimization.md). Current
+converter options, including default fast head capture, are in the
+[conversion guide](doc/convert.md). The historical H16 measurements are not
+benchmarks of the current defaults.
 
 ## EXL3 quantization
 
