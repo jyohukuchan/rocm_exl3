@@ -15,7 +15,9 @@
     "size_bytes": 4563402414
   },
   "command": "python convert.py -i /work/models/qwen3.5-2b-bf16 -w /work/build-qwen35-2b-4bpw-r9700 -o /work/models/qwen3.5-2b-exl3-4bpw-r9700 -b 4",
-  "devices": [0],
+  "devices": [
+    0
+  ],
   "result": {
     "wall_s": 1046.6,
     "user_s": 1638.7,
@@ -42,5 +44,12 @@
     "embed_tokens stored unquantized at 16bpw (tied embeddings, 248320x2048).",
     "user+sys >> wall indicates calibration-forward/quantize overlap across threads; sys time suggests pinned-staging copies are significant.",
     "Baseline for the R9700 quantization-speedup work; no V620 comparison run yet (V620 pair busy serving the live TP2 server)."
-  ]
+  ],
+  "determinism_check": {
+    "rerun_tag": "r9700-det2",
+    "rerun_wall_s": 1212.8,
+    "rerun_model_safetensors_sha256": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12",
+    "matches_baseline": true,
+    "note": "Wall time varied 17m27s vs 20m13s (host CPU contention) but output is bit-identical. SHA256 gate established for bit-preserving optimization work."
+  }
 }
