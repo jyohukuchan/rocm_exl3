@@ -1,0 +1,182 @@
+{
+  "date": "2026-10-02",
+  "base_commit": "ca7091aeaeff48f9db31420599aabdf2e3245cb8",
+  "hardware": "1x R9700 gfx1201",
+  "finding": "The measured KLD change is attributable to hessian_fp16. Toggling fast_head_capture changes neither weights nor inference metadata at either Hessian setting. The previously bit-identical dense K4 kernel is excluded as a cause.",
+  "conditions": [
+    {
+      "hessian_fp16": false,
+      "fast_head_capture": false,
+      "model_sha256": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12",
+      "bf16_kl": 0.022089033259258244
+    },
+    {
+      "hessian_fp16": false,
+      "fast_head_capture": true,
+      "model_sha256": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12",
+      "bf16_kl": 0.022089033259258244
+    },
+    {
+      "hessian_fp16": true,
+      "fast_head_capture": false,
+      "model_sha256": "2efab08c82331ae38b5dfe305ef066ede955abf75a34267dfd4828df0c286ec7",
+      "bf16_kl": 0.023552745373047662
+    },
+    {
+      "hessian_fp16": true,
+      "fast_head_capture": true,
+      "model_sha256": "2efab08c82331ae38b5dfe305ef066ede955abf75a34267dfd4828df0c286ec7",
+      "bf16_kl": 0.023552745373047662
+    }
+  ],
+  "quality_provenance": "KLD reused from the prior 12-case/3618-position measurements through verified model, config and tokenizer byte identity; no new inference scores are claimed.",
+  "head_only": {
+    "source_work": "/work/build-qwen35-2b-4bpw-opt",
+    "source_model": "/work/models/qwen3.5-2b-exl3-4bpw-opt/model.safetensors",
+    "checkpoint": "ckpt_old",
+    "checkpoint_sha256": {
+      "job.json": "784df8bd467cce8eb08a151a6d99f6651febbf494ae0e0260eb0e70b0883b432",
+      "state.safetensors": "1d180e4136bc095262fe23de27908e068ffd4d424d173eed04f2a9f9ec0516a7",
+      "original_input_ids.safetensors": "5944559371b46f7b604c7499d26cd3108ce9db33863decbf0138053dc9450b7e"
+    },
+    "next_module_idx": 25,
+    "source_fast_head_capture": false,
+    "fast_head_capture": true,
+    "hessian_fp16": false,
+    "rewritten_modules": [
+      "model.language_model.norm.safetensors",
+      "lm_head.safetensors"
+    ],
+    "differing_modules": [],
+    "module_files_checked": 57,
+    "output_model": "/work/runs/quant-ablation-20261002/head-only-model/model.safetensors",
+    "expected_model_sha256": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12",
+    "model_sha256": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12",
+    "model_bitwise_equal": true,
+    "config_bitwise_equal": true,
+    "tail_conversion_seconds": 136.8035596171394,
+    "compile_seconds": 2.0250143751036376,
+    "torch": "2.12.0+rocm7.2",
+    "hip": "7.2.53211",
+    "gpu": "gfx1201",
+    "native_sha256": "e93763d22f2704a42f39bc0164b3e6123e645d7a5743677f8d3e2bc24c61eda6",
+    "probe_sha256": "4e2f4f58ef7a3fb078df9e8cc1093822d2091f2ad1ffa44f01d26720c4236f7e",
+    "scope": "Final norm/head recomputed with all calibration rows; decoder/uncalibrated side tensors reused. Not a full conversion benchmark."
+  },
+  "hessian_only": {
+    "source_work": "/work/runs/quant-opt-20261002/full-h16-head",
+    "source_model": "/work/models/qwen3.5-2b-exl3-4bpw-h16-head/model.safetensors",
+    "checkpoint": "ckpt_old",
+    "checkpoint_sha256": {
+      "job.json": "784df8bd467cce8eb08a151a6d99f6651febbf494ae0e0260eb0e70b0883b432",
+      "state.safetensors": "a4b32c5041d8a3b7c8ab9211721ff873dff359a63c75e3b1ea08c412356e0359",
+      "original_input_ids.safetensors": "5944559371b46f7b604c7499d26cd3108ce9db33863decbf0138053dc9450b7e"
+    },
+    "next_module_idx": 25,
+    "source_fast_head_capture": true,
+    "fast_head_capture": false,
+    "hessian_fp16": true,
+    "rewritten_modules": [
+      "model.language_model.norm.safetensors",
+      "lm_head.safetensors"
+    ],
+    "differing_modules": [],
+    "module_files_checked": 57,
+    "output_model": "/work/runs/quant-ablation-20261002/hessian-only-model/model.safetensors",
+    "expected_model_sha256": "2efab08c82331ae38b5dfe305ef066ede955abf75a34267dfd4828df0c286ec7",
+    "model_sha256": "2efab08c82331ae38b5dfe305ef066ede955abf75a34267dfd4828df0c286ec7",
+    "model_bitwise_equal": true,
+    "config_bitwise_equal": true,
+    "tail_conversion_seconds": 140.8063076529652,
+    "compile_seconds": 1.787134227808565,
+    "torch": "2.12.0+rocm7.2",
+    "hip": "7.2.53211",
+    "gpu": "gfx1201",
+    "native_sha256": "e93763d22f2704a42f39bc0164b3e6123e645d7a5743677f8d3e2bc24c61eda6",
+    "probe_sha256": "4e2f4f58ef7a3fb078df9e8cc1093822d2091f2ad1ffa44f01d26720c4236f7e",
+    "scope": "Final norm/head recomputed with all calibration rows; decoder/uncalibrated side tensors reused. Not a full conversion benchmark."
+  },
+  "metadata_equivalence": {
+    "head-only": {
+      "config.json": {
+        "source_sha256": "4bf8d5d7a603c119dc62ad9f01fdd3a9315be9ed34d61b8156ae248a87d07868",
+        "ablation_sha256": "4bf8d5d7a603c119dc62ad9f01fdd3a9315be9ed34d61b8156ae248a87d07868",
+        "equal": true
+      },
+      "tokenizer.json": {
+        "source_sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        "ablation_sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        "equal": true
+      },
+      "tokenizer_config.json": {
+        "source_sha256": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+        "ablation_sha256": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+        "equal": true
+      },
+      "vocab.json": {
+        "source_sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "ablation_sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "equal": true
+      },
+      "merges.txt": {
+        "source_sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+        "ablation_sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+        "equal": true
+      },
+      "chat_template.jinja": {
+        "source_sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80",
+        "ablation_sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80",
+        "equal": true
+      },
+      "quantization_config.json": {
+        "source_sha256": "d27da3183df02ef7a33d01022ee04505ae62b6c8152ee696bc64c1e3bf5501c4",
+        "ablation_sha256": "d27da3183df02ef7a33d01022ee04505ae62b6c8152ee696bc64c1e3bf5501c4",
+        "equal": true
+      }
+    },
+    "hessian-only": {
+      "config.json": {
+        "source_sha256": "4bf8d5d7a603c119dc62ad9f01fdd3a9315be9ed34d61b8156ae248a87d07868",
+        "ablation_sha256": "4bf8d5d7a603c119dc62ad9f01fdd3a9315be9ed34d61b8156ae248a87d07868",
+        "equal": true
+      },
+      "tokenizer.json": {
+        "source_sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        "ablation_sha256": "5f9e4d4901a92b997e463c1f46055088b6cca5ca61a6522d1b9f64c4bb81cb42",
+        "equal": true
+      },
+      "tokenizer_config.json": {
+        "source_sha256": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+        "ablation_sha256": "49e2b6e395f959f077f1e992b338919c0d4a9732fc6e613995e06557f843500c",
+        "equal": true
+      },
+      "vocab.json": {
+        "source_sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "ablation_sha256": "ce99b4cb2983d118806ce0a8b777a35b093e2000a503ebde25853284c9dfa003",
+        "equal": true
+      },
+      "merges.txt": {
+        "source_sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+        "ablation_sha256": "a9d356d7bdf1ef4949e3e748e95b8e10ad9d4e2e838eddc38a0a7b6b94d1db8d",
+        "equal": true
+      },
+      "chat_template.jinja": {
+        "source_sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80",
+        "ablation_sha256": "273d8e0e683b885071fb17e08d71e5f2a5ddfb5309756181681de4f5a1822d80",
+        "equal": true
+      },
+      "quantization_config.json": {
+        "source_sha256": "d27da3183df02ef7a33d01022ee04505ae62b6c8152ee696bc64c1e3bf5501c4",
+        "ablation_sha256": "d27da3183df02ef7a33d01022ee04505ae62b6c8152ee696bc64c1e3bf5501c4",
+        "equal": true
+      }
+    }
+  },
+  "max_calibrated_hessian_width": 6144,
+  "max_hessian_product_bytes": 150994944,
+  "workspace_cap_bytes": 268435456,
+  "workspace_chunking_active": false,
+  "rejected_batching_present_in_tested_converter": false,
+  "module_differences_file": "conversion-ablation-module-differences.json",
+  "scope": "Reused decoder checkpoint at index25 and completed source side-model qtensors, recomputed final norm/head with all250x2048 calibration tokens, compiled complete artifacts. Timings are tail-only, not full-conversion benchmarks."
+}

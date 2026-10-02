@@ -101,6 +101,65 @@ H16 is therefore an **opt-in experiment with model/data-dependent numerical
 changes**, not a generally quality-equivalent default. Short teacher-forced
 checks do not establish long-context, vision, MTP or task-level quality.
 
+## Attribution: which optimization changed quality?
+
+The observed difference is attributable to **`--hessian_fp16`**. We toggled
+`--fast_head_capture` independently at both Hessian settings and reconstructed
+complete model files:
+
+| FP16-input Hessian | Fast head capture | Model SHA256 prefix | Mean BF16-relative KL |
+|---|---|---|---:|
+| Off | Off | `2b2d57a1…` | 0.02208903 |
+| Off | On | `2b2d57a1…` | 0.02208903 |
+| On | Off | `2efab08c…` | 0.02355275 |
+| On | On | `2efab08c…` | 0.02355275 |
+
+Both toggles produced **identical full model bytes, all 57 module files,
+configuration and tokenizer files** relative to their respective source run.
+The KL values are inherited from the previous 12-case measurements by this
+byte identity; they are not additional inference measurements. Fast head
+capture neither contributes to the difference nor adds an interaction at the
+tested H16 setting. The existing dense K4 kernel also produced the original
+model bytes, so it is excluded as a cause.
+
+Comparing the two distinct model hashes, only the 24 decoder blocks and
+`lm_head` change; embedding, final norm, MTP and vision tensors do not. H16
+changes the matrix-product/accumulation path even though its activation inputs
+were already FP16. Floating-point rounding changes the Hessian and can change
+the quantizer's discrete code/scale choices, then subsequent calibration
+states. This identifies the responsible option; it does not establish which
+individual layer contributes most to the KL increase.
+
+The 256 MiB temporary-memory cap does not split products in this model: the
+largest calibrated width is 6144 (144 MiB FP32 product). Rejected row batching
+is absent from the tested converter.
+
+For each ablation, the completed source work directory supplied its unmodified
+decoder tensors, side-model tensors, and `ckpt_old` at module index 25. Only
+the final norm/head were recomputed with all 250 × 2048 calibration tokens.
+The normal converter stops immediately after writing the head qtensors; the
+normal compiler then assembles the complete model, including copied side
+tensors. Per-module seeds and the source Hessian mode are retained. This saves
+repeating the unaffected decoder and uncalibrated side models. The recorded
+tail times are **not full-conversion benchmarks**.
+
+```bash
+# Within rocm-exl3-r9700, with the same PYTHONPATH as below. Use fresh destinations.
+python rocm_tools/ablate_conversion_head.py \
+  --source-work /work/build-qwen35-2b-4bpw-opt \
+  --work /work/ablation-head-only --output /work/models/ablation-head-only \
+  --fast-head on
+python rocm_tools/ablate_conversion_head.py \
+  --source-work /work/runs/quant-opt-20261002/full-h16-head \
+  --work /work/ablation-hessian-only --output /work/models/ablation-hessian-only \
+  --fast-head off
+```
+
+Raw hashes, checkpoint provenance and compressed logs are in
+[`conversion-ablation.json`](../benchmarks/2026-10-02/conversion-ablation.json).
+To keep the demonstrated byte-equivalent improvements, retain dense K4 and
+use `--fast_head_capture` without `--hessian_fp16`.
+
 ## Reproduction
 
 Inside the existing `rocm-exl3-r9700` container, `/src` is the repository and
