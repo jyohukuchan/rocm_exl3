@@ -51,5 +51,26 @@
     "rerun_model_safetensors_sha256": "2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12",
     "matches_baseline": true,
     "note": "Wall time varied 17m27s vs 20m13s (host CPU contention) but output is bit-identical. SHA256 gate established for bit-preserving optimization work."
+  },
+  "optimization_bit_identical": {
+    "change": "Ported quantize_tiles_optimized.cuh to RDNA (include swap over the bit-exact amdgcn codebook); enabled for K=4 only in quantize_rdna.hip; comp_units_rdna k4 returns the dense kernel. Commit 8d848c8.",
+    "why_bit_safe": "K=4 dense path uses the same half2 arithmetic, the same rank-based NT-independent argmin tie order, and the same bit-exact codebook decode; K=2/3 (upstream initial-state fix) and K=6 (CUDA-only codebook LUT) stay on the plain kernel.",
+    "gates": {
+      "gate1_kernel_bitwise": "rocm_tools/qt_bitwise.py: identical hashes for every K x codebook, old .so vs new .so",
+      "gate2_partial_qtensors": "max_module 10: all 11 module qtensors SHA-identical to the baseline full run",
+      "gate3_full_model": "full conversion model.safetensors SHA-256 == 2b2d57a192539120a0e83580735197e9d6abd8bfc7333a0f1690e6e707ac4d12 (baseline)"
+    },
+    "kernel_microbench_mweights_s": {
+      "K4_mul1_plain": 7.3,
+      "K4_mul1_optimized": 17.1,
+      "K6_plain_unchanged": 10.0
+    },
+    "full_conversion_wall_s": {
+      "baseline": 1046.6,
+      "optimized": 948.5,
+      "speedup": 1.1
+    },
+    "negative_result": "NT 512->1024 on the plain K=4 kernel (bit-safe by the rank tie order) measured ~3% SLOWER; reverted. Occupancy is not the plain kernel bottleneck.",
+    "remaining": "capture/advance forward is ~2/3 of wall time and its per-row GEMMs cannot be batched without changing Hessian bits; K=6 dense path needs a RDNA port of quantize_codebook (~15% of quantize time)."
   }
 }
