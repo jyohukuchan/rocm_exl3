@@ -711,10 +711,23 @@ def test_verified_load_wires_the_benchmark_sequence(monkeypatch):
     events2 = []
     with fake_engine_stack(events2):
         rt2 = runtime.load_runtime(verified_args(num_draft_tokens=3))
-    assert rt2.settings["draft_depth"] == 3 and rt2.settings["draft_window"] == 4
+    assert rt2.settings["draft_depth"] == 3 and rt2.settings["draft_window"] == 3
     assert rt2.generator_kwargs["num_draft_tokens"] == 3
     cache_ev2 = [e for e in events2 if e[0] == "cache"][0]
-    assert cache_ev2[4] == 4                       # target max_history stays 4
+    assert cache_ev2[4] == 3                       # only the resolved draft history
+
+
+@pytest.mark.parametrize("depth", [1, 2, 3, 4])
+def test_verified_batch_three_reserves_only_resolved_mtp_history(monkeypatch, depth):
+    monkeypatch.setenv(runtime.NGRAM_MLOCK_ENV, "1")
+    events = []
+    with fake_engine_stack(events):
+        rt = runtime.load_runtime(verified_args(num_draft_tokens=depth, autosplit_max_batch_size=3))
+    target_cache = [e for e in events if e[0] == "cache"][0]
+    assert target_cache[4] == depth
+    assert target_cache[6] == 3
+    assert rt.settings["draft_window"] == depth
+    assert rt.generator_kwargs["num_draft_tokens"] == depth
 
 
 def test_verified_load_fail_closed_cases_tear_down(monkeypatch):

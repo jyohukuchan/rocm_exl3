@@ -860,14 +860,14 @@ def _load_verified_tp(args, settings, log, requirements):
         draft = Model.from_config(config, swa_full=settings["swa_full"], component="mtp")
 
         # Resolved draft window: -ndt wins, else the draft's own default_draft_size
-        # cap (4 for Qwen3.8 MTP); mirrors model_init's max_history formula.
+        # size (4 for Qwen3.8 MTP). An explicit -ndt replaces that default.
         caps = getattr(draft, "caps", None) or {}
         default_ds = caps.get("default_draft_size") or 0
         ndt = settings["num_draft_tokens"] or 0
-        # draft_window: cache max_history (>= any depth; tp_run parity floor of 4).
-        # draft_depth: the ACTUAL Generator draft length (-ndt wins, else caps, else 4).
-        draft_window = max(int(default_ds), int(ndt)) or 4
+        # Reserve only the states the Generator can actually rewind to. Keeping
+        # a default-size floor wastes VRAM across every recurrent batch slot.
         draft_depth = int(ndt) if ndt else (int(default_ds) or 4)
+        draft_window = draft_depth
         settings["draft_window"] = draft_window
         settings["draft_depth"] = draft_depth
 

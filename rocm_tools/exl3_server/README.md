@@ -71,6 +71,36 @@ tool history easier to inspect. Once the provider works, set
 history you want to retain. The model limit in the example is an API budget;
 the actual cache still comes from `-cs`.
 
+### Local parallel workers (2026-10-02)
+
+The local OpenCode setup now uses Qwen/xhigh for both the primary agent and the
+`worker` subagent. The portable configuration explicitly declares
+`agents.worker.mode: "subagent"`; assigning a model alone does not declare that mode.
+Use OpenCode V2's native `subagent` tool for delegation, with three independent
+calls in one turn. It is outside the Code Mode `execute` catalog.
+The optional [worker instructions](../opencode/local-worker-instructions.md) explain
+this to the model; add their path to `instructions` when using this repository.
+
+For the validated TP/MTP server, keep the 786,432-token cache and use
+`-ambs 3 -ndt 1` without `-dds`. This selects fixed one-token MTP, the faster
+batch-three setting in the [earlier screening](../../doc/qwen38_v620_context_batch.md).
+The verified runtime now reserves recurrent history for the resolved draft depth,
+so `-ndt 1` uses one history state per slot instead of retaining the model's
+four-token default. Omitted `-ndt` still uses the model default.
+
+The 768Ki cache is a **shared total pool**. Up to three jobs run concurrently;
+additional requests wait for slots and pages. A primary request also uses a slot.
+This does not provide three separate 768Ki contexts. Configured batch>1 retains
+`profile_peak` for the running service, as previously selected.
+
+HTTP verification completed three concurrent generations and three independent
+tool constraints. OpenCode then completed three actual worker sessions, all with
+`rocm-exl3/qwen38#xhigh`, while the engine reported three active jobs.
+A synthetic near-full 768Ki test with all three recurrent slots allocated also
+completed 32 MTP1 tokens; board peaks were 31.549/31.197 GiB. This memory
+check used one active full-cache job; three 9K-context workers were exercised
+separately. [Dated verification](../../benchmarks/2026-10-02/opencode-batch3.json).
+
 ## API surface
 
 The main endpoints are:

@@ -48,7 +48,8 @@ def exercise(runtime, report_path, pci_devices=("0000:43:00.0", "0000:03:00.0"))
     from rocm_tools.rdna2 import tp_run
 
     capacity = runtime.cache.max_num_tokens
-    output_tokens, draft_tokens = 32, 4
+    output_tokens = 32
+    draft_tokens = int(runtime.generator_kwargs.get("num_draft_tokens") or 4)
     prompt_tokens = capacity - output_tokens - 1 - draft_tokens
     report_path = Path(report_path)
     report = {"capacity_tokens": capacity, "prompt_tokens": prompt_tokens,

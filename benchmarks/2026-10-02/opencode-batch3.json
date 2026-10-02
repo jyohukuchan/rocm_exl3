@@ -1,0 +1,81 @@
+{
+  "date": "2026-10-02",
+  "model": "Qwen3.8 Flash Next EXL3 3.05bpw, original 3-bit MTP",
+  "hardware": "V620 x2, TP2/RCCL",
+  "settings": {
+    "batch": 3,
+    "context_pool_tokens": 786432,
+    "cache_bits": [
+      5,
+      4
+    ],
+    "draft_tokens": 1,
+    "dynamic_draft": false,
+    "target_recurrent_history": 1,
+    "reasoning_effort": "xhigh",
+    "vision": true,
+    "power": "held profile_peak"
+  },
+  "http_verification": {
+    "concurrent_generations": 3,
+    "independent_tool_constraints": 3,
+    "maximum_active_jobs": 3,
+    "all_status_200": true
+  },
+  "opencode_verification": {
+    "version": "opencode v2.0.12",
+    "primary_model": "rocm-exl3/qwen38#xhigh",
+    "worker_sessions": [
+      {
+        "agent": "worker",
+        "model": "rocm-exl3/qwen38#xhigh",
+        "completed": true,
+        "tool_names": [
+          "read",
+          "read",
+          "grep",
+          "grep",
+          "read",
+          "read"
+        ]
+      },
+      {
+        "agent": "worker",
+        "model": "rocm-exl3/qwen38#xhigh",
+        "completed": true,
+        "tool_names": [
+          "read"
+        ]
+      },
+      {
+        "agent": "worker",
+        "model": "rocm-exl3/qwen38#xhigh",
+        "completed": true,
+        "tool_names": [
+          "read",
+          "read"
+        ]
+      }
+    ],
+    "maximum_active_jobs_observed": 3,
+    "native_subagent_calls_in_same_turn": true,
+    "initial_invocation_correction": "Built-in subagent is a native tool, not an execute Code Mode tool; tested by issuing three native calls."
+  },
+  "capacity_check": {
+    "passed": true,
+    "capacity_tokens": 786432,
+    "draft_tokens": 1,
+    "generated_tokens": 32,
+    "allocated_pages": 3072,
+    "prefill_tokens_evaluated": 2269,
+    "target_max_end_exclusive": 786429,
+    "board_peak_bytes": [
+      33875251200,
+      33497817088
+    ],
+    "synthetic_history": true,
+    "quality_evaluation": false
+  },
+  "capacity_scope": "All three recurrent slots were allocated. One synthetic job exercised almost all of the shared 768Ki cache and generated 32 tokens with MTP1. This does not validate three independent near-full long inputs or long-context quality.",
+  "cpu_tests_passed": 37
+}

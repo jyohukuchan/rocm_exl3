@@ -36,13 +36,17 @@
               "enable_thinking": true,
               "reasoning_effort": "xhigh"
             }
-          }
+          },
+          "variants": [{
+            "id": "xhigh",
+            "body": {"chat_template_kwargs": {"enable_thinking": true, "reasoning_effort": "xhigh"}}
+          }]
         }
       }
     }
   },
 
-  "model": "rocm-exl3/qwen38",
+  "model": "rocm-exl3/qwen38#xhigh",
 
   "experimental": {
     "policies": [
@@ -60,10 +64,16 @@
   },
 
   "agents": {
-    "build": {"model": "rocm-exl3/qwen38"},
-    "title": {"model": "rocm-exl3/qwen38"},
-    "compaction": {"model": "rocm-exl3/qwen38"},
-    "worker": {"model": "rocm-exl3/qwen38"}
+    "build": {"model": "rocm-exl3/qwen38#xhigh"},
+    "title": {"model": "rocm-exl3/qwen38#xhigh"},
+    "compaction": {"model": "rocm-exl3/qwen38#xhigh"},
+    "worker": {
+      "model": "rocm-exl3/qwen38#xhigh",
+      "mode": "subagent",
+      "description": "Local Qwen worker for bounded implementation, inspection and tests. Assign independent tasks in parallel.",
+      "system": "Focus on the assigned files and responsibility. Other agents share this tree: preserve their changes and adapt to them. Report changes, checks and findings concisely to the parent.",
+      "permissions": [{"action": "subagent", "resource": "*", "effect": "deny"}]
+    }
   },
 
   // Keep this false while validating tool history and request payloads.
