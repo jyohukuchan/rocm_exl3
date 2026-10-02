@@ -93,15 +93,17 @@ static const std::array<fp_quantize_tiles_kernel, 8> quantize_tiles_optimized_in
 bool quantize_tiles_use_optimized(int major, int minor, int K, int cb)
 {
     // RDNA: the dense specialisation is ported as quantize_tiles_optimized_rdna.hip.h
-    // (include swap over the bit-exact RDNA codebook) and enabled for K = 4, which is
-    // the trunk/MTP bitrate and needs no global codebook LUT. Other K stay on the plain
-    // kernel: K = 6 wants quantize_codebook (CUDA-only), K = 2/3 carry the upstream
-    // initial-state fix (different results), and (major, minor) is the gfx number here
-    // anyway -- gfx1151 reports (11, 5) -- so the upstream table would misfire.
-    // EXL3_QT_OPTIMIZED overrides the choice for K = 4 only; forcing other K would
-    // desync the scratch layout from the plain getters in comp_units_rdna.
+    // (include swap over the bit-exact RDNA codebook) and enabled for K = 3..5, the
+    // bitrates real conversions hit on this branch (3.05 bpw MoE packs and 4 bpw
+    // dense packs); none of these K needs the global codebook LUT. Other K stay on
+    // the plain kernel: K = 6 wants quantize_codebook (CUDA-only), K = 1/2 carry the
+    // upstream initial-state fix (different results), and (major, minor) is the gfx
+    // number here anyway -- gfx1151 reports (11, 5) -- so the upstream table would
+    // misfire. EXL3_QT_OPTIMIZED overrides the choice for K = 3..5 only; forcing
+    // other K would desync the scratch layout from the plain getters in
+    // comp_units_rdna. Bit-identity per K is gated by rocm_tools/qt_bitwise.py.
     (void) major; (void) minor; (void) cb;
-    if (K != 4)
+    if (K < 3 || K > 5)
         return false;
     if (const char* env = std::getenv("EXL3_QT_OPTIMIZED"))
         return env[0] == '1';

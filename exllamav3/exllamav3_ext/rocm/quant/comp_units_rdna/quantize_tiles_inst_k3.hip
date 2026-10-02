@@ -2,9 +2,10 @@
 // quant/comp_units/quantize_tiles_inst_k3.cu with the kernel header swapped for
 // the RDNA sibling (which swaps codebook.cuh for codebook_rdna.hip.h).
 //
-// `optimized` is accepted for signature compatibility with the upstream
-// declarations and ignored: quantize_tiles_optimized.cuh has no RDNA sibling and
-// quantize_rdna.hip never asks for it (quantize_tiles_use_optimized() is false).
+// The optimized getter returns the ported dense specialisation
+// (quantize_tiles_optimized_rdna.hip.h); quantize_rdna.hip enables it for
+// K = 3..5. Bit-identity against the plain kernel is gated by
+// rocm_tools/qt_bitwise.py.
 //
 // These exist because ROCM_EXCLUDE drops all of quant/comp_units/, which is
 // where upstream defines these getters; without them the ROCm build fails at
@@ -12,8 +13,9 @@
 
 #include "../../../quant/comp_units/quantize_tiles_instances.cuh"
 #include "../quantize_tiles_kernel_rdna.hip.h"
+#include "../quantize_tiles_optimized_rdna.hip.h"
 
-fp_quantize_tiles_kernel quantize_tiles_kernel_k3_cb0(bool optimized) { (void) optimized; return quantize_tiles_kernel<3, 0>; }
-fp_quantize_tiles_kernel quantize_tiles_kernel_k3_cb1(bool optimized) { (void) optimized; return quantize_tiles_kernel<3, 1>; }
-fp_quantize_tiles_kernel quantize_tiles_kernel_k3_cb2(bool optimized) { (void) optimized; return quantize_tiles_kernel<3, 2>; }
-fp_quantize_tiles_kernel quantize_tiles_kernel_k3_cb2_l160(bool optimized) { (void) optimized; return quantize_tiles_kernel<3, 2, 160>; }
+fp_quantize_tiles_kernel quantize_tiles_kernel_k3_cb0(bool optimized) { return optimized ? quantize_tiles_optimized_kernel<3, 0> : quantize_tiles_kernel<3, 0>; }
+fp_quantize_tiles_kernel quantize_tiles_kernel_k3_cb1(bool optimized) { return optimized ? quantize_tiles_optimized_kernel<3, 1> : quantize_tiles_kernel<3, 1>; }
+fp_quantize_tiles_kernel quantize_tiles_kernel_k3_cb2(bool optimized) { return optimized ? quantize_tiles_optimized_kernel<3, 2> : quantize_tiles_kernel<3, 2>; }
+fp_quantize_tiles_kernel quantize_tiles_kernel_k3_cb2_l160(bool optimized) { return optimized ? quantize_tiles_optimized_kernel<3, 2, 160> : quantize_tiles_kernel<3, 2, 160>; }
