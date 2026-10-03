@@ -1,0 +1,59 @@
+{
+  "date": "2026-10-03",
+  "task": "Full EXL3 conversion: qwen3.8-flash-next-orcarouter (qwen4_exp BF16, 336 GiB) -> EXL3 3.05bpw on 1x R9700",
+  "hardware": "1x Radeon AI PRO R9700 (gfx1201), container rocm-exl3-r9700-conv, cap 48 GiB no-swap",
+  "extension": "/work/lib-r9700-opt (K=3..5 dense quantizer port, commits 8d848c8/0c70ff5)",
+  "settings": {
+    "bits": 3.05,
+    "hq": true,
+    "head_bits": 5,
+    "vision_bits": 5,
+    "mtp_bits": 3,
+    "ngram_bits": 5,
+    "calibration": "250x2048 default",
+    "codebook": "mul1",
+    "out_scales": "always"
+  },
+  "achieved": {
+    "final_bpw_excluding_head": 3.07,
+    "per_layer_bpw_text": 3.15,
+    "lm_head_bpw": 5.01,
+    "mtp_bpw_avg": 4.02,
+    "vision_bpw": 5.03
+  },
+  "quality_samples_rfn": {
+    "layers.23": 0.025293,
+    "layers.35": 0.049239,
+    "layers.47": 0.014112,
+    "lm_head": 0.020478
+  },
+  "output_dir_host": "~/datapool/rocm-exl3-rdna2/models/qwen38-flash-next-orcarouter-exl3-3.05bpw",
+  "output_size_bytes_total": 85900000000,
+  "sha256": {
+    "model-00001-of-00007.safetensors": "65123343a246137a3bd948a3aae1393bada7bb01240b917e6ac190997bd0c6f9",
+    "model-00002-of-00007.safetensors": "d4e2aad2283f0a5a25b2b6a08d593d85cacfa9cb78364057b46f36748110f2da",
+    "model-00003-of-00007.safetensors": "0e904046dfd1a7e3d5f898d320923247597bc6faea41e58bd1f81db2e367b7f3",
+    "model-00004-of-00007.safetensors": "85c1fa359e450d24af1dc6c7c17f5f1b80f33b4b9b2aa6e9719b7d5bc1508ceb",
+    "model-00005-of-00007.safetensors": "f8f583992210932c7c98ce2361a803af37f36afb6ee3981126e20bd8ee1ede7d",
+    "model-00006-of-00007.safetensors": "75b502d8236c54e8d4d08c7475f308bb979b50af4d5b763f2c128db035a17e49",
+    "model-00007-of-00007.safetensors": "eb8f7cebed9ab0a539fe54cfc52b8b8b372e423c406c795f8493c811db68151a",
+    "ngram_embedding.safetensors": "3e0f594fce459cfa74b5cb65267caa9302139c619c9e7a7d8c448c935dc6f4e0"
+  },
+  "timeline": {
+    "ngram_table_start_jst": "2026-10-02 20:08",
+    "production_moe_dq_start_jst": "2026-10-03 02:15",
+    "all_done_jst": "2026-10-03 14:52",
+    "production_wall_h": 12.6,
+    "layer_rate_min": "~11-18 min/layer via per-expert DQ path"
+  },
+  "blockers_and_workarounds": [
+    "ngram phase memory growth OOM-killed the 36 GiB cgroup repeatedly; auto-resume loop completed the table (host survived; earlier uncapped run crashed the OS).",
+    "Deterministic HSA_STATUS_ERROR_EXCEPTION at the first advanced MoE layer: RDNA4 mma_sync traps in BC graph / fused MoE kernels on gfx1201. Workaround rocm_tools/r9700_moe_dq_convert.py (commit 498d0f2) steers all MoE forwards to the per-expert DQ path."
+  ],
+  "hf_comparison": {
+    "repo": "Lygodactylus/Qwen3.8-Flash-Next-Uncensored-exl3-3bpw (base orcarouter/Qwen3.8-Flash-Next-Uncensored, version 1.4.6)",
+    "embed_tokens_first_1mb_sha256": "ed63c4864beac27c409262085bd60fce48d3d74ab4997fad5c586968f8310cb7 (MATCH -> same input weights)",
+    "layer0_expert10_down_proj_trellis": "MISMATCH (c65e1f1c... vs d111eb89...) -> different quantization result",
+    "ngram": "their K=3 (19.84 GB) vs our K=5 (32.64 GB) -> not the running-server format"
+  }
+}
