@@ -541,7 +541,13 @@ def prepare_constraints(
             "When calling a function, emit Qwen XML <tool_call> blocks. "
             "For multiple requested calls, emit all blocks consecutively. "
             "Encode string parameters as JSON strings including their quotes; "
-            "each parameter value must satisfy its schema, with no text after a call."
+            "each parameter value must satisfy its schema, with no text after a call. "
+            "Tool arguments must be actual commands, paths, or values, never placeholders. "
+            "Encode every string parameter as a JSON string with double quotes and escaped "
+            "newlines/backslashes. Examples: a shell command to inspect the current directory "
+            "is <parameter=command>\"pwd\"</parameter>; a file path is "
+            "<parameter=path>\"README.md\"</parameter>. The quotes are serialization only; "
+            "the tool receives pwd or README.md as its value."
         ),
     )
     if compile_filters:

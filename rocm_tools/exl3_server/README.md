@@ -329,6 +329,9 @@ schemas.
 The Qwen XML adapter renders tool history and the template's parameter example
 with JSON-quoted strings, including escaped newlines for multiline source code.
 This keeps the prompt representation consistent with the generation grammar.
+The tool instructions also illustrate concrete command/path string values: some
+checkpoints otherwise produce syntactically valid placeholder arguments when
+constrained to JSON strings. See the [2026-10-03 investigation](../../doc/opencode_tool_arguments_20261003.md).
 Parallel calls are constrained separately so native newlines between calls work.
 
 The live verification scripts cover automatic and named calls, history,
