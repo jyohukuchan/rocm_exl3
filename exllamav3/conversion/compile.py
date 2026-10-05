@@ -146,6 +146,8 @@ def compile_model(args, model, config, tokenizer, mtp_model = None, vision_model
             raise RuntimeError("Compile dropped quantized tensors, output model is incomplete (see above)")
 
     # Copy non-tensor files
+    from ..model.decision import package_decision_weights
+    package_decision_weights(in_dir, out_dir, tokenizer)
     print(f" -- Copying non-tensor files from {in_dir}")
     filtered_files = []
     ignored_files = []

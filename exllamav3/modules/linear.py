@@ -609,6 +609,14 @@ class Linear(Module):
         if x.shape[-1] < self.in_features:
             x = torch.nn.functional.pad(x, (0, self.in_features - x.shape[-1]))
 
+        # Typed decision heads keep exact source rows alongside a quantized
+        # generation head. The override already includes the head LoRA delta.
+        if self.caps.get("logits_output") and params.get("head_override") is not None:
+            weight = params["head_override"]
+            if weight.ndim != 2 or weight.shape[0] != x.shape[-1]:
+                raise ValueError("Decision head override dimensions do not match")
+            return x.float() @ weight.to(device=x.device, dtype=torch.float32)
+
         if self.qmap and "capture" in params:
             self.capture_H(x, params)
             # Terminal conversion heads can collect the identical input Hessian
