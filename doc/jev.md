@@ -16,6 +16,7 @@ explicitly rejected by the library.
 The current JEV-27B-VL conversion uses:
 
 ```sh
+ulimit -n 65536
 EXL3_ROCM_MLP_RANGE_BALANCE=0 python convert.py \
   -i /models/JEV-27B-VL -w /work/jev-convert \
   -o /models/JEV-27B-VL-exl3-4bpw \
@@ -45,7 +46,9 @@ python -m rocm_tools.jev_server \
   --context 16384 --chunk-size 1024 --port 3960
 ```
 
-The default bind is loopback. `--api-key` enables Bearer authentication on POST
+The launcher raises its own open-file soft limit to 65536 when permitted; the
+JEV adapter needs more descriptors than the common 1024 default. Library callers
+should set `ulimit -n 65536` before starting their process. The default bind is loopback. `--api-key` enables Bearer authentication on POST
 routes. This launcher disables the existing MLP metadata range-balance policy,
 which rejects runtime LoRA. GPU validation of the original-scale JEV route is
 still pending; no general R9700-support claim follows from these changes.
@@ -112,8 +115,10 @@ agreement per case. These are a small regression screen, not broad model
 quality or long-context validation.
 
 The BF16 reference disables Transformers' optional allocator warmup because
-a single ~26GiB allocation failed on V620. All source weights and forward math
-remain unchanged. Original failed logs must be retained beside successful runs.
+a single ~26GiB allocation failed on V620. The collector uses a complete per-module device map, and supports a CPU-staged
+`--reference-placement hybrid` alternative. No parent/root placement overrides
+are used, because Accelerate can move all child weights to that parent device
+during hook setup. All source weights and forward math remain unchanged. Original failed logs must be retained beside successful runs.
 
 Sources: [model and reference server](https://huggingface.co/autotrust/JEV-27B-VL),
 [llama.cpp decision API](https://github.com/ggml-org/llama.cpp/blob/7049ff0cbeb1f5ead231de4522af6b75d8d773c0/tools/server/server-decision.cpp).
