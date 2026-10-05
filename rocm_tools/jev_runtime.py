@@ -156,7 +156,7 @@ class JEVRuntime:
         if kind=='score':out['score']=sum(i*v for i,v in enumerate(p))
         return out
 
-    def generate(self,messages,*,max_tokens=128,temperature=0.0,enable_thinking=False):
+    def generate(self,messages,*,max_tokens=128,temperature=0.0,enable_thinking=False,reasoning_effort=None):
         if not isinstance(max_tokens,int) or not 1<=max_tokens<=self.context:
             raise ValueError('max_tokens is outside the configured context')
         if not isinstance(temperature,(int,float)) or not 0<=temperature<=2:
@@ -165,8 +165,12 @@ class JEVRuntime:
         for message in messages:
             content,media=self.state_parts(message['content'])
             plain.append({'role':message['role'],'content':content});embeddings.extend(media)
-        prompt=self.hf_tokenizer.apply_chat_template(plain,tokenize=False,add_generation_prompt=True,
-                                                    enable_thinking=enable_thinking)
+        kwargs={'enable_thinking':enable_thinking}
+        if reasoning_effort is not None:kwargs['reasoning_effort']=reasoning_effort
+        prompt=self.hf_tokenizer.apply_chat_template(plain,tokenize=False,add_generation_prompt=True,**kwargs)
+        return self.generate_prompt(prompt,embeddings,max_tokens,temperature)
+
+    def generate_prompt(self,prompt,embeddings,max_tokens,temperature=0.0,stop_ids=()):
         tokens=[];reason='length'
         with self.session(prompt,embeddings,reserve=max_tokens) as (logits,n,params):
             for i in range(max_tokens):
@@ -174,7 +178,7 @@ class JEVRuntime:
                 if not bool(self.torch.isfinite(logits).all()):raise RuntimeError('Non-finite generation logits')
                 token=int(logits.argmax()) if temperature==0 else int(self.torch.multinomial(
                     self.torch.softmax(logits/temperature,dim=-1),1))
-                if token in self.eos_ids:reason='stop';break
+                if token in self.eos_ids or token in stop_ids:reason='stop';break
                 tokens.append(token)
                 if i+1<max_tokens:
                     ids=self.torch.tensor([[token]],dtype=self.torch.long)
@@ -182,6 +186,67 @@ class JEVRuntime:
         text=self.tokenizer.decode(self.torch.tensor(tokens,dtype=self.torch.long),decode_special_tokens=True) if tokens else ''
         return {'text':text,'finish_reason':reason,'usage':{'prompt_tokens':n,'completion_tokens':len(tokens),
                                                           'total_tokens':n+len(tokens)}}
+
+    def adaptive_decide(self,kind,state,question,options=None,*,strategy='single',thinking='off',
+                        threshold=0.8,think_budget=1024,return_reasoning=False,debug=False,
+                        reasoning_effort=None):
+        """Confidence-gated System 2, using the official 50:50 distribution mix."""
+        import math
+        start=time.monotonic()
+        if thinking=='default':thinking='off'
+        if thinking not in ('off','auto','on'):raise ValueError('Invalid thinking mode')
+        if kind=='score' and thinking!='off':raise ValueError('Thinking supports noul and choice')
+        if not isinstance(threshold,(int,float)) or not math.isfinite(threshold) or not 0<=threshold<=1:
+            raise ValueError('threshold must be between 0 and 1')
+        if not isinstance(think_budget,int) or not 1<=think_budget<self.context:
+            raise ValueError('think_budget must be positive and smaller than context')
+        if reasoning_effort not in (None,'low','medium','xhigh'):raise ValueError('Invalid reasoning effort')
+        result=self.decide(kind,state,question,options,strategy=strategy)
+        if thinking=='off':return result
+        p1=result['probabilities']
+        info={'mode':thinking,'threshold':threshold,'budget':think_budget,'used':False}
+        if thinking=='on' or max(p1)<threshold:
+            text,embeddings=self.state_parts(state)
+            shown=['Yes (true)','No (false)'] if kind=='noul' else result['options']
+            # Contextual answer labels differ from bare-v1 option-line labels.
+            import string
+            prefix=self.tokenizer.encode('Answer: (').flatten().tolist()
+            labels=[]
+            for lab in list(string.ascii_uppercase)+[a+b for a in string.ascii_uppercase for b in string.ascii_uppercase]:
+                ids=self.tokenizer.encode(f'Answer: ({lab})').flatten().tolist()
+                if ids[:len(prefix)]==prefix and len(ids)==len(prefix)+2:labels.append((lab,ids[len(prefix)]))
+                if len(labels)==len(shown):break
+            if len(labels)!=len(shown):raise ValueError('Not enough contextual System 2 answer labels')
+            body='\n'.join(f'({lab}) {opt}' for (lab,_),opt in zip(labels,shown))
+            user=text+f'\n\nQuestion: {question}\n\nOptions:\n{body}\n\n'+(
+                'Think it through carefully, then give your final answer on the last line in the form: Answer: (X)')
+            kwargs={'enable_thinking':True}
+            if reasoning_effort is not None:kwargs['reasoning_effort']=reasoning_effort
+            prompt=self.hf_tokenizer.apply_chat_template([{'role':'user','content':user}],tokenize=False,
+                                                        add_generation_prompt=True,**kwargs)
+            end=self.tokenizer.encode('</think>',encode_special_tokens=True).flatten().tolist()
+            if len(end)!=1:raise ValueError('Model has no single-token thinking delimiter')
+            thought=self.generate_prompt(prompt,embeddings,think_budget,stop_ids=end)
+            read_prompt=prompt+thought['text']+'</think>\n\nAnswer: ('
+            with self.session(read_prompt,embeddings) as (logits,n,_):
+                z=[logits[i].item() for _,i in labels];mx=max(z);e=[math.exp(v-mx) for v in z]
+                total=sum(e);p2=[v/total for v in e]
+            if kind=='noul':p2=[p2[1],p2[0]]
+            mixed=[0.5*a+0.5*b for a,b in zip(p1,p2)]
+            best=max(range(len(mixed)),key=mixed.__getitem__)
+            result.update(probabilities=mixed,choice_index=best,choice=result['options'][best])
+            usage=result['usage'];usage['prompt_tokens']+=thought['usage']['prompt_tokens']+n
+            usage['completion_tokens']+=thought['usage']['completion_tokens']
+            usage['total_tokens']=usage['prompt_tokens']+usage['completion_tokens']
+            result['num_model_requests']+=2
+            info.update(used=True,think_tokens=thought['usage']['completion_tokens'],
+                        finished_within_budget=thought['finish_reason']=='stop',mix=0.5)
+            if return_reasoning:info['reasoning']=thought['text'].strip()
+            if debug:info.update(system1=p1,system2=p2)
+        elif debug:info['system1']=p1
+        result['thinking']=info
+        result['elapsed_seconds']=time.monotonic()-start
+        return result
 
     def close(self):
         self.lora.unload()

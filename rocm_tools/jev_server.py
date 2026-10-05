@@ -93,18 +93,19 @@ def create_app(runtime,*,model_name='jev27-local',api_key=None):
     async def info():
         return {'model':model_name,'protocol':'jev27-bare-v1','max_options':len(runtime.profile.labels),
                 'temperatures':runtime.profile.temperatures,'context':runtime.context,
-                'thinking':'off','strategies':['single','permute','tournament']}
+                'thinking':['off','auto','on'],'strategies':['single','permute','tournament']}
     @app.post('/v1/decide')
     async def decide(request:Request):
         body=await body_of(request)
-        unknown=set(body)-{'model','kind','state','question','options','strategy','thinking'}
+        unknown=set(body)-{'model','kind','state','question','options','strategy','thinking','threshold',
+                          'think_budget','return_reasoning','debug','reasoning_effort'}
         if unknown:raise HTTPException(400,'Unsupported decide fields: '+', '.join(sorted(unknown)))
-        if body.get('thinking','off') not in ('off','default'):
-            raise HTTPException(400,'Use System 2 chat with enable_thinking for reasoning')
         strategy=body.get('strategy','single')
         if strategy=='auto':strategy='single'
-        out=await run(runtime.decide,body.get('kind'),body.get('state',''),body.get('question'),body.get('options'),
-                      strategy=strategy)
+        out=await run(runtime.adaptive_decide,body.get('kind'),body.get('state',''),body.get('question'),body.get('options'),
+                      strategy=strategy,thinking=body.get('thinking','off'),threshold=body.get('threshold',0.8),
+                      think_budget=body.get('think_budget',1024),return_reasoning=body.get('return_reasoning',False),
+                      debug=body.get('debug',False),reasoning_effort=body.get('reasoning_effort'))
         out['model']=model_name
         return out
     @app.post('/v1/systemone')
@@ -132,9 +133,10 @@ def create_app(runtime,*,model_name='jev27-local',api_key=None):
         if any(not isinstance(m,dict) or m.get('role') not in ('system','user','assistant') or 'content' not in m
                for m in messages):raise HTTPException(400,'Invalid chat message')
         template=body.get('chat_template_kwargs') or {}
-        if set(template)-{'enable_thinking'}:raise HTTPException(400,'Unsupported chat template option')
+        if set(template)-{'enable_thinking','reasoning_effort'}:raise HTTPException(400,'Unsupported chat template option')
         out=await run(runtime.generate,messages,max_tokens=body.get('max_tokens',128),
-                      temperature=body.get('temperature',0),enable_thinking=template.get('enable_thinking',False))
+                      temperature=body.get('temperature',0),enable_thinking=template.get('enable_thinking',False),
+                      reasoning_effort=template.get('reasoning_effort'))
         return {'id':'chatcmpl-'+uuid.uuid4().hex,'object':'chat.completion','created':int(time.time()),
                 'model':model_name,'choices':[{'index':0,'message':{'role':'assistant','content':out['text']},
                                              'finish_reason':out['finish_reason']}],'usage':out['usage']}

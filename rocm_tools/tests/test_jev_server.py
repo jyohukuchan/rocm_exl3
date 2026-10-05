@@ -13,6 +13,9 @@ class FakeRuntime:
         options=options or (['false','true'] if kind=='noul' else [str(i) for i in range(6)])
         p=[0.1/(len(options)-1)]*(len(options)-1)+[0.9]
         return {'probabilities':p,'usage':{'prompt_tokens':10}}
+    def adaptive_decide(self,*a,**kw):
+        if kw.get('thinking') not in ('off','default'):raise ValueError('fake thinking control')
+        return self.decide(*a,**kw)
     def generate(self,*a,**kw):return {'text':'OK','finish_reason':'stop','usage':{'prompt_tokens':3,'completion_tokens':1}}
     def close(self):pass
 
