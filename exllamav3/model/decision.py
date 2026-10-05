@@ -10,6 +10,7 @@ import math
 from pathlib import Path
 import shutil
 import string
+import os
 
 
 class DecisionProfile:
@@ -103,6 +104,7 @@ def package_decision_weights(source, output, tokenizer):
         rows = torch.cat([f.get_slice('lm_head.weight')[i:i+1] for i in profile.all_ids])
     save_file({'token_ids':torch.tensor(profile.all_ids), 'base_rows':rows.contiguous()},
               dest/'decision_rows.safetensors')
+    os.chmod(dest/'decision_rows.safetensors',0o644)
     shutil.copytree(root/'adapter_vllm',dest/'adapter_vllm',dirs_exist_ok=True)
     shutil.copy2(root/'calibration.json',dest/'calibration.json')
     (dest/'decision_config.json').write_text(json.dumps({
