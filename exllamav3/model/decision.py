@@ -54,7 +54,7 @@ class DecisionProfile:
                    json.loads((root/'calibration.json').read_text()), encode)
 
     def question(self, kind, question, options=None):
-        if kind not in self.ranges or not isinstance(question, str) or not question:
+        if not isinstance(kind,str) or kind not in self.ranges or not isinstance(question, str) or not question:
             raise ValueError('Provide kind noul/score/choice and a non-empty question')
         lo, hi = self.ranges[kind]
         if kind == 'choice':
@@ -68,7 +68,7 @@ class DecisionProfile:
         else:
             default = ['false','true'] if kind == 'noul' else [str(i) for i in range(6)]
             options = default if options is None else options
-            if len(options) != hi-lo or not all(isinstance(o,str) for o in options):
+            if not isinstance(options,list) or len(options) != hi-lo or not all(isinstance(o,str) for o in options):
                 raise ValueError(f'{kind} requires exactly {hi-lo} options')
             ids, bias, lines = self.ids[lo:hi], self.bias[lo:hi], options
         return {'kind':kind, 'question':question, 'options':options, 'ids':ids, 'bias':bias,
@@ -80,7 +80,8 @@ class DecisionProfile:
         z = [(a+b)/self.temperatures[prepared['kind']] for a,b in zip(raw,prepared['bias'])]
         m = max(z)
         e = [math.exp(v-m) for v in z]
-        return [v/sum(e) for v in e]
+        total = sum(e)
+        return [v/total for v in e]
 
 
 def package_decision_weights(source, output, tokenizer):
