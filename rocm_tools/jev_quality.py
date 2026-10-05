@@ -149,8 +149,10 @@ def candidate(args,cases):
         runtime.decide('noul','Tokyo is in Japan.','Is this correct?')
         after=runtime.generate(messages,max_tokens=16)
         if before['text']!=after['text']:raise RuntimeError('System 1 contaminated System 2 generation')
-        image_chat=runtime.generate([{'role':'user','content':cases[-2]['state']+[
-            'Name the color and shape. Answer briefly.']}],max_tokens=32)
+        image_case=next((c for c in cases if isinstance(c['state'],list) and any(
+            isinstance(p,dict) and ('image' in p or p.get('type')=='image_url') for p in c['state'])),None)
+        image_chat=runtime.generate([{'role':'user','content':image_case['state']+[
+            'Name the color and shape. Answer briefly.']}],max_tokens=32) if image_case else None
         props=runtime.torch.cuda.get_device_properties(0)
         metadata={'torch':runtime.torch.__version__,'device':props.name,'arch':props.gcnArchName,
                   'device_indices':runtime.device_indices,'gpu_split':split,
@@ -160,6 +162,10 @@ def candidate(args,cases):
                   'quantization_config':runtime.config.config_dict.get('quantization_config'),
                   'base_generation':before,'image_generation':image_chat,'adapter_isolation_pass':True,
                   'peak_vram_bytes':runtime.torch.cuda.max_memory_allocated(0)}
+        from rocm_tools.conversion_quality import runtime_fingerprint,sha
+        metadata['runtime']=runtime_fingerprint()
+        metadata['jev_source_sha256']={name:sha(Path(__file__).with_name(name))
+                                      for name in ('jev_runtime.py','jev_quality.py','jev_server.py')}
         return result,metadata
     finally:runtime.close()
 
