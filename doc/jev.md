@@ -8,7 +8,10 @@ logits or applying a sampling filter would not implement its trained decisions.
 This fork keeps both systems in one model, selects LoRA per forward, and starts
 each request with fresh KV and recurrent state. The dedicated server serializes
 GPU work, including client cancellation, so two systems cannot share mutable
-state. Single-GPU loading is supported by this server; tensor-parallel LoRA is
+state. Single-GPU loading is supported by this server; `--gpu-split 28,28`
+selects single-process layer split. The early unquantized V620 pair probe needed
+`AMD_SERIALIZE_KERNEL=3` during loading; asynchronous source loading still
+needs investigation. Tensor-parallel LoRA is
 explicitly rejected by the library.
 
 ## Conversion and precision
@@ -118,7 +121,24 @@ The BF16 reference disables Transformers' optional allocator warmup because
 a single ~26GiB allocation failed on V620. The collector uses a complete per-module device map, and supports a CPU-staged
 `--reference-placement hybrid` alternative. No parent/root placement overrides
 are used, because Accelerate can move all child weights to that parent device
-during hook setup. All source weights and forward math remain unchanged. Original failed logs must be retained beside successful runs.
+during hook setup. All source weights and forward math remain unchanged. The oracle explicitly uses the upstream Torch GDN/conv
+functions and SDPA MATH because the installed FLA BF16 dot kernel cannot compile
+on gfx1030. Original failed logs must be retained beside successful runs.
 
 Sources: [model and reference server](https://huggingface.co/autotrust/JEV-27B-VL),
 [llama.cpp decision API](https://github.com/ggml-org/llama.cpp/blob/7049ff0cbeb1f5ead231de4522af6b75d8d773c0/tools/server/server-decision.cpp).
+
+## Interim hardware evidence (2026-10-06)
+
+The BF16 oracle and native unquantized V620 pair each completed all eight
+decisions. Native-vs-oracle mean KL is 1.8139607e-6, maximum probability
+difference .00103208, with 8/8 identical top choices. Base generation before
+and after a decision is identical (`東京`); image chat returns ` red square`.
+The native run used source weights cast to FP16, FP32 LoRA/exact head, the live
+V620 native binary and serialized GPU operations. These are **unquantized**
+results; final 4bpw V620/R9700 validation is still pending conversion.
+
+Real HTTP tests also exercised all decision/chat endpoints and an 8-token
+adaptive-thinking budget. TypeSafe score descriptions are appended to the
+question with their numeric mapping, preserving the trained 0..5 option lines.
+A correct `2 + 2 = 4` answer then receives its highest probability at grade5.
