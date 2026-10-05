@@ -35,7 +35,10 @@ def systemone_questions(body):
             if not isinstance(criteria,list) or len(criteria)!=6:
                 raise ValueError('JEV score criteria must contain its six trained levels (0..5)')
             keys=[str(i) for i in range(6)]
-            options=[str(v) for v in criteria]
+            # Preserve JEV's trained numeric option lines. Put the caller's
+            # ordinal descriptions in the question with an explicit mapping.
+            question+='\nRating scale:\n'+'\n'.join(f'{i}: {v}' for i,v in enumerate(criteria))
+            options=keys
         elif kind=='noul':
             if criteria is not None and not isinstance(criteria,dict):raise ValueError('Noul criteria must be an object')
             keys=['false','true']

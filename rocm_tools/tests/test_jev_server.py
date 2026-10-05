@@ -52,3 +52,12 @@ def test_jEV_score_rejects_wrong_number_of_levels():
         systemone_questions({'state':'x','questions':{'q':{'type':'score','instructions':'Rate','criteria':['bad','good']}}})
     assert format_answer('choice',[0.5,0.5],['a','b'],None)['confidence']==0
     assert format_answer('score',[1/6]*6,[str(i) for i in range(6)],list(range(6)))['confidence']==0
+
+
+def test_score_criteria_preserve_trained_numeric_readout():
+    criteria=['entirely wrong','poor','weak','acceptable','good','entirely correct']
+    _,kind,question,options,keys,legend=systemone_questions({'state':'x','questions':{
+        'grade':{'type':'score','instructions':'Rate quality.','criteria':criteria}}})[0]
+    assert kind=='score' and options==['0','1','2','3','4','5']
+    assert '0: entirely wrong' in question and '5: entirely correct' in question
+    assert legend==criteria
