@@ -134,7 +134,8 @@ def candidate(args,cases):
     os.environ['EXL3_ROCM_MLP_RANGE_BALANCE']='0'
     from rocm_tools.jev_runtime import JEVRuntime
     split=[float(v) for v in args.gpu_split.split(',')] if args.gpu_split else None
-    runtime=JEVRuntime(args.model,context=16384,chunk_size=1024,vision=True,gpu_split=split)
+    runtime=JEVRuntime(args.model,context=16384,chunk_size=1024,vision=True,gpu_split=split,
+                       load_no_forward=args.load_no_forward)
     result=[]
     try:
         for case in cases:
@@ -153,6 +154,9 @@ def candidate(args,cases):
         props=runtime.torch.cuda.get_device_properties(0)
         metadata={'torch':runtime.torch.__version__,'device':props.name,'arch':props.gcnArchName,
                   'device_indices':runtime.device_indices,'gpu_split':split,
+                  'load_no_forward':args.load_no_forward,
+                  'execution_env':{k:os.environ.get(k) for k in ('AMD_SERIALIZE_KERNEL','PYTHONPATH',
+                      'ROCR_VISIBLE_DEVICES','HSA_ENABLE_SDMA','EXL3_ROCM_MLP_RANGE_BALANCE')},
                   'quantization_config':runtime.config.config_dict.get('quantization_config'),
                   'base_generation':before,'image_generation':image_chat,'adapter_isolation_pass':True,
                   'peak_vram_bytes':runtime.torch.cuda.max_memory_allocated(0)}
@@ -190,6 +194,7 @@ def main():
     ap.add_argument('--candidate')
     ap.add_argument('--reference-placement',choices=['pair','hybrid'],default='pair')
     ap.add_argument('--gpu-split')
+    ap.add_argument('--load-no-forward',action='store_true',help='Diagnostic: skip autosplit measuring forwards')
     args=ap.parse_args()
     soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE,(max(soft,min(65536,hard)),hard))

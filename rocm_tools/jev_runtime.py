@@ -12,7 +12,8 @@ import resource
 
 
 class JEVRuntime:
-    def __init__(self, directory, *, context=16384, chunk_size=1024, vision=True, gpu_split=None):
+    def __init__(self, directory, *, context=16384, chunk_size=1024, vision=True, gpu_split=None,
+                 load_no_forward=False):
         if resource.getrlimit(resource.RLIMIT_NOFILE)[0] < 4096:
             raise ValueError('JEV requires at least 4096 open files; launch with ulimit -n 65536')
         import torch
@@ -37,7 +38,8 @@ class JEVRuntime:
         self.model = Model.from_config(self.config)
         self.cache = Cache(self.model, max_num_tokens=context, max_batch_size=1)
         load_args = {'use_per_device':gpu_split} if gpu_split else {'device':'cuda:0'}
-        self.model.load(**load_args, max_chunk_size=chunk_size, max_output_size=1)
+        self.model.load(**load_args, max_chunk_size=chunk_size, max_output_size=1,
+                        autosplit_no_forward=load_no_forward)
         self.device_indices = sorted({m.device.index for m in self.model
             if m.device is not None and m.device.type=='cuda'})
         self.lora = LoRA.from_directory(self.model, str(self.directory/'adapter_vllm'), strict=True,
