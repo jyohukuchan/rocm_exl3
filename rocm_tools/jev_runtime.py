@@ -8,10 +8,13 @@ from contextlib import contextmanager
 import json
 from pathlib import Path
 import time
+import resource
 
 
 class JEVRuntime:
     def __init__(self, directory, *, context=16384, chunk_size=1024, vision=True):
+        if resource.getrlimit(resource.RLIMIT_NOFILE)[0] < 4096:
+            raise ValueError('JEV requires at least 4096 open files; launch with ulimit -n 65536')
         import torch
         from exllamav3 import Config, Model, Cache, Tokenizer
         from exllamav3.model.lora import LoRA

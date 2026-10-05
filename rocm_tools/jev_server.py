@@ -11,6 +11,7 @@ import hmac
 import json
 import math
 import os
+import resource
 import time
 import uuid
 
@@ -154,6 +155,8 @@ def main():
     ap.add_argument('--api-key')
     ap.add_argument('--no-vision',action='store_true')
     args=ap.parse_args()
+    soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
+    resource.setrlimit(resource.RLIMIT_NOFILE,(max(soft,min(65536,hard)),hard))
     # The existing metadata-rescale adapter rejects LoRA. JEV keeps original
     # scales and takes the unfused projection path for both systems.
     os.environ['EXL3_ROCM_MLP_RANGE_BALANCE']='0'
