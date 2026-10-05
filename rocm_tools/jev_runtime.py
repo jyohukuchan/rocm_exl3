@@ -12,7 +12,7 @@ import resource
 
 
 class JEVRuntime:
-    def __init__(self, directory, *, context=16384, chunk_size=1024, vision=True):
+    def __init__(self, directory, *, context=16384, chunk_size=1024, vision=True, gpu_split=None):
         if resource.getrlimit(resource.RLIMIT_NOFILE)[0] < 4096:
             raise ValueError('JEV requires at least 4096 open files; launch with ulimit -n 65536')
         import torch
@@ -36,7 +36,10 @@ class JEVRuntime:
             lambda s: self.tokenizer.encode(s).flatten().tolist())
         self.model = Model.from_config(self.config)
         self.cache = Cache(self.model, max_num_tokens=context, max_batch_size=1)
-        self.model.load(device='cuda:0', max_chunk_size=chunk_size, max_output_size=1)
+        load_args = {'use_per_device':gpu_split} if gpu_split else {'device':'cuda:0'}
+        self.model.load(**load_args, max_chunk_size=chunk_size, max_output_size=1)
+        self.device_indices = sorted({m.device.index for m in self.model
+            if m.device is not None and m.device.type=='cuda'})
         self.lora = LoRA.from_directory(self.model, str(self.directory/'adapter_vllm'), strict=True,
                                        dtype=torch.float32)
         self.lora.enabled = False
@@ -85,6 +88,14 @@ class JEVRuntime:
 
     @contextmanager
     def session(self,prompt,embeddings=(),*,adapter=False,decision=False,reserve=0):
+        # Cache tensors are allocated by Model.load in inference mode. State
+        # clearing and the entire request must use the same thread-local mode.
+        with self.torch.inference_mode():
+            with self._session(prompt,embeddings,adapter=adapter,decision=decision,reserve=reserve) as session:
+                yield session
+
+    @contextmanager
+    def _session(self,prompt,embeddings=(),*,adapter=False,decision=False,reserve=0):
         ids = self.tokenizer.encode(prompt,encode_special_tokens=True,embeddings=list(embeddings))
         n = ids.shape[-1]
         if n<1 or n+reserve>self.context: raise ValueError('Request exceeds the configured context')
@@ -105,7 +116,7 @@ class JEVRuntime:
             if not bool(self.torch.isfinite(logits).all()): raise RuntimeError('Non-finite logits')
             yield logits,n,params
         finally:
-            self.torch.cuda.synchronize()
+            for device in self.device_indices:self.torch.cuda.synchronize(device)
             state.free()
 
     def decide(self,kind,state,question,options=None,*,strategy='single'):

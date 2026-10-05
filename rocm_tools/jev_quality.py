@@ -133,7 +133,8 @@ def candidate(args,cases):
     import os
     os.environ['EXL3_ROCM_MLP_RANGE_BALANCE']='0'
     from rocm_tools.jev_runtime import JEVRuntime
-    runtime=JEVRuntime(args.model,context=16384,chunk_size=1024,vision=True)
+    split=[float(v) for v in args.gpu_split.split(',')] if args.gpu_split else None
+    runtime=JEVRuntime(args.model,context=16384,chunk_size=1024,vision=True,gpu_split=split)
     result=[]
     try:
         for case in cases:
@@ -151,6 +152,8 @@ def candidate(args,cases):
             'Name the color and shape. Answer briefly.']}],max_tokens=32)
         props=runtime.torch.cuda.get_device_properties(0)
         metadata={'torch':runtime.torch.__version__,'device':props.name,'arch':props.gcnArchName,
+                  'device_indices':runtime.device_indices,'gpu_split':split,
+                  'quantization_config':runtime.config.config_dict.get('quantization_config'),
                   'base_generation':before,'image_generation':image_chat,'adapter_isolation_pass':True,
                   'peak_vram_bytes':runtime.torch.cuda.max_memory_allocated(0)}
         return result,metadata
@@ -186,6 +189,7 @@ def main():
     ap.add_argument('--reference')
     ap.add_argument('--candidate')
     ap.add_argument('--reference-placement',choices=['pair','hybrid'],default='pair')
+    ap.add_argument('--gpu-split')
     args=ap.parse_args()
     soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE,(max(soft,min(65536,hard)),hard))

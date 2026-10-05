@@ -45,3 +45,20 @@ def test_high_confidence_does_not_invoke_system2():
     assert out['probabilities']==[0.01,0.99]
     assert out['num_model_requests']==1
     with pytest.raises(ValueError):r.adaptive_decide('score','x','q',thinking='on')
+
+
+def test_session_keeps_cache_clearing_and_request_in_inference_mode():
+    r=JEVRuntime.__new__(JEVRuntime);r.torch=torch
+    @contextmanager
+    def session(*a,**kw):
+        assert torch.is_inference_mode_enabled()
+        state=torch.zeros(1)
+        yield state
+        state.zero_()  # cache-state release/clearing happens before guard exits
+    r._session=session
+    before=torch.is_inference_mode_enabled()
+    with r.session('prompt') as state:
+        assert state.is_inference()
+        state.add_(1)
+        assert state.item()==1
+    assert torch.is_inference_mode_enabled()==before

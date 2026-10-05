@@ -154,6 +154,7 @@ def main():
     ap.add_argument('--model-name',default='jev27-local')
     ap.add_argument('--api-key')
     ap.add_argument('--no-vision',action='store_true')
+    ap.add_argument('--gpu-split',help='Per-GPU weight budgets in GiB, e.g. 28,28 for layer split')
     args=ap.parse_args()
     soft,hard=resource.getrlimit(resource.RLIMIT_NOFILE)
     resource.setrlimit(resource.RLIMIT_NOFILE,(max(soft,min(65536,hard)),hard))
@@ -162,7 +163,9 @@ def main():
     os.environ['EXL3_ROCM_MLP_RANGE_BALANCE']='0'
     from rocm_tools.jev_runtime import JEVRuntime
     import uvicorn
-    runtime=JEVRuntime(args.model,context=args.context,chunk_size=args.chunk_size,vision=not args.no_vision)
+    split=[float(v) for v in args.gpu_split.split(',')] if args.gpu_split else None
+    runtime=JEVRuntime(args.model,context=args.context,chunk_size=args.chunk_size,
+                       vision=not args.no_vision,gpu_split=split)
     uvicorn.run(create_app(runtime,model_name=args.model_name,api_key=args.api_key),host=args.host,port=args.port)
 
 
