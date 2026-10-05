@@ -41,6 +41,9 @@ def cases_file(path):
 
 
 def hf_reference(args,cases):
+    import os
+    import inspect
+    os.environ['USE_HUB_KERNELS']='0'
     import torch
     from transformers import AutoModelForImageTextToText,AutoTokenizer,AutoProcessor
     from peft import PeftModel
@@ -48,6 +51,12 @@ def hf_reference(args,cases):
     from safetensors.torch import load_file
     from exllamav3.model.decision import DecisionProfile
     from rocm_tools.exl3_server.vision import image_bytes,decode_image
+    import transformers.models.qwen3_5.modeling_qwen3_5 as hf_qwen
+    # The installed FLA bf16 dot path cannot compile for gfx1030. Use the
+    # upstream Torch reference equations rather than alter source precision.
+    for name in ('torch_chunk_gated_delta_rule','torch_recurrent_gated_delta_rule',
+                 'causal_conv1d_fn','causal_conv1d_update'):
+        setattr(hf_qwen,name,inspect.unwrap(getattr(hf_qwen,name)))
     torch.set_num_threads(8)
     tok=AutoTokenizer.from_pretrained(args.model)
     profile=DecisionProfile.from_directory(args.model,lambda s:tok.encode(s,add_special_tokens=False))
@@ -85,7 +94,8 @@ def hf_reference(args,cases):
     processor=AutoProcessor.from_pretrained(args.model)
     index={i:j for j,i in enumerate(profile.all_ids)}
     result=[]
-    with torch.inference_mode():
+    from torch.nn.attention import sdpa_kernel,SDPBackend
+    with torch.inference_mode(),sdpa_kernel(SDPBackend.MATH):
         for case in cases:
             q=profile.question(case['kind'],case['question'],case.get('options'))
             state=case['state'];images=[]
@@ -115,7 +125,8 @@ def hf_reference(args,cases):
     return result,{'torch':torch.__version__,'transformers':__import__('transformers').__version__,
                    'devices':[torch.cuda.get_device_properties(i).name for i in range(torch.cuda.device_count())],
                    'body_dtype':'BF16','head_dtype':'FP32 exact source + LoRA rows','device_map':placement,
-                   'loader_allocator_warmup':False}
+                   'loader_allocator_warmup':False,'gdn_implementation':'upstream Torch reference',
+                   'sdpa_backend':'MATH'}
 
 
 def candidate(args,cases):
