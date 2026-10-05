@@ -738,12 +738,12 @@ class GatedMLP(Module):
 
             for s in r:
 
-                if self.bc is not None and bsz * q_len <= MAX_BSZN:
+                if self.bc is not None and bsz * q_len <= MAX_BSZN and not self.has_lora():
                     d = torch.empty_like(x, dtype = out_dtype or self.out_dtype)
                     xv = x.view(1, bsz * q_len, dim)     # local view: x itself feeds every slice
                     self.bc.run_bszN(xv, d.view(xv.shape))
 
-                elif self.multi_gu[s] is None or bsz * q_len > 32:
+                elif self.multi_gu[s] is None or bsz * q_len > 32 or self.has_lora():
                     g = self.gates[s].forward(x, params)
                     u = self.ups[s].forward(x, params)
                     a = torch.empty_like(u, dtype = torch.half) if self.interm_dtype != torch.half else u

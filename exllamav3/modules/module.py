@@ -59,6 +59,10 @@ class Module(ABC):
             if module.key == key:
                 return module
 
+    def has_lora(self) -> bool:
+        """Fused projection/graph paths cannot include runtime LoRA deltas."""
+        return any(getattr(m, "lora_a_tensors", None) for m in self)
+
     def can_defer_load(self):
         if len(self.modules) == 0: return True
         return all(module.can_defer_load() for module in self.modules)

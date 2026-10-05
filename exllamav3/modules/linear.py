@@ -630,7 +630,7 @@ class Linear(Module):
             x = x[..., :self.out_features_unpadded].contiguous()
 
         if lora_input is not None:
-            self.apply_lora(lora_input, x)
+            self.apply_lora(lora_input, x, params)
 
         if self.pre_scale != 1.0:
             x *= self.pre_scale
@@ -641,15 +641,19 @@ class Linear(Module):
         return x
 
 
-    def apply_lora(self, lora_input: torch.Tensor, x: torch.Tensor):
+    def apply_lora(self, lora_input: torch.Tensor, x: torch.Tensor, params: dict | None = None):
         orig_shape = lora_input.shape
         flat = lora_input.view(-1, orig_shape[-1])
         for lora, a in self.lora_a_tensors.items():
+            selected = (params or {}).get("loras")
+            if (selected is not None and lora not in selected) or (selected is None and not getattr(lora, "enabled", True)):
+                continue
             b = self.lora_b_tensors.get(lora)
             if b is not None:
                 lora_in = flat if flat.dtype == a.dtype else flat.to(a.dtype)
                 delta = lora_in @ a @ b
-                x += delta.view(*orig_shape[:-1], -1).to(x.dtype)
+                delta = delta.view(*orig_shape[:-1], -1)[..., :x.shape[-1]]
+                x += delta.to(x.dtype)
 
 
     def quant_format_id(self):
