@@ -1,0 +1,23 @@
+JEV-27B-VL EXL3 mixed-precision quantization
+
+Source: autotrust/JEV-27B-VL
+Source revision: f34b598d4ef4bcefd337bee8d8e7ddd3b7733ccc
+Underlying backbone: Qwen/Qwen3.8-27B
+
+Original model weights, tokenizer, processor, decision adapter and calibration
+are distributed under Apache License 2.0. The original LICENSE and model card
+are retained. The direct source repository contained LICENSE and no NOTICE.
+
+Modifications by jyohukuchan, 2026-10-06:
+- Language projections quantized to EXL3 4bit; generation/MTP projections to 6bit.
+- Vision/embeddings/control storage precision preserved.
+- Adapter/calibration retained without merging; 264 exact BF16 vocabulary rows
+  extracted to a decision sidecar for FP32 readout.
+- Model/index/quantization metadata and release documentation generated for
+  the EXL3 pack. Source-model serving scripts are replaced by the ROCm launcher.
+
+Runtime: https://github.com/jyohukuchan/rocm_exl3
+The launcher is MIT-licensed (LICENSE-code). The engine has its own MIT license;
+that code license does not replace the Apache-2.0 model license.
+
+No affiliation with or endorsement by Qwen or AutoTrust is implied.
