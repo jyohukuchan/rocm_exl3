@@ -1,0 +1,7 @@
+{
+  "canonical": "/home/homelab1/datapool/ai_models/safetensors/JEV-27B-VL-exl3-4bpw",
+  "validated_location": "/home/homelab1/datapool/rocm-exl3-rdna2/models/JEV-27B-VL-exl3-4bpw",
+  "shared_weight_inodes": true,
+  "all_manifest_files_present": true,
+  "bytes": 17445036040
+}

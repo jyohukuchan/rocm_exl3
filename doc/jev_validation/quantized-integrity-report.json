@@ -1,0 +1,37 @@
+{
+  "source_revision": "f34b598d4ef4bcefd337bee8d8e7ddd3b7733ccc",
+  "source_parameters": 27781427952,
+  "source_tensor_bytes": 55562855904,
+  "packed_weight_tensor_bytes": 16966676548,
+  "packed_weight_effective_bpw": 4.885760826207944,
+  "all_pack_bytes": 17445036040,
+  "all_pack_effective_bpw": 5.023510258764542,
+  "trunk_quantized_modules": 400,
+  "trunk_bits": 4,
+  "generation_head_bits": 6,
+  "vision_tensors": 333,
+  "vision_tensor_bytes": 921460192,
+  "vision_dtype": "BF16",
+  "mtp_tensors": 15,
+  "mtp_policy_bits": 6,
+  "mtp_quantized_projections": 8,
+  "mtp_actual_trellis_bits": 6,
+  "decision_rows_exact_against_source": true,
+  "decision_rows": {
+    "token_ids": {
+      "shape": [
+        264
+      ],
+      "dtype": "torch.int64"
+    },
+    "base_rows": {
+      "shape": [
+        264,
+        5120
+      ],
+      "dtype": "torch.bfloat16"
+    }
+  },
+  "adapter_and_calibration_exact": true,
+  "manifest_file_count": 39
+}

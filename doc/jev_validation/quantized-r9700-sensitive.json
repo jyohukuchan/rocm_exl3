@@ -1,0 +1,116 @@
+{
+  "cases_sha256": "ab5b934b518223c928a0a4f472afcbddc7fb79ba1704e7ae203f30904653f5ba",
+  "backend": "exl3",
+  "model": "/work/models/JEV-27B-VL-exl3-4bpw",
+  "results": [
+    {
+      "id": "uncertain-arrival",
+      "probabilities": [
+        0.6839393482203565,
+        0.31606065177964343
+      ],
+      "seconds": 1.1073940770002082,
+      "usage": {
+        "prompt_tokens": 46,
+        "completion_tokens": 0,
+        "total_tokens": 46
+      }
+    },
+    {
+      "id": "mixed-review",
+      "probabilities": [
+        0.752062095192688,
+        0.24793790480731212
+      ],
+      "seconds": 0.3315308230230585,
+      "usage": {
+        "prompt_tokens": 52,
+        "completion_tokens": 0,
+        "total_tokens": 52
+      }
+    },
+    {
+      "id": "equivalent-choices",
+      "probabilities": [
+        0.846038455657031,
+        0.15396154434296916
+      ],
+      "seconds": 0.29802943899994716,
+      "usage": {
+        "prompt_tokens": 39,
+        "completion_tokens": 0,
+        "total_tokens": 39
+      }
+    },
+    {
+      "id": "partial-answer",
+      "probabilities": [
+        0.0073932733236517535,
+        0.03107338705126582,
+        0.7460002905108959,
+        0.1775246147432625,
+        0.03639222188765012,
+        0.0016162124832738666
+      ],
+      "seconds": 0.3049449250102043,
+      "usage": {
+        "prompt_tokens": 77,
+        "completion_tokens": 0,
+        "total_tokens": 77
+      }
+    }
+  ],
+  "metadata": {
+    "torch": "2.12.0+rocm7.2",
+    "device": "AMD Radeon AI PRO R9700",
+    "arch": "gfx1201",
+    "device_indices": [
+      0
+    ],
+    "gpu_split": null,
+    "load_no_forward": false,
+    "execution_env": {
+      "AMD_SERIALIZE_KERNEL": null,
+      "PYTHONPATH": "/work/lib-r9700-opt:/src",
+      "ROCR_VISIBLE_DEVICES": "GPU-a8e9ddefa2d60f55",
+      "HSA_ENABLE_SDMA": null,
+      "EXL3_ROCM_MLP_RANGE_BALANCE": "0"
+    },
+    "quantization_config": {
+      "quant_method": "exl3",
+      "version": "1.5.0",
+      "bits": 4.0,
+      "head_bits": 6,
+      "calibration": {
+        "rows": 250,
+        "cols": 2048
+      },
+      "out_scales": "always",
+      "codebook": "mul1",
+      "mtp_bits": 6
+    },
+    "base_generation": {
+      "text": "東京",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 21,
+        "completion_tokens": 1,
+        "total_tokens": 22
+      }
+    },
+    "image_generation": null,
+    "adapter_isolation_pass": true,
+    "peak_vram_bytes": 16617581056,
+    "runtime": {
+      "repo_base_commit": "c2ce2186d3c11be483503161788750bc8af9d247",
+      "engine_python_sha256": "3d88889612beef4909489d705125f10456d6e2afb18f743b5e339fb214f9c97a",
+      "collector_sha256": "8c5ad49a616535134400e31a024987827104649a2ff29269340055975e84d43e",
+      "native_sha256": "8120e6a1a128c8ac99f6955445802669c601194d0de2fc586d04712e4ed137db"
+    },
+    "jev_source_sha256": {
+      "jev_runtime.py": "8f171cf4665be9ee031c5f3187ecde77db808a3d480ef87520a9cc8f9491b7af",
+      "jev_quality.py": "254058577aacb9204398359d9140bffa090dad0829bb8dfdbe52041914d2a89c",
+      "jev_server.py": "f684cdbdc5d6847349c24b0907d5a570836ac22b65efabf555083ddc3284c045"
+    }
+  }
+}

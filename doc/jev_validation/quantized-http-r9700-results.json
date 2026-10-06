@@ -1,0 +1,188 @@
+[
+  {
+    "path": "/health",
+    "status": 200,
+    "seconds": 0.034344088984653354,
+    "response": {
+      "status": "ok"
+    }
+  },
+  {
+    "path": "/v1/decide/info",
+    "status": 200,
+    "seconds": 0.0011104490258730948,
+    "response": {
+      "model": "jev27-local",
+      "protocol": "jev27-bare-v1",
+      "max_options": 256,
+      "temperatures": {
+        "noul": 1.0143134751376188,
+        "choice": 1.0161280671450397,
+        "score": 1.0036213515883572
+      },
+      "context": 16384,
+      "thinking": [
+        "off",
+        "auto",
+        "on"
+      ],
+      "strategies": [
+        "single",
+        "permute",
+        "tournament"
+      ]
+    }
+  },
+  {
+    "path": "/v1/decide",
+    "status": 200,
+    "seconds": 1.225961668009404,
+    "response": {
+      "kind": "noul",
+      "effective_kind": "noul",
+      "options": [
+        "false",
+        "true"
+      ],
+      "probabilities": [
+        0.012472920446455748,
+        0.9875270795535442
+      ],
+      "choice_index": 1,
+      "choice": "true",
+      "protocol": "jev27-bare-v1",
+      "model": "jev27-local",
+      "adaptation": "native",
+      "num_model_requests": 1,
+      "elapsed_seconds": 1.2237982110236771,
+      "usage": {
+        "prompt_tokens": 35,
+        "completion_tokens": 0,
+        "total_tokens": 35
+      }
+    }
+  },
+  {
+    "path": "/v1/systemone",
+    "status": 200,
+    "seconds": 0.9592710090219043,
+    "response": {
+      "model": "jev27-local",
+      "answers": {
+        "correct": {
+          "type": "noul",
+          "noul": 0.9826455465924215
+        },
+        "grade": {
+          "type": "score",
+          "probabilities": {
+            "0": 0.029890394998467313,
+            "1": 0.03254797303128845,
+            "2": 0.01418445485649117,
+            "3": 0.025048888741803416,
+            "4": 0.06150887715216551,
+            "5": 0.8368194112197841
+          },
+          "score": 4.566196113677264,
+          "legend": {
+            "0": "entirely wrong",
+            "1": "poor",
+            "2": "weak",
+            "3": "acceptable",
+            "4": "good",
+            "5": "entirely correct"
+          },
+          "confidence": 0.7107974091181759
+        },
+        "sum": {
+          "type": "choice",
+          "probabilities": {
+            "three": 1.3379059016769734e-05,
+            "four": 0.999980592951987,
+            "five": 6.027988996193122e-06
+          },
+          "choice": "four",
+          "confidence": 0.9999708894279804
+        }
+      },
+      "usage": {
+        "prompt_tokens": 186,
+        "completion_tokens": 0,
+        "total_tokens": 186
+      }
+    }
+  },
+  {
+    "path": "/v1/chat/completions",
+    "status": 200,
+    "seconds": 0.44967467902461067,
+    "response": {
+      "id": "chatcmpl-bed40c3031ac4aed817276af05f3ceff",
+      "object": "chat.completion",
+      "created": 1791253230,
+      "model": "jev27-local",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": " Red square"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 85,
+        "completion_tokens": 2,
+        "total_tokens": 87
+      }
+    }
+  },
+  {
+    "path": "/v1/decide",
+    "status": 200,
+    "seconds": 1.0023102649720386,
+    "response": {
+      "kind": "noul",
+      "effective_kind": "noul",
+      "options": [
+        "false",
+        "true"
+      ],
+      "probabilities": [
+        0.004988769343954441,
+        0.9950112306560455
+      ],
+      "choice_index": 1,
+      "choice": "true",
+      "protocol": "jev27-bare-v1",
+      "model": "jev27-local",
+      "adaptation": "native",
+      "num_model_requests": 3,
+      "elapsed_seconds": 1.000563276000321,
+      "usage": {
+        "prompt_tokens": 235,
+        "completion_tokens": 8,
+        "total_tokens": 243
+      },
+      "thinking": {
+        "mode": "on",
+        "threshold": 0.8,
+        "budget": 8,
+        "used": true,
+        "think_tokens": 8,
+        "finished_within_budget": false,
+        "mix": 0.5,
+        "reasoning": "The user is asking me to verify whether",
+        "system1": [
+          0.007219916320513473,
+          0.9927800836794864
+        ],
+        "system2": [
+          0.002757622367395409,
+          0.9972423776326046
+        ]
+      }
+    }
+  }
+]

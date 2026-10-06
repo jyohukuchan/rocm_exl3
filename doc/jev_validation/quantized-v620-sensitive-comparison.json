@@ -1,0 +1,31 @@
+{
+  "reference": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/jev-20261006/reference-bf16-sensitive.json",
+  "candidate": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/jev-20261006/quantized-v620-sensitive.json",
+  "cases": [
+    {
+      "id": "uncertain-arrival",
+      "kl_ref_to_candidate": 5.092894864642487e-05,
+      "max_probability_difference": 0.0046879906026712215,
+      "top1_match": true
+    },
+    {
+      "id": "mixed-review",
+      "kl_ref_to_candidate": 0.0004880050277556048,
+      "max_probability_difference": 0.013404458371514438,
+      "top1_match": true
+    },
+    {
+      "id": "equivalent-choices",
+      "kl_ref_to_candidate": 0.00027062636546085726,
+      "max_probability_difference": 0.008320544103597172,
+      "top1_match": true
+    },
+    {
+      "id": "partial-answer",
+      "kl_ref_to_candidate": 0.000737584722444725,
+      "max_probability_difference": 0.01015389268765432,
+      "top1_match": true
+    }
+  ],
+  "mean_kl": 0.000386786266076903
+}

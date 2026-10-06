@@ -1,0 +1,116 @@
+{
+  "cases_sha256": "ab5b934b518223c928a0a4f472afcbddc7fb79ba1704e7ae203f30904653f5ba",
+  "backend": "exl3",
+  "model": "/work/models/JEV-27B-VL-exl3-4bpw",
+  "results": [
+    {
+      "id": "uncertain-arrival",
+      "probabilities": [
+        0.6834619650674274,
+        0.3165380349325727
+      ],
+      "seconds": 1.7113314410089515,
+      "usage": {
+        "prompt_tokens": 46,
+        "completion_tokens": 0,
+        "total_tokens": 46
+      }
+    },
+    {
+      "id": "mixed-review",
+      "probabilities": [
+        0.7522020594813325,
+        0.24779794051866755
+      ],
+      "seconds": 1.4908854049863294,
+      "usage": {
+        "prompt_tokens": 52,
+        "completion_tokens": 0,
+        "total_tokens": 52
+      }
+    },
+    {
+      "id": "equivalent-choices",
+      "probabilities": [
+        0.8466140499115931,
+        0.15338595008840689
+      ],
+      "seconds": 1.1953760350006633,
+      "usage": {
+        "prompt_tokens": 39,
+        "completion_tokens": 0,
+        "total_tokens": 39
+      }
+    },
+    {
+      "id": "partial-answer",
+      "probabilities": [
+        0.007358317001944346,
+        0.03101920651651978,
+        0.7463969737083951,
+        0.17713956788622207,
+        0.036477883002029254,
+        0.0016080518848894845
+      ],
+      "seconds": 1.8006456900038756,
+      "usage": {
+        "prompt_tokens": 77,
+        "completion_tokens": 0,
+        "total_tokens": 77
+      }
+    }
+  ],
+  "metadata": {
+    "torch": "2.12.0+rocm7.2",
+    "device": "AMD Radeon Pro V620",
+    "arch": "gfx1030",
+    "device_indices": [
+      0
+    ],
+    "gpu_split": null,
+    "load_no_forward": false,
+    "execution_env": {
+      "AMD_SERIALIZE_KERNEL": null,
+      "PYTHONPATH": "/work/lib-expert-placement:/src",
+      "ROCR_VISIBLE_DEVICES": "GPU-08b2ddcbd6e6b36c,GPU-76a08c022586fed6",
+      "HSA_ENABLE_SDMA": "0",
+      "EXL3_ROCM_MLP_RANGE_BALANCE": "0"
+    },
+    "quantization_config": {
+      "quant_method": "exl3",
+      "version": "1.5.0",
+      "bits": 4.0,
+      "head_bits": 6,
+      "calibration": {
+        "rows": 250,
+        "cols": 2048
+      },
+      "out_scales": "always",
+      "codebook": "mul1",
+      "mtp_bits": 6
+    },
+    "base_generation": {
+      "text": "東京",
+      "finish_reason": "stop",
+      "usage": {
+        "prompt_tokens": 21,
+        "completion_tokens": 1,
+        "total_tokens": 22
+      }
+    },
+    "image_generation": null,
+    "adapter_isolation_pass": true,
+    "peak_vram_bytes": 16435721216,
+    "runtime": {
+      "repo_base_commit": "c2ce2186d3c11be483503161788750bc8af9d247",
+      "engine_python_sha256": "3d88889612beef4909489d705125f10456d6e2afb18f743b5e339fb214f9c97a",
+      "collector_sha256": "8c5ad49a616535134400e31a024987827104649a2ff29269340055975e84d43e",
+      "native_sha256": "b56b711767fa6c537ae336ecd1eb6f8440acc968980e1b816ac4a4a31687a6ef"
+    },
+    "jev_source_sha256": {
+      "jev_runtime.py": "8f171cf4665be9ee031c5f3187ecde77db808a3d480ef87520a9cc8f9491b7af",
+      "jev_quality.py": "254058577aacb9204398359d9140bffa090dad0829bb8dfdbe52041914d2a89c",
+      "jev_server.py": "f684cdbdc5d6847349c24b0907d5a570836ac22b65efabf555083ddc3284c045"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "unit": "rocm-exl3-api.service",
+  "unit_status": "active",
+  "http_status": 200,
+  "health": {
+    "status": "ok",
+    "jobs": {
+      "active": 0,
+      "queued": 0
+    }
+  },
+  "checked_utc": "2026-10-06T02:27:12.662963+00:00"
+}

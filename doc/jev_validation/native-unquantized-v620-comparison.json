@@ -1,0 +1,55 @@
+{
+  "reference": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/jev-20261006/reference-bf16.json",
+  "candidate": "/home/homelab1/datapool/rocm-exl3-rdna2/runs/jev-20261006/native-unquantized-v620.json",
+  "cases": [
+    {
+      "id": "noul-ja-true",
+      "kl_ref_to_candidate": 8.59436723362134e-06,
+      "max_probability_difference": 0.0010320805557599566,
+      "top1_match": true
+    },
+    {
+      "id": "noul-en-false",
+      "kl_ref_to_candidate": 2.325365209387433e-06,
+      "max_probability_difference": 0.00012097142219391621,
+      "top1_match": true
+    },
+    {
+      "id": "choice-fruit",
+      "kl_ref_to_candidate": 6.369529456395504e-09,
+      "max_probability_difference": 7.949947189445083e-08,
+      "top1_match": true
+    },
+    {
+      "id": "score-quality",
+      "kl_ref_to_candidate": 2.469477915633425e-06,
+      "max_probability_difference": 0.0002300611220700799,
+      "top1_match": true
+    },
+    {
+      "id": "choice-16",
+      "kl_ref_to_candidate": 5.84588723641558e-09,
+      "max_probability_difference": 9.37517984356262e-08,
+      "top1_match": true
+    },
+    {
+      "id": "choice-256",
+      "kl_ref_to_candidate": 1.1096532353989083e-06,
+      "max_probability_difference": 2.1319467477298737e-05,
+      "top1_match": true
+    },
+    {
+      "id": "vision-red-square",
+      "kl_ref_to_candidate": 5.307707707006163e-10,
+      "max_probability_difference": 1.1951562961520779e-08,
+      "top1_match": true
+    },
+    {
+      "id": "vision-blue-circle",
+      "kl_ref_to_candidate": 7.610226656721427e-11,
+      "max_probability_difference": 4.581238388645659e-09,
+      "top1_match": true
+    }
+  ],
+  "mean_kl": 1.813960735471398e-06
+}

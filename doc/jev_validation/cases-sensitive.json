@@ -1,0 +1,30 @@
+[
+  {
+    "id": "uncertain-arrival",
+    "kind": "noul",
+    "state": "The package may arrive tomorrow, but the carrier has not confirmed the delivery date.",
+    "question": "Will this package arrive tomorrow?"
+  },
+  {
+    "id": "mixed-review",
+    "kind": "noul",
+    "state": "The food tasted good and the staff were friendly, but the service was very slow and the prices were high.",
+    "question": "Is this review positive overall?"
+  },
+  {
+    "id": "equivalent-choices",
+    "kind": "choice",
+    "state": "What is two plus two?",
+    "question": "Choose a correct answer.",
+    "options": [
+      "4",
+      "four"
+    ]
+  },
+  {
+    "id": "partial-answer",
+    "kind": "score",
+    "state": "Question: Find all real solutions of x squared equals 4. Answer: x equals 2.",
+    "question": "Rate the correctness and completeness of the answer from 0 (entirely wrong) to 5 (fully correct and complete)."
+  }
+]

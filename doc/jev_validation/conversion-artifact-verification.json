@@ -1,0 +1,22 @@
+{
+  "pack_verified": true,
+  "verified_epoch": 1791248801.0717783,
+  "wrapper_exit_code": 127,
+  "wrapper_error": "Running shell script was edited to add ulimit while child converter was active; shell resumed at shifted offset and tried to execute ersion.log.",
+  "evidence": {
+    "completion_log": "-- Finished compiling model to /work/models/JEV-27B-VL-exl3-4bpw; -- All done",
+    "decoder_modules_completed": 64,
+    "checkpoint_next_module_idx": 67,
+    "bad_rows": [],
+    "shards": 17,
+    "indexed_tensors": 2426,
+    "all_safetensors_headers_match_index": true,
+    "decision_files_present": true,
+    "config_quant_method": "exl3",
+    "trunk_bits": 4,
+    "head_bits": 6,
+    "mtp_bits": 6,
+    "bytes": 17445036040,
+    "index_sha256": "0271a731c561fbd3ff9eee06ff8910fde0cbdf7ac16a42448609c59b67ee60b4"
+  }
+}
