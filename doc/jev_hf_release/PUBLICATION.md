@@ -1,5 +1,13 @@
 # JEV Hugging Face release preparation
 
+Published on 2026-10-06:
+[jyohukuchan/JEV-27B-VL-exl3-4bpw](https://huggingface.co/jyohukuchan/JEV-27B-VL-exl3-4bpw),
+revision `9a811e2f521a4d2436da23937a056f299f0cfd3d`.
+All 44 release files match the local manifest by size and LFS/Xet SHA256 or
+Git blob digest; all 19 safetensors are verified. Downloaded README/manifest/
+metadata also match, and public metadata is readable without authentication.
+See [hf-verification.json](hf-verification.json).
+
 The model card, attribution notice and launcher in this directory are templates
 for the staged EXL3 model release. The preparation command performs no Hub
 repository creation or upload and leaves the validated source model unchanged:
@@ -24,12 +32,11 @@ their inodes are shared with the validated model.
 Shard headers/index, model-card YAML and launcher syntax were checked.
 Model/adapter assets retain Apache-2.0 with LICENSE/NOTICE/source attribution;
 the launcher has a separate MIT code license. The API token is never included
-in the artifact. Login was verified for `jyohukuchan`; write permission has not
-been tested by a mutation, and no model repository has been created.
+in the artifact. The initial token could read but could not create the model
+repository (403). After the user authorized publication and switched the local
+login to a write-capable token, creation and upload succeeded under `jyohukuchan`.
 
-After the user specifies the repository and public/private visibility, upload
-using the existing local Hugging Face login. Example for the proposed **public**
-repository (only after publication is authorized):
+The original public publication used the existing local Hugging Face login:
 
 ```python
 from huggingface_hub import HfApi
@@ -45,10 +52,9 @@ api.upload_folder(
 )
 ```
 
-Use `private=True` if that is the selected visibility. Check the remote file
-inventory and LFS/Xet digests against the manifest after upload, then return
-the actual repository URL and revision. No hosted inference or general engine
-compatibility follows from hosting the weight files.
+The repository now exists; the above creation step records the original
+publication, rather than a command needed to download the model. No hosted
+inference or general engine compatibility follows from hosting the weight files.
 
 Primary references:
 [Hub upload guide](https://huggingface.co/docs/huggingface_hub/guides/upload),

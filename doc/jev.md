@@ -1,5 +1,10 @@
 # JEV native EXL3 support
 
+The verified mixed-precision checkpoint is publicly available at
+[jyohukuchan/JEV-27B-VL-exl3-4bpw](https://huggingface.co/jyohukuchan/JEV-27B-VL-exl3-4bpw).
+All 44 release files were checked against the upload manifest; see
+[publication verification](jev_hf_release/PUBLICATION.md).
+
 JEV-27B-VL combines an unchanged Qwen language/vision backbone for generation
 (System 2) with a runtime decision LoRA (System 1). Merging the adapter into the
 main checkpoint would change ordinary generation. Reading unadapted vocabulary
