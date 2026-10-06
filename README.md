@@ -34,6 +34,7 @@ branch.
 | Max generated context | 2× V620, TP2, **batch 1 only** | 261,632 input + 256 output completed with fixed MTP4. **Batch 2–4 maximums are not established** — long-context tests were deferred by the operator | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md) |
 | R9700 inference comparisons (gfx1201 / RDNA4) | 1× R9700 | **Tested through documented comparison adapters/workarounds** (64 KiB LDS build, MLP range-balance adapter, MoE reconstruct adapter). Not general RDNA4 support | [doc/r9700_vs_v620.md](doc/r9700_vs_v620.md) |
 | Qwen3.5-2B → EXL3 4bpw conversion | 1× R9700 | Dense K4 is bit-identical to the original converter, and fast head capture is enabled by default. The 773.0 s / 18.5% result in the historical study included a removed FP16-input Hessian path, so it is not a current-default benchmark | [historical 2026-10-02 conversion study](doc/r9700_conversion_optimization.md) |
+| JEV-27B-VL EXL3 decisions + text/vision generation | 1× V620; 1× R9700 | **Validated** — 4bit trunk, 6bit generation/MTP weights, BF16 vision, FP32 decision LoRA and exact-source decision rows. Both GPUs match the BF16 reference on all 12 screened decisions; calibrated decision, TypeSafe and adaptive-thinking HTTP routes exercised | [doc/jev.md](doc/jev.md) |
 | RDNA3 / RDNA3.5 (`gfx1100`…`gfx1151`) | — | **Inherited from the parent fork's gfx1151 validation; not independently rerun on this branch** after the TP / Qwen3.8 / kernel changes below. The parent's claims stand as the parent's, not ours | [doc/fork_changes.md](doc/fork_changes.md) |
 | CUDA path | NVIDIA | Upstream native kernels retained; shared Python changes are not tested on NVIDIA here | — |
 
@@ -570,6 +571,7 @@ python examples/chat.py -h
 | **Qwen 3-VL**                                    | `Qwen3VLForConditionalGeneration` | ✓ |  |
 | **Qwen 3-VL MoE**                                | `Qwen3VLMoeForConditionalGeneration` | ✓ |  |
 | **Qwen 3.5**                                     | `Qwen3_5ForConditionalGeneration` | ✓ |  |
+| **JEV-27B-VL**                                   | `Qwen3_5ForConditionalGeneration` + decision LoRA | ✓ | [Native decision APIs and mixed precision](doc/jev.md) |
 | **Qwen 3.5 MoE**                                 | `Qwen3_5MoeForConditionalGeneration` | ✓ |  |
 | **Qwen 3.8-Flash-Next**                          | `Qwen4ExpForConditionalGeneration` | ✓ |  |
 | **Seed-OSS**                                     | `SeedOssForCausalLM` |  |  |
