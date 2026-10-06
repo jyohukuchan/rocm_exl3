@@ -7,5 +7,6 @@
   "r9700_browser_median_ms": 587.796502,
   "v620_browser_median_ms": 2190.594011,
   "v620_over_r9700_browser_median_ratio": 3.7267898048838677,
-  "all_http_samples_complete_and_percentiles_recomputed": true
+  "all_http_samples_complete_and_percentiles_recomputed": true,
+  "all_episode_outcomes_match": true
 }

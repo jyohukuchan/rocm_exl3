@@ -58,8 +58,8 @@ Raw output: [r9700.json](r9700.json).
 V620 also succeeds in 57/60 browser episodes. Server-side image decision median
 is 2,187.98 ms. Both GPUs received byte-identical JSON requests on all 277
 browser decisions (matching SHA256), chose the same actions and reached the
-same successful/failed episodes. Median browser HTTP latency is 3.73× lower
-on R9700 in this implementation and precision configuration; this is not a
+same successful/failed episodes. The V620/R9700 median browser HTTP latency
+ratio is 3.73 in this implementation and precision configuration; this is not a
 general GPU performance ratio. See [measurement-audit.json](measurement-audit.json)
 and [v620.json](v620.json). Text workloads are also identical between GPUs.
 
@@ -68,7 +68,8 @@ R9700 requests use container loopback; V620 requests use its private bridge IP.
 The approximately 2.7 ms client/server gap is small relative to GPU execution.
 The existing Qwen service was idle during R9700 measurements and stopped for
 V620 GPU availability. The owned JEV servers were then stopped and the Qwen
-service restored; its verified health response is saved separately.
+service restored; its verified health response is saved in
+[previous-service-restored.json](previous-service-restored.json).
 
 ## Comparison scope
 
