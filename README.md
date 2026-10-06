@@ -1,3 +1,15 @@
+# Project moved: rocm_exl3_forme
+
+Active development, documentation and releases now live at
+[jyohukuchan/rocm_exl3_forme](https://github.com/jyohukuchan/rocm_exl3_forme).
+
+The independent repository preserves this project's published Git history,
+MIT license and upstream attribution. This fork remains available for historical
+commit links and upstream pull requests.
+
+The original project overview below is retained as a historical snapshot.
+
+---
 
 # <img src="doc/cat.png" width="40"> ExLlamaV3 — ROCm / RDNA fork (experimental V620 branch)
 
