@@ -1,0 +1,40 @@
+
+
+============================ ROCm System Management Interface ============================
+====================================== Temperature =======================================
+GPU[0]		: Temperature (Sensor edge) (C): 32.0
+GPU[0]		: Temperature (Sensor junction) (C): 35.0
+GPU[0]		: Temperature (Sensor memory) (C): 38.0
+GPU[1]		: Temperature (Sensor edge) (C): 40.0
+GPU[1]		: Temperature (Sensor junction) (C): 40.0
+GPU[1]		: Temperature (Sensor memory) (C): 38.0
+GPU[2]		: Temperature (Sensor edge) (C): 83.0
+GPU[2]		: Temperature (Sensor junction) (C): 99.0
+GPU[2]		: Temperature (Sensor memory) (C): 80.0
+==========================================================================================
+=============================== Current clock frequencies ================================
+GPU[0]		: dcefclk clock level: 0: (417Mhz)
+GPU[0]		: fclk clock level: 1: (1302Mhz)
+GPU[0]		: mclk clock level: 0: (96Mhz)
+GPU[0]		: sclk clock level: 0: (0Mhz)
+GPU[0]		: socclk clock level: 1: (800Mhz)
+GPU[0]		: pcie clock level: 1 (16.0GT/s x16)
+GPU[1]		: dcefclk clock level: 1: (219Mhz)
+GPU[1]		: fclk clock level: 1: (582Mhz)
+GPU[1]		: mclk clock level: 0: (96Mhz)
+GPU[1]		: sclk clock level: 1: (0Mhz)
+GPU[1]		: socclk clock level: 0: (417Mhz)
+GPU[1]		: pcie clock level: 1 (8.0GT/s x16)
+GPU[2]		: dcefclk clock level: 1: (960Mhz)
+GPU[2]		: fclk clock level: 1: (1541Mhz)
+GPU[2]		: mclk clock level: 3: (1000Mhz)
+GPU[2]		: sclk clock level: 1: (2180Mhz)
+GPU[2]		: socclk clock level: 1: (1200Mhz)
+GPU[2]		: pcie clock level: 1 (16.0GT/s x16)
+==========================================================================================
+=================================== Power Consumption ====================================
+GPU[0]		: Average Graphics Package Power (W): 8.0
+GPU[1]		: Average Graphics Package Power (W): 8.0
+GPU[2]		: Average Graphics Package Power (W): 251.0
+==========================================================================================
+================================== End of ROCm SMI Log ===================================

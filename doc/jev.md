@@ -150,6 +150,9 @@ Sources: [model and reference server](https://huggingface.co/autotrust/JEV-27B-V
 
 ## Hardware evidence (2026-10-06)
 
+Warmed System 1 latency on these GPUs is measured separately with serial HTTP
+requests and the official browser demo; see [decision latency report](jev_latency_20261006/README.md).
+
 Frozen regression cases cover Japanese/English binary decisions, six-level
 scores, 4/16/256-way choices, two visual decisions, and four less decisive
 examples. Both quantized single-GPU candidates match the BF16 oracle's top

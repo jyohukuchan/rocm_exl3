@@ -46,6 +46,30 @@ the 16-choice set retains one 588 ms outlier in its mean/max. Browser runtime
 dependencies were installed and preflighted before image measurements began.
 Raw output: [r9700.json](r9700.json).
 
+## V620 results
+
+| Workload | Prompt tokens | Samples | HTTP median | HTTP p95 |
+|---|---:|---:|---:|---:|
+| Short text yes/no | 35 | 30 | 1,194.62 ms | 1,198.98 ms |
+| Text 16-way choice | 121 | 30 | 2,709.75 ms | 2,735.14 ms |
+| Longer text yes/no | 2,846 | 30 | 12,107.27 ms | 12,129.70 ms |
+| Browser screenshot + element text | 388–532 | 277 | 2,190.59 ms | 2,497.74 ms |
+
+V620 also succeeds in 57/60 browser episodes. Server-side image decision median
+is 2,187.98 ms. Both GPUs received byte-identical JSON requests on all 277
+browser decisions (matching SHA256), chose the same actions and reached the
+same successful/failed episodes. Median browser HTTP latency is 3.73× lower
+on R9700 in this implementation and precision configuration; this is not a
+general GPU performance ratio. See [measurement-audit.json](measurement-audit.json)
+and [v620.json](v620.json). Text workloads are also identical between GPUs.
+
+The same CPU/browser client in the R9700 container was used for both runs.
+R9700 requests use container loopback; V620 requests use its private bridge IP.
+The approximately 2.7 ms client/server gap is small relative to GPU execution.
+The existing Qwen service was idle during R9700 measurements and stopped for
+V620 GPU availability. The owned JEV servers were then stopped and the Qwen
+service restored; its verified health response is saved separately.
+
 ## Comparison scope
 
 The [model README](https://huggingface.co/autotrust/JEV-27B-VL#new-3-october-2026-robot-arm-and-computer-use)
@@ -75,6 +99,6 @@ python -m rocm_tools.jev_latency \
 ```
 
 The test servers use private container networking without published host ports.
-The existing Qwen API is temporarily stopped for V620 GPU availability and is
+The existing Qwen API was temporarily stopped for V620 GPU availability and
 restored after measurements. Large server/client logs and downloaded reference
 files remain in `/home/homelab1/datapool/rocm-exl3-rdna2/runs/jev-latency-20261006`.
