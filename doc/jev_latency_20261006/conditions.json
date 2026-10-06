@@ -1,0 +1,81 @@
+{
+  "source": {
+    "computer_use.py": {
+      "url": "https://huggingface.co/autotrust/JEV-9B/blob/b63f651/vl/demos/computer_use.py",
+      "sha256": "f3dcc8b5bb84a9b07440c8023c966454b7360d691a00fcbf3135ee58b6a33ba2"
+    },
+    "webapp.html": {
+      "url": "https://huggingface.co/autotrust/JEV-9B/blob/b63f651/vl/demos/webapp.html",
+      "sha256": "3fccb2d12f9a0b5cab090b83751edd158da97bc4befe0f7623559850a081bd0f"
+    },
+    "robot_arm.py": {
+      "url": "https://huggingface.co/autotrust/JEV-9B/blob/b63f651/vl/demos/robot_arm.py",
+      "sha256": "be3caae0670008a2c0a31b476a702a7f4e47b29e8eca2719557dda0649adcd48"
+    },
+    "cu_results.json": {
+      "url": "https://huggingface.co/autotrust/JEV-27B-VL/blob/f34b598d4ef4bcefd337bee8d8e7ddd3b7733ccc/reports/demos/cu_results.json",
+      "sha256": "73ecd1dac8367ea5618c9a5006c70c0cf1335e8f686951f16d3b4eb1e866ed30"
+    }
+  },
+  "model": "/home/homelab1/datapool/ai_models/safetensors/JEV-27B-VL-exl3-4bpw",
+  "source_model_revision": "f34b598d4ef4bcefd337bee8d8e7ddd3b7733ccc",
+  "collector_commit": "6881abe61a6a285b714428437f250a57ac180a95",
+  "runtime": {
+    "r9700": {
+      "torch": "2.12.0+rocm7.2",
+      "device": "AMD Radeon AI PRO R9700",
+      "arch": "gfx1201",
+      "execution_env": {
+        "AMD_SERIALIZE_KERNEL": null,
+        "PYTHONPATH": "/work/lib-r9700-opt:/src",
+        "ROCR_VISIBLE_DEVICES": "GPU-a8e9ddefa2d60f55",
+        "HSA_ENABLE_SDMA": null,
+        "EXL3_ROCM_MLP_RANGE_BALANCE": "0"
+      },
+      "runtime": {
+        "repo_base_commit": "c2ce2186d3c11be483503161788750bc8af9d247",
+        "engine_python_sha256": "3d88889612beef4909489d705125f10456d6e2afb18f743b5e339fb214f9c97a",
+        "collector_sha256": "8c5ad49a616535134400e31a024987827104649a2ff29269340055975e84d43e",
+        "native_sha256": "8120e6a1a128c8ac99f6955445802669c601194d0de2fc586d04712e4ed137db"
+      },
+      "jev_source_sha256": {
+        "jev_runtime.py": "8f171cf4665be9ee031c5f3187ecde77db808a3d480ef87520a9cc8f9491b7af",
+        "jev_quality.py": "254058577aacb9204398359d9140bffa090dad0829bb8dfdbe52041914d2a89c",
+        "jev_server.py": "f684cdbdc5d6847349c24b0907d5a570836ac22b65efabf555083ddc3284c045"
+      }
+    },
+    "v620": {
+      "torch": "2.12.0+rocm7.2",
+      "device": "AMD Radeon Pro V620",
+      "arch": "gfx1030",
+      "execution_env": {
+        "AMD_SERIALIZE_KERNEL": null,
+        "PYTHONPATH": "/work/lib-expert-placement:/src",
+        "ROCR_VISIBLE_DEVICES": "GPU-08b2ddcbd6e6b36c,GPU-76a08c022586fed6",
+        "HSA_ENABLE_SDMA": "0",
+        "EXL3_ROCM_MLP_RANGE_BALANCE": "0"
+      },
+      "runtime": {
+        "repo_base_commit": "c2ce2186d3c11be483503161788750bc8af9d247",
+        "engine_python_sha256": "3d88889612beef4909489d705125f10456d6e2afb18f743b5e339fb214f9c97a",
+        "collector_sha256": "8c5ad49a616535134400e31a024987827104649a2ff29269340055975e84d43e",
+        "native_sha256": "b56b711767fa6c537ae336ecd1eb6f8440acc968980e1b816ac4a4a31687a6ef"
+      },
+      "jev_source_sha256": {
+        "jev_runtime.py": "8f171cf4665be9ee031c5f3187ecde77db808a3d480ef87520a9cc8f9491b7af",
+        "jev_quality.py": "254058577aacb9204398359d9140bffa090dad0829bb8dfdbe52041914d2a89c",
+        "jev_server.py": "f684cdbdc5d6847349c24b0907d5a570836ac22b65efabf555083ddc3284c045"
+      }
+    }
+  },
+  "image_max_pixels": 262144,
+  "image_min_pixels": 65536,
+  "context": 16384,
+  "chunk_size": 1024,
+  "cache": "FP16 KV; fresh recurrent state",
+  "precision": "trunk4/head6/visionBF16/FP32 LoRA and exact BF16 source rows with FP32 decision readout",
+  "reference_readme_computer_click_seconds": 0.26,
+  "reference_json_marks_text_median_ms": 719.968318939209,
+  "comparison_limits": "Upstream README and saved demo JSON have different reported times; source hardware/serving conditions for this demo are not fully specified. Our requests are serial, upstream demo defaults to six browser workers. No speedup ratio claimed.",
+  "created_utc": "2026-10-06T07:23:59.072630+00:00"
+}
