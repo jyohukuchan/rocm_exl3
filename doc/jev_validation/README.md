@@ -8,6 +8,8 @@ hardware conditions, results and limitations.
 - `quantized-{r9700,v620}*.json`: native single-GPU outputs, full-distribution
   comparisons and GPU/source/native-binary fingerprints.
 - `quantized-http-*-results.json`: actual HTTP responses on each quantized GPU.
+- `quantized-r9700-extension-results.json`: 256-option permutation/tournament
+  readouts and high-confidence automatic-thinking bypass on R9700.
 - `source-manifest.json`: downloaded revision and verified HF LFS digests.
 - `quantized-pack-manifest.json`: all 39 output files with sizes/SHA256.
 - `quantized-integrity-report.json`: actual storage/precision accounting and

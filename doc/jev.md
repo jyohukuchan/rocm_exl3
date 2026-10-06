@@ -174,6 +174,12 @@ criteria-key mapping, highest arithmetic grade at 5, and the 50:50 S1/S2 mix.
 The 13 targeted CPU regressions cover sliced/strict LoRA, exact head selection,
 calibration, TypeSafe mapping, inference mode and adaptive mixing.
 
+Additional R9700 runtime checks select identifier 173 correctly among 256
+options using both `permute` (four model requests) and `tournament` (17
+requests), with normalized probabilities. High-confidence `thinking: "auto"`
+also skips System 2 as intended. These extension checks are saved separately
+from the 12-case BF16 comparison and do not expand that comparison's scope.
+
 The tested environments use PyTorch `2.12.0+rocm7.2`, context 16,384,
 chunk size 1,024, FP16 KV cache, and one GPU per model. R9700 uses
 `PYTHONPATH=/work/lib-r9700-opt:/src`; V620 uses
