@@ -40,8 +40,9 @@ class JEVRuntime:
         load_args = {'use_per_device':gpu_split} if gpu_split else {'device':'cuda:0'}
         self.model.load(**load_args, max_chunk_size=chunk_size, max_output_size=1,
                         autosplit_no_forward=load_no_forward)
-        self.device_indices = sorted({m.device.index for m in self.model
-            if m.device is not None and m.device.type=='cuda'})
+        devices = {torch.device(m.device) for m in self.model if m.device is not None}
+        self.device_indices = sorted({d.index if d.index is not None else torch.cuda.current_device()
+                                     for d in devices if d.type=='cuda'})
         self.lora = LoRA.from_directory(self.model, str(self.directory/'adapter_vllm'), strict=True,
                                        dtype=torch.float32)
         self.lora.enabled = False
