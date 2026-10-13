@@ -1,0 +1,18 @@
+{
+  "started_at": "2026-10-13T18:07:19.366789+00:00",
+  "source_code_revision": "d7be03de028246c600c81dfe16b1ca5609f3cb67",
+  "container": "rocm-exl3-r9700-conv",
+  "gpu_uuid": "GPU-a8e9ddefa2d60f55",
+  "source": "IndexTeam/Index-Translate-9B",
+  "source_revision": "4e06279e62352dab96bbeb6fa0579bca5e822d75",
+  "conversion_finished_at": "2026-10-13T19:17:37.564345+00:00",
+  "conversion_wall_s": 4218.2,
+  "command": "python convert.py -i /work/models/Index-Translate-9B-BF16 -o /work/models/Index-Translate-9B-exl3-4.05bpw -w /work/runs/index-translate-9b-4.05bpw/checkpoint -rcp /src/doc/index_translate_quantization/recipe-4.05bpw.json -hb 8 -mb 4 -vb 16 --out_scales auto -cb mul1 -cr 250 -cc 2048 -d 0",
+  "phase_sums_s": {
+    "capture": 1921.034,
+    "quantize": 1774.205,
+    "advance": 394.485
+  },
+  "validated_at": "2026-10-13T19:18:38.663350+00:00",
+  "validation": "passed: exact decoder allocation, head=8, MTP=4, two translation samples, SHA-256"
+}
