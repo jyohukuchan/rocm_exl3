@@ -31,6 +31,15 @@ The installed model uses regular files hard-linked to the converter output in
 so it is also accessible through the container's read-only `/models` mount
 without duplicating the weight data.
 
+The model is published at
+[`jyohukuchan/Index-Translate-9B-exl3-4.05bpw`](https://huggingface.co/jyohukuchan/Index-Translate-9B-exl3-4.05bpw).
+The public [model card](model-card.md) describes capabilities, quantization,
+usage, and translation samples. Its code example was tested against the final
+weights. The public package contains model/tokenizer files, the allocation
+recipe, an Apache-2.0 license, and a validation report containing model checks
+and translation samples. Publication details and anonymous-access/hash
+verification are recorded in [hf-publication.json](hf-publication.json).
+
 `recipe-4.05bpw.json` is also valid YAML for `convert.py --recipe`. It records
 the source/reference revisions and the reference configuration's SHA-256.
 The original BF16 weights, rather than the 6.05 bpw weights, are quantized.

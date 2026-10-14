@@ -1,0 +1,28 @@
+{
+  "repo_id": "jyohukuchan/Index-Translate-9B-exl3-4.05bpw",
+  "url": "https://huggingface.co/jyohukuchan/Index-Translate-9B-exl3-4.05bpw",
+  "commit": "e8c6f8661914ceff1de5ca6595ed7e0f6fbdf996",
+  "commit_url": "https://huggingface.co/jyohukuchan/Index-Translate-9B-exl3-4.05bpw/commit/e8c6f8661914ceff1de5ca6595ed7e0f6fbdf996",
+  "uploaded_at": "2026-10-14T01:12:52.694024+00:00",
+  "upload_wall_s": 182.0,
+  "files": [
+    "LICENSE",
+    "README.md",
+    "config.json",
+    "generation_config.json",
+    "merges.txt",
+    "model.safetensors",
+    "preprocessor_config.json",
+    "quantization_config.json",
+    "recipe-4.05bpw.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "validation.json",
+    "video_preprocessor_config.json",
+    "vocab.json"
+  ],
+  "verified_publicly_at": "2026-10-14T01:13:24.381271+00:00",
+  "weight_size_bytes": 7603684487,
+  "weight_sha256": "820527195aed7b67a37d288677b12a9c4b22070a93a3067d41da7b4d8296d9c2",
+  "verification": "Anonymous access; complete file list; weight size and SHA-256; README, validation and config bytes match release package."
+}
