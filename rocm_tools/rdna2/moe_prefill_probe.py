@@ -241,6 +241,7 @@ def audit(local_context):
         "folded_default": batch.RECON_FOLDED,
         "layouts": list(_LAYOUTS.values()),
         "scheduler_tunes": list(_SCHEDULER_TUNES),
+        "group_backend": getattr(ext, "_moe_exact_group_backend", ext.__file__),
     }
     _OUTPUT.with_name(
         f'{_OUTPUT.stem}-moe-rank-{result["device"]}-{os.getpid()}.json'

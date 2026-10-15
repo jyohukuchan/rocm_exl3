@@ -798,7 +798,6 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         if (not torch.version.hip or self.device is None or self.cpu_offload
                 or self.cpu_split_first is not None or self.latent_in is not None
                 or self.latent_out is not None or self.act_limit
-                or not hasattr(ext, "hgemm_exact_group")
                 or any(m is None for m in (self.multi_gate, self.multi_up, self.multi_down))
                 or os.environ.get("EXL3_MOE_RECON_GEMM", "exact") != "exact"):
             return PrefillPolicy()
@@ -815,6 +814,9 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             compatible = tuple(int(x) for x in triton.__version__.split(".")[:2]) == (3, 7)
         except (ImportError, ValueError):
             compatible = False
+        from ..rocm_py.moe_group_backend import ensure_group_backend
+        if not compatible or not ensure_group_backend(ext):
+            return PrefillPolicy()
         projections = tuple((m.in_features, m.out_features, m.K, *m.q_cb())
                             for m in (self.multi_gate, self.multi_up, self.multi_down))
         return select_policy(arch=arch, geometry=geometry, projections=projections,

@@ -143,6 +143,8 @@ class BatchReconLayer:
         self.interm_fp32 = interm_fp32
         self.exact_gemm = (gemm_mode if gemm_mode is not None else os.environ.get("EXL3_MOE_RECON_GEMM", "batched")) == "exact"
         if self.exact_gemm:
+            from ..rocm_py.moe_group_backend import ensure_group_backend
+            ensure_group_backend(ext)
             if self.folded:
                 raise ValueError("exact MoE grouping requires unfolded weight reconstruction")
             # Original-shape GEMMs also cover large experts; include every

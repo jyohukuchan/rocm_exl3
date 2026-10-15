@@ -7,6 +7,9 @@ from pathlib import Path
 
 import torch
 from exllamav3.ext import exllamav3_ext as ext
+from exllamav3.rocm_py.moe_group_backend import ensure_group_backend
+
+assert ensure_group_backend(ext)
 from exllamav3.rocm_py.moe_prefill import ordered_accumulate
 
 
