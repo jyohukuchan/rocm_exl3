@@ -493,7 +493,7 @@ covers GPU-resident experts, `EXL3_MOE_STREAM_BATCH_RECON` the streamed CPU expe
 
 ROCm keeps the individual-expert path by default. `auto` opts into exact grouped
 reconstruction on the tested gfx1030 TP2 Qwen3.8 geometry (H2560, I640, E512,
-local E256, top-k10, mul1 K3, half intermediates, SiLU). It requires Triton3.7,
+local E255/256/257, top-k10, mul1 K3, half intermediates, SiLU). It requires Triton3.7,
 deterministic accumulation and either the native `hgemm_exact_group` entry or the
 optional host-only bridge. Missing dependencies or an unsupported configuration
 retain the individual-expert path. `0` disables grouping; `1` enables the older

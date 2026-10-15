@@ -8,7 +8,7 @@ until an end-to-end improvement is established. See [controls](env_vars.md#exl3_
 ## Scope and numerical contract
 
 Tested target: Qwen3.8 Flash Next EXL3 3.05bpw on two Radeon PRO V620 gfx1030
-GPUs, true TP2/RCCL, H2560/I640, 512 experts (256 per rank), top-k10,
+GPUs, true TP2/RCCL, H2560/I640, 512 experts (256/256 or257/255 per TP pair), top-k10,
 three-bit mul1 weights, FP16 intermediates and SiLU. Triton3.7 is required.
 No CPU expert split, latent projection or activation clamp is covered by auto.
 Other models and unavailable dependencies retain the individual-expert route.
@@ -51,7 +51,7 @@ and preserving original GEMM shapes retains one BLAS launch per expert/projectio
 - Runtime pilot checks one group from each of47 layers per rank against the
   individual-expert reference, verifies finite outputs and the TP/KV/RAM audit.
 - CPU regression suite:188 passed,1 skipped,59 subtests; optional bridge/policy
-  tests:11 passed. GPU correctness tests run separately from performance trials.
+  tests:12 passed. GPU correctness tests run separately from performance trials.
 
 The initially faster strided-batched/threshold32 candidate failed predeclared
 teacher-forced gates (mean KL0.00165666, max KL0.02747185, relative PPL delta
