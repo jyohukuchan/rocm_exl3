@@ -804,7 +804,8 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         geometry = (self.hidden_size, self.intermediate_size_padded, self.num_experts,
                     self.num_local_experts, self.num_experts_per_tok, self.activation_fn,
                     self.interm_dtype == torch.half)
-        if geometry != (2560, 640, 512, 256, 10, "silu", True):
+        if (geometry[:3] != (2560, 640, 512) or geometry[3] not in (255, 256, 257)
+                or geometry[4:] != (10, "silu", True)):
             return PrefillPolicy()
         arch = torch.cuda.get_device_properties(self.device).gcnArchName
         if arch.split(":", 1)[0] != "gfx1030":

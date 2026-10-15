@@ -23,7 +23,9 @@ def select_policy(
     """Other architectures, formats and placements keep their original route."""
     eligible = (
         arch.split(":", 1)[0] == "gfx1030"
-        and geometry == (2560, 640, 512, 256, 10, "silu", True)
+        and geometry[:3] == (2560, 640, 512)
+        and geometry[3] in (255, 256, 257)
+        and geometry[4:] == (10, "silu", True)
         and projections
         == (
             (2560, 640, 3, False, True),

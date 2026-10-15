@@ -39,6 +39,14 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse(chosen.enabled)
         self.assertEqual(chosen.fusion, "0")
 
+    def test_balanced_tp_pair(self):
+        for local_experts in (255, 256, 257):
+            geometry = list(self.config()["geometry"])
+            geometry[3] = local_experts
+            with self.subTest(local_experts=local_experts):
+                self.assertTrue(policy.select_policy(
+                    **self.config(geometry=tuple(geometry))).enabled)
+
     def test_arch_qualifiers(self):
         self.assertTrue(
             policy.select_policy(**self.config(arch="gfx1030:sramecc-:xnack-")).enabled
