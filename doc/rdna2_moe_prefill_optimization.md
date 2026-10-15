@@ -33,7 +33,7 @@ times or achievable savings. Each of these >=100ms areas was addressed:
 | Weight reconstruction | 165/186ms | Reconstruct count-sorted groups through existing pointer-table batch APIs. Keep original GEMM shapes. |
 | Activation Hadamards | 231/252ms | Fuse input gather with gate/up pre-transforms; fuse gate/up post-transforms, half SiLU and down pre-transform. Keep explicit half rounding and disable FMA contraction. |
 | Weighted individual-expert scatter | 167/166ms | Store heavy outputs in deterministic slots and accumulate valid weighted contributions in expert order with one Triton launch. |
-| Scratch/dispatch/preparation | See original attribution | Pack IDs/starts/counts once per active layer and gather projection pointer tables once, replacing per-group transfers. Bound simultaneous live scratch slabs. |
+| Scratch/dispatch/preparation | 244/308ms | Pack IDs/starts/counts once per active layer and gather projection pointer tables once, replacing per-group transfers. Bound simultaneous live scratch slabs. |
 
 These candidates can reduce individual launch counts without guaranteeing a
 shorter total inference. Grouped slabs still carry padding and temporary traffic,
