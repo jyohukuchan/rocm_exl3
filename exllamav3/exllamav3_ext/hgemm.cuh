@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ATen/Tensor.h>
+#include <vector>
 #include "graph.cuh"
 
 void hgemm_gr
@@ -33,3 +34,7 @@ bool hgemm_f16acc_try(const at::Tensor& a, const at::Tensor& b, at::Tensor& c);
 void hgemm_f16acc(at::Tensor a, at::Tensor b, at::Tensor c);
 int hgemm_f16acc_status(int device);
 void hgemm_recon(at::Tensor a, at::Tensor b, at::Tensor c);
+
+// Group scheduling with each expert's original, unpadded GEMM dimensions.
+void hgemm_exact_group(at::Tensor a, at::Tensor w, at::Tensor c,
+                       const std::vector<int64_t>& counts);

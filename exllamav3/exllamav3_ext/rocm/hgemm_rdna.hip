@@ -336,3 +336,25 @@ void hgemm_batched
     cublas_check(r);
     cuda_check(cudaPeekAtLastError());
 }
+
+// Preserve the original per-expert BLAS dispatch while reducing Python launches.
+void hgemm_exact_group(at::Tensor a, at::Tensor w, at::Tensor c,
+                       const std::vector<int64_t>& counts)
+{
+    const at::cuda::OptionalCUDAGuard guard(a.device());
+    TORCH_CHECK(a.dim() == 3 && w.dim() == 3 && c.dim() == 3,
+                "hgemm_exact_group: expected contiguous rank-3 slabs");
+    TORCH_CHECK(a.is_contiguous() && w.is_contiguous() && c.is_contiguous(),
+                "hgemm_exact_group: slabs must be contiguous");
+    TORCH_CHECK(a.size(0) == w.size(0) && a.size(0) == c.size(0)
+                && (int64_t) counts.size() == a.size(0), "hgemm_exact_group: batch mismatch");
+    TORCH_CHECK(a.size(1) == c.size(1) && a.size(2) == w.size(1)
+                && w.size(2) == c.size(2), "hgemm_exact_group: matrix shape mismatch");
+    c.zero_();  // Define padding; valid rows are overwritten with beta=0.
+    for (int64_t b = 0; b < a.size(0); ++b)
+    {
+        TORCH_CHECK(counts[b] > 0 && counts[b] <= a.size(1), "hgemm_exact_group: invalid count");
+        hgemm_recon(a.select(0, b).slice(0, 0, counts[b]), w.select(0, b),
+                    c.select(0, b).slice(0, 0, counts[b]));
+    }
+}
