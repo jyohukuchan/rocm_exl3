@@ -1294,8 +1294,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                                 interm_a_ = interm_a[:count]
 
                             yh = torch.empty((count * 2, self.expert_size), dtype = torch.half, device = self.device)
-                            self.bc.run_single_expert_dq(current_state, expert_idx, yh, interm_, interm_a_,
-                                                         out_state_ if torch.version.hip else out_state)
+                            self.bc.run_single_expert_dq(current_state, expert_idx, yh, interm_, interm_a_, out_state)
                             current_state = out_state_
                     else:
 
