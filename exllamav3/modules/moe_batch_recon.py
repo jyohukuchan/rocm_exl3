@@ -140,6 +140,13 @@ class BatchReconLayer:
         # fp32 gate / up outputs (models whose intermediates overflow fp16, e.g. gemma4): the
         # activation kernels take fp32 in and write the fp16 activation the down GEMM consumes
         self.interm_fp32 = interm_fp32
+        self.exact_gemm = os.environ.get("EXL3_MOE_RECON_GEMM", "batched") == "exact"
+        if self.exact_gemm:
+            if self.folded:
+                raise ValueError("exact MoE grouping requires unfolded weight reconstruction")
+            # Original-shape GEMMs also cover large experts; include every
+            # non-fused expert so one final kernel can preserve expert order.
+            self.max_rows = 1 << 30
         mode = os.environ.get("EXL3_ROCM_MOE_PREFILL", "0")
         self.fast_gather = (mode in ("gather", "fused") and torch.version.hip is not None
                             and self.gated and not self.folded and not interm_fp32)
@@ -158,7 +165,7 @@ class BatchReconLayer:
             else:
                 self.scales[p] = (_stacked(suh), _stacked(svh))
 
-    def worst_case_bytes(self, assignments: int, slot_mode: bool) -> int:
+    def worst_case_bytes(self, assignments: int, slot_mode: bool, token_rows: int | None = None) -> int:
         """Upper bound on one group's per-call temporaries (weight slabs, gathered input,
         gate / up slabs, activation, and the fp32 down slab unless it lands in the caller's slot
         scratch) for `assignments` routed rows in total: the autosplit loader's worst-case
@@ -166,8 +173,8 @@ class BatchReconLayer:
         ku, nu, _ = self.dims_u
         kd, nd, _ = self.dims_d
         kg, ng = (self.dims_g[0], self.dims_g[1]) if self.gated else (0, 0)
-        cmax = min(self.max_rows, assignments)
-        rows = min(self.cap * cmax, RECON_ROWS, int(assignments * PAD_MAX) + cmax)
+        cmax = min(self.max_rows, assignments, token_rows if token_rows is not None else assignments)
+        rows = max(cmax, min(self.cap * cmax, RECON_ROWS, int(assignments * PAD_MAX) + cmax))
         total = 2 * self.cap * (max(kg * ng, kd * nd) + ku * nu)        # scratch1 + Wu
         total += rows * ku * 2                                           # gathered input
         if not self.folded:
@@ -183,7 +190,7 @@ class BatchReconLayer:
         return total
 
     def _linear(self, x, W, p, ids, out_n, out_dtype = torch.half, out = None,
-                pre_transformed = False, skip_post = False, optimized = False):
+                pre_transformed = False, skip_post = False, optimized = False, counts = None):
         """x: [B, cmax, k] input slab, W: [B, k, n] -> [B, cmax, n]. Unfolded: the same
         arithmetic as the per-expert path (had_r_128 with fp16 pre-scale in, fp16/fp32 post-
         scale out), with the per-expert scale rows picked from the stacked tables"""
@@ -194,7 +201,19 @@ class BatchReconLayer:
             ext.had_r_128_batch(x.view(B * cmax, k), xh.view(B * cmax, k), suh, None, ids, cmax, 1.0)
             x = xh
         y = out if out is not None else torch.empty((B, cmax, out_n), dtype = out_dtype, device = x.device)
-        ext.hgemm_batched(x, W, y)
+        if self.exact_gemm:
+            if counts is None:
+                raise ValueError("exact grouped GEMM requires original expert row counts")
+            if hasattr(ext, "hgemm_exact_group"):
+                ext.hgemm_exact_group(x, W, y, counts)
+            else:
+                # Compatibility with older native binaries; defaults use the
+                # C++ helper once the rebuilt extension has been installed.
+                y.zero_()
+                for index, count in enumerate(counts):
+                    ext.hgemm_recon(x[index, :count], W[index], y[index, :count])
+        else:
+            ext.hgemm_batched(x, W, y)
         if not self.folded and not skip_post:
             svh = self.scales[p][1]
             y2 = y.view(B * cmax, out_n)
@@ -289,14 +308,14 @@ class BatchReconLayer:
         Wu = torch.empty((B, ku, nu), dtype = torch.half, device = dev)
         self._recon(Wu, ptr_u, "u", ids_d, Ku, self.cb_u)
         u = self._linear(xu if fast else x, Wu, "u", ids_d, nu, out_dtype = idt,
-                         pre_transformed = fast, skip_post = guad, optimized = fast)
+                         pre_transformed = fast, skip_post = guad, optimized = fast, counts = counts)
         del Wu
         if self.gated:
             Kg = self.dims_g[2]
             Wg = scratch1[:B * kg * ng].view(B, kg, ng)
             self._recon(Wg, ptr_g, "g", ids_d, Kg, self.cb_g)
             g = self._linear(xg if fast else x, Wg, "g", ids_d, ng, out_dtype = idt,
-                             pre_transformed = fast, skip_post = guad, optimized = fast)
+                             pre_transformed = fast, skip_post = guad, optimized = fast, counts = counts)
             g2, u2 = g.view(B * cmax, ng), u.view(B * cmax, nu)
         else:
             g2 = u2 = u.view(B * cmax, nu)
@@ -324,9 +343,9 @@ class BatchReconLayer:
         if out_slab is not None:
             assert nd == out_slab.shape[1], "slot scratch width must match the down projection"
             self._linear(u, Wd, "d", ids_d, nd, out_dtype = torch.float, out = out_slab.view(B, cmax, nd),
-                         pre_transformed = guad, optimized = fast)
+                         pre_transformed = guad, optimized = fast, counts = counts)
             return
-        d = self._linear(u, Wd, "d", ids_d, nd, out_dtype = torch.float)
+        d = self._linear(u, Wd, "d", ids_d, nd, out_dtype = torch.float, counts = counts)
         d2 = d.view(B * cmax, nd)
         ho = out_ext.shape[1]
         if DETERMINISTIC:

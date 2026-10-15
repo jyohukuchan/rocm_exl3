@@ -199,6 +199,14 @@ def _exp_half(value, _semantic=None):
     )
 
 
+@triton.jit
+def _silu_half(value):
+    exponential = _exp_half(-value).to(tl.float32)
+    denominator = (1.0 + exponential).to(tl.float16).to(tl.float32)
+    reciprocal = tl.div_rn(1.0, denominator).to(tl.float16).to(tl.float32)
+    return (value.to(tl.float32) * reciprocal).to(tl.float16)
+
+
 @triton.jit(do_not_specialize=["ROWS", "CMAX"])
 def _post_silu_pre(
     G, U, SG, SU, SD, IDS, OUT, ROWS, COLS: tl.constexpr, CMAX, GROUPS: tl.constexpr
@@ -220,10 +228,7 @@ def _post_silu_pre(
     sd = tl.load(SD + expert[:, None] * COLS + col, valid[:, None], 0).to(tl.float32)
     g = (g * sg).to(tl.float16)
     u = (u * su).to(tl.float16).to(tl.float32)
-    exponential = _exp_half(-g).to(tl.float32)
-    denominator = (1.0 + exponential).to(tl.float16).to(tl.float32)
-    reciprocal = tl.div_rn(1.0, denominator).to(tl.float16).to(tl.float32)
-    silu = (g.to(tl.float32) * reciprocal).to(tl.float16).to(tl.float32)
+    silu = _silu_half(g).to(tl.float32)
     activation = (silu * u).to(tl.float16).to(tl.float32)
     activation = (activation * sd).to(tl.float16).to(tl.float32)
     result = _butterflies(activation, c, GROUPS) * 0.088388347648
@@ -253,3 +258,69 @@ def post_silu_pre(g, u, post_g, post_u, pre_d, ids, cmax):
         enable_fp_fusion=False,
     )
     return out
+
+
+@triton.jit
+def _ordered_accumulate(
+    OUT,
+    SCRATCH,
+    EXPERTS,
+    INV,
+    BASE,
+    START,
+    KIND,
+    WEIGHTS,
+    ROWS,
+    COLS: tl.constexpr,
+    TOPK: tl.constexpr,
+    LOCAL_EXPERTS,
+    SLOTS: tl.constexpr,
+    BLOCK: tl.constexpr,
+):
+    row = tl.program_id(0)
+    k = tl.arange(0, SLOTS)
+    expert = tl.load(EXPERTS + row * TOPK + k, k < TOPK, LOCAL_EXPERTS).to(tl.int32)
+    keys = tl.sort(expert * SLOTS + k, descending=False)
+    c = tl.arange(0, BLOCK)
+    total = tl.load(OUT + row * COLS + c, c < COLS, 0)
+    for position in tl.static_range(SLOTS):
+        key = tl.sum(tl.gather(keys, tl.full((1,), position, tl.int32), axis=0))
+        e, original_k = key // SLOTS, key % SLOTS
+        kind = tl.load(KIND + e, e < LOCAL_EXPERTS, 0)
+        if (kind == 2) & (original_k < TOPK):
+            sorted_position = tl.load(INV + row * TOPK + original_k)
+            start = tl.load(START + e)
+            base = tl.load(BASE + e)
+            weight = tl.load(WEIGHTS + sorted_position).to(tl.float32)
+            value = tl.load(
+                SCRATCH + (base + sorted_position - start) * COLS + c, c < COLS, 0
+            )
+            # Exactly the old per-expert mul_ then index_add_ order, no FMA.
+            product = value * weight
+            total = total + product
+    tl.store(OUT + row * COLS + c, total, c < COLS)
+
+
+def ordered_accumulate(
+    out, scratch, experts, inverse, tables, weights, topk, local_experts
+):
+    rows, cols = out.shape
+    assert out.dtype == scratch.dtype == torch.float32 and out.is_contiguous()
+    _ordered_accumulate[(rows,)](
+        out,
+        scratch,
+        experts,
+        inverse,
+        tables[0],
+        tables[1],
+        tables[2],
+        weights,
+        rows,
+        cols,
+        topk,
+        local_experts,
+        triton.next_power_of_2(topk),
+        triton.next_power_of_2(cols),
+        num_warps=4,
+        enable_fp_fusion=False,
+    )

@@ -289,9 +289,14 @@ void exl3_moe
     // With a known number of active experts, launch only as many groups as there are experts and widen them to
     // use the freed SMs, up to MOE_MAX_SMS_PER_EXPERT
     int block_dim = EXL3_GEMM_BASE_THREADS * MOE_TILESIZE_K / 16;
-    TORCH_CHECK(concurrency * MOE_SMS_PER_EXPERT <= num_sms, "Concurrency too high for device num_sms");
-    int num_groups = MIN((int) concurrency, MOE_MAX_GROUPS);
-    int group_size = MOE_SMS_PER_EXPERT;
+    TORCH_CHECK(concurrency > 0 && concurrency <= num_sms && concurrency <= MOE_MAX_GROUPS,
+                "Concurrency too high for device or scheduler buffers");
+    int num_groups = (int) concurrency;
+    // Default buffers retain the exact original unknown-active launch width.
+    // Explicit smaller groups use a larger buffer count, without recompiling
+    // or changing the device kernel's arithmetic.
+    int group_size = concurrency == num_sms / MOE_SMS_PER_EXPERT
+                   ? MOE_SMS_PER_EXPERT : num_sms / num_groups;
     if (num_active > 0)
     {
         num_groups = MIN(num_groups, num_active);

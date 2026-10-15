@@ -4,6 +4,7 @@
 import json
 import os
 import sys
+import statistics
 import threading
 from collections import Counter
 from pathlib import Path
@@ -24,6 +25,11 @@ _original_group = batch.BatchReconLayer.run_group
 _original_audit = tp_run.tp_audit_rank
 _OUTPUT = Path(sys.argv[sys.argv.index("--output") + 1])
 _VALIDATE = int(os.environ.get("EXL3_MOE_VALIDATE_GROUPS", "0"))
+_VALIDATE_SCHEDULER = int(os.environ.get("EXL3_MOE_VALIDATE_SCHEDULER", "0"))
+_original_fused = ext.exl3_moe
+_TUNE_GROUPS = int(os.environ.get("EXL3_MOE_TUNE_GROUPS", "0"))
+_SCHEDULER_TUNES = []
+_FUSED_PREFILL_CALLS = 0
 
 
 def run_batch(self, *args, **kwargs):
@@ -54,6 +60,8 @@ def run_group(
             "interm_fp32": self.interm_fp32,
             "fast_gather": getattr(self, "fast_gather", False),
             "fast_guad": getattr(self, "fast_guad", False),
+            "exact_gemm": getattr(self, "exact_gemm", False),
+            "fused_rows": _STATE.owner.fused_rows,
         }
         _LAYOUTS[repr(layout)] = layout
     _STATS["groups"] += 1
@@ -106,6 +114,90 @@ def run_group(
     return result
 
 
+def run_fused(*args):
+    global _FUSED_PREFILL_CALLS
+    if (
+        _TUNE_GROUPS
+        and len(_SCHEDULER_TUNES) < _TUNE_GROUPS
+        and args[0].shape[0] >= 1024
+    ):
+        ordinal = _FUSED_PREFILL_CALLS
+        _FUSED_PREFILL_CALLS += 1
+        if ordinal in (0, 23, 46):
+            counts = args[2][: args[13].numel()].tolist()
+            slots = sum(c for c in counts if args[32] <= c <= args[33])
+            reference = list(args)
+            reference[1] = torch.zeros_like(args[1])
+            reference[30] = torch.empty_like(args[30])
+            expected = None
+            measurements = {}
+            sms = ext.g_get_num_sms(args[0].device.index)
+            for width in (8, 4, 2, 1):
+                capacity = min(64, sms // width)
+                for index in range(5, 9):
+                    reference[index] = torch.empty(
+                        (capacity, *args[index].shape[1:]),
+                        device=args[index].device,
+                        dtype=args[index].dtype,
+                    )
+                for _ in range(3):
+                    _original_fused(*reference)
+                values = []
+                for _ in range(3):
+                    begin, end = torch.cuda.Event(enable_timing=True), torch.cuda.Event(
+                        enable_timing=True
+                    )
+                    begin.record()
+                    _original_fused(*reference)
+                    end.record()
+                    end.synchronize()
+                    values.append(begin.elapsed_time(end))
+                if expected is None:
+                    expected = reference[30][:slots].clone()
+                assert torch.equal(reference[30][:slots], expected), (
+                    "scheduler values differ",
+                    width,
+                )
+                measurements[str(width)] = {
+                    "capacity": capacity,
+                    "ms": values,
+                    "median_ms": statistics.median(values),
+                    "exact": True,
+                }
+            _SCHEDULER_TUNES.append(
+                {
+                    "ordinal": ordinal,
+                    "rows": args[0].shape[0],
+                    "fused_slots": slots,
+                    "measurements": measurements,
+                }
+            )
+    check = _STATS["scheduler_exact_checks"] < _VALIDATE_SCHEDULER
+    original_capacity = ext.exl3_moe_max_concurrency(args[0].device.index)
+    if check and args[30] is not None and args[5].shape[0] > original_capacity:
+        assert len(args) == 35, "native fused MoE signature changed"
+        reference = list(args)
+        reference[1] = torch.zeros_like(args[1])
+        reference[30] = torch.zeros_like(args[30])
+        for index in range(5, 9):
+            reference[index] = args[index][:original_capacity]
+        _original_fused(*reference)
+        result = _original_fused(*args)
+        counts = args[2][: args[13].numel()].tolist()
+        slots = sum(count for count in counts if args[32] <= count <= args[33])
+        assert torch.equal(
+            args[30][:slots], reference[30][:slots]
+        ), "fused scheduling changed expert values"
+        _STATS["scheduler_exact_checks"] += 1
+        _STATS["scheduler_nonempty_checks"] += int(slots > 0)
+        return result
+    return _original_fused(*args)
+
+
+if _VALIDATE_SCHEDULER or _TUNE_GROUPS:
+    ext.exl3_moe = run_fused
+
+
 sparse.BlockSparseMLP._run_batch_recon = run_batch
 batch.BatchReconLayer.run_group = run_group
 
@@ -118,6 +210,7 @@ def audit(local_context):
         "batch_recon": sparse.BATCH_RECON,
         "folded_default": batch.RECON_FOLDED,
         "layouts": list(_LAYOUTS.values()),
+        "scheduler_tunes": list(_SCHEDULER_TUNES),
     }
     _OUTPUT.with_name(
         f'{_OUTPUT.stem}-moe-rank-{result["device"]}-{os.getpid()}.json'

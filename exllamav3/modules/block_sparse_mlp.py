@@ -689,6 +689,14 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                 self.fused_rows = FUSED_ROWS_WIDE if self.mtile_ok else TEMP_ROWS_FUSED
                 R = self.fused_rows
                 C = ext.exl3_moe_max_concurrency(torch.device(device).index)
+                group_width = os.environ.get("EXL3_ROCM_MOE_GROUP_SIZE")
+                if (torch.version.hip and group_width is not None
+                        and self.num_local_experts not in (None, self.num_experts)):
+                    if group_width not in ("1", "2", "4", "8"):
+                        raise ValueError("EXL3_ROCM_MOE_GROUP_SIZE must be 1,2,4,8")
+                    C = min(64, ext.g_get_num_sms(torch.device(device).index) // int(group_width))
+                    if C < 1:
+                        raise ValueError("MoE group width exceeds available compute units")
                 self.fused_mode_buffers = FusedBuffers(
                     temp_state_g = g_tensor_cache.get(device, (C, R, H), torch.half, "moe2_temp_state_g"),
                     temp_state_u = g_tensor_cache.get(device, (C, R, H), torch.half, "moe2_temp_state_u"),
@@ -837,7 +845,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         if self.interm_dtype != torch.half:
             per_expert += r * self.intermediate_size_padded * 2
         recon = self._batch_recon_layer(torch.empty((1, h), dtype = torch.half, device = self.device))
-        batched = recon.worst_case_bytes(assignments, slot_mode = FUSED_DET) if recon is not None else 0
+        batched = recon.worst_case_bytes(assignments, slot_mode = FUSED_DET, token_rows = rows) if recon is not None else 0
         return fixed, max(per_expert, batched)
 
     def autosplit_extra_measure(self, params):
@@ -1075,6 +1083,10 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                             from .moe_batch_recon import plan_groups
                             groups = plan_groups(heavy, lambda e: expert_count_list[e], recon.cap)
 
+                exact_accum = bool(recon is not None and recon.exact_gemm and groups)
+                if exact_accum and not FUSED_DET:
+                    raise ValueError("exact grouped MoE requires deterministic slot scratch")
+
                 # Deterministic accumulation (FUSED_DET): every assignment of the fused and
                 # batched tiers gets a slot in one fp32 scratch (fused experts: count rows each,
                 # weighted by the kernel; batched experts: their group's padded row count each,
@@ -1184,8 +1196,9 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
 
                 # One fixed-order gather over every slot
                 if scratch is not None:
+                    gather_kind = (tables[2, :num_ex] == 1).long() if exact_accum else tables[2, :num_ex]
                     ext.exl3_moe_gather(final_hidden_states, scratch, flat_expert_local, inv_order,
-                                        tables[1, :num_ex], tables[0, :num_ex], tables[2, :num_ex], weight_sorted)
+                                        tables[1, :num_ex], tables[0, :num_ex], gather_kind, weight_sorted)
 
                 out_state = None
                 interm = None
@@ -1255,6 +1268,11 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                     current_state.mul_(w)
                     final_hidden_states.index_add_(0, top_x, current_state)
                     start = end
+
+                if exact_accum:
+                    from ..rocm_py.moe_prefill import ordered_accumulate
+                    ordered_accumulate(final_hidden_states, scratch, flat_expert_local, inv_order,
+                                       tables, weight_sorted, top_k, num_ex)
 
             final_hidden_states = final_hidden_states.reshape(eshape)
 
