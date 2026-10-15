@@ -34,9 +34,9 @@ RECON_ROWS = max(1, int(os.environ.get("EXL3_MOE_RECON_ROWS", 16384)))
 # Dequantized weight scratch budget (two live projections at a time)
 RECON_MB = max(1, int(os.environ.get("EXL3_MOE_RECON_MB", 256)))
 # Folded reconstruct (suh / Hadamard / svh applied to the dequantized weights, the dense
-# Linear prefill formulation) vs Hadamards on the activation slabs. CUDA defaults
-# to folded; ROCm defaults to the original unfolded rounding boundaries.
-RECON_FOLDED = os.environ.get("EXL3_MOE_RECON_FOLDED", "0" if torch.version.hip else "1") != "0"
+# Linear prefill formulation) vs Hadamards on the activation slabs. Retain the
+# existing general default; the exact ROCm auto route explicitly selects unfolded.
+RECON_FOLDED = os.environ.get("EXL3_MOE_RECON_FOLDED", "1") != "0"
 # Batching pays while a single expert's GEMM cannot fill the GPU: with 128x128 output tiles an
 # m x n GEMM launches ceil(m/128) * ceil(n/128) blocks, and below roughly the SM count the
 # strided-batched kernel wins by a wide margin. EXL3_MOE_RECON_TILES sets the budget

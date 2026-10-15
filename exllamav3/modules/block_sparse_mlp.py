@@ -855,6 +855,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                 mg.q_cb() if mg is not None else None, mu.q_cb(), md.q_cb(),
                 self.activation_fn, self.act_limit, self.device, scales,
                 interm_fp32 = self.interm_dtype != torch.half,
+                folded = False if policy is not None and policy.enabled else None,
                 gemm_mode = "exact" if policy is not None and policy.enabled else None,
                 fast_prefill = os.environ.get("EXL3_ROCM_MOE_PREFILL", policy.fusion)
                     if policy is not None and policy.enabled else None)
