@@ -489,7 +489,38 @@ fp16 input of the down projection, as in the per-expert path). `EXL3_MOE_BATCH_R
 covers GPU-resident experts, `EXL3_MOE_STREAM_BATCH_RECON` the streamed CPU experts (the
 `EXL3_MOE_STREAM_FUSED_T` overflow tier). Set to `0` to restore the per-expert loops.
 
-### `EXL3_MOE_RECON_TILES` (default: `64`), `EXL3_MOE_RECON_BATCH` (default: `16`), `EXL3_MOE_RECON_PAD` (default: `1.1`), `EXL3_MOE_RECON_ROWS` (default: `16384`), `EXL3_MOE_RECON_MB` (default: `256`), `EXL3_MOE_RECON_MAX_ROWS` (default: unset), `EXL3_MOE_RECON_FOLDED` (default: `1`)
+### `EXL3_ROCM_BATCH_RECON` (default: `0`)
+
+ROCm keeps the individual-expert path by default. `auto` opts into exact grouped
+reconstruction on the tested gfx1030 TP2 Qwen3.8 geometry (H2560, I640, E512,
+local E256, top-k10, mul1 K3, half intermediates, SiLU). It requires Triton3.7,
+deterministic accumulation and either the native `hgemm_exact_group` entry or the
+optional host-only bridge. Missing dependencies or an unsupported configuration
+retain the individual-expert path. `0` disables grouping; `1` enables the older
+experimental strided-batched path and does not promise identical results.
+
+The `auto` path retains each expert's original unpadded GEMM shape, the fused
+threshold128 and FP32 accumulation in expert order. It batches weight reconstruction,
+fuses token gather and activation Hadamards, and prepares metadata once per layer.
+`EXL3_ROCM_MOE_PREFILL=0` disables the transform fusion while retaining grouping.
+`EXL3_MOE_RECON_GEMM=exact` explicitly selects original-shape GEMMs in manual mode.
+ROCm's `EXL3_MOE_RECON_FOLDED` default is `0`; CUDA's remains `1`.
+
+To keep an installed GPU binary intact, build the optional host bridge with the
+same Python/Torch installation as the engine, then prepend its output directory
+to the engine's existing `PYTHONPATH`:
+
+```bash
+python rocm_tools/rdna2/build_moe_group_sidecar.py --output-dir /work/lib-moe-group
+export PYTHONPATH=/work/lib-moe-group:$PYTHONPATH
+export EXL3_ROCM_BATCH_RECON=auto
+```
+
+The bridge calls the installed `hgemm_recon`; it contains no GPU kernels. It must
+be rebuilt for a different Python/Torch ABI. The numerical checks and real inference
+measurements are described in `doc/rdna2_moe_prefill_optimization.md`.
+
+### `EXL3_MOE_RECON_TILES` (default: `64`), `EXL3_MOE_RECON_BATCH` (default: `16`), `EXL3_MOE_RECON_PAD` (default: `1.1`), `EXL3_MOE_RECON_ROWS` (default: `16384`), `EXL3_MOE_RECON_MB` (default: `256`), `EXL3_MOE_RECON_MAX_ROWS` (default: unset), `EXL3_MOE_RECON_FOLDED` (default: `1` CUDA, `0` ROCm)
 
 Tuning for the batched reconstruct tier. Batching pays while a single expert's GEMM cannot
 fill the GPU: an `m x n` GEMM launches about `m/128 * n/128` output tiles, and below roughly
@@ -508,7 +539,7 @@ before the planner starts a new one (groups fill largest expert first, so this s
 groups of uneven experts: on Qwen3.8-Flash-Next at 4096 tokens a limit of 1.5 pads 32% of the
 tier's rows, 1.1 pads 8% and is 2% faster overall, beating a batch of 8 at 1.5; lfm2.5 gains
 2-5%); the padded-row budget per group; the dequantized-weight scratch budget, which shrinks
-the group for large expert shapes. `EXL3_MOE_RECON_FOLDED=1` (default) folds both
+the group for large expert shapes. `EXL3_MOE_RECON_FOLDED=1` (CUDA default) folds both
 Hadamards and the sign vectors into the dequantized weights (the formulation the dense
 `Linear` prefill path uses above 1024 rows): fewer launches, about 4% faster prefill on
 Qwen3.8-Flash-Next, at the cost of rounding the folded weights to fp16, which roughly doubles
