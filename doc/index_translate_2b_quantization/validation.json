@@ -1,0 +1,51 @@
+{
+  "gpu": "AMD Radeon AI PRO R9700",
+  "visible_devices": 1,
+  "torch": "2.12.0+rocm7.2",
+  "hip": "7.2.53211",
+  "decoder_numel": 1371537408,
+  "decoder_bpw": 4.048929663608563,
+  "decoder_tensor_bits": {
+    "4": 132,
+    "5": 18
+  },
+  "mtp_tensor_bits": {
+    "4": 8
+  },
+  "quantization_config": {
+    "quant_method": "exl3",
+    "version": "1.5.0",
+    "bits": 4.05,
+    "head_bits": 8,
+    "calibration": {
+      "rows": 250,
+      "cols": 2048
+    },
+    "out_scales": "auto",
+    "codebook": "mul1",
+    "mtp_bits": 4
+  },
+  "translations": [
+    {
+      "direction": "en-ja",
+      "instruction": "请将以下英语文本翻译为日语，直接输出翻译结果，不要进行任何解释。\n\nThe meeting will start at ten tomorrow morning. Please bring the latest report.",
+      "response": "会議は明日の午前10時から始まります。最新の報告書をお持ちください。",
+      "wall_s": 3.528254956007004
+    },
+    {
+      "direction": "ja-en",
+      "instruction": "请将以下日语文本翻译为英语，直接输出翻译结果，不要进行任何解释。\n\nこのモデルは日本語と英語の間で文章を翻訳できます。",
+      "response": "This model can translate text between Japanese and English.",
+      "wall_s": 0.093008017167449
+    }
+  ],
+  "shards": [
+    {
+      "file": "model.safetensors",
+      "size_bytes": 2919237952,
+      "sha256": "b27ec77c4681a424ad7063368ce0129cdc79f3a424f8e8d4fc55b2bc1a5bea85"
+    }
+  ],
+  "total_weight_bytes": 2919237952,
+  "peak_allocated_vram_bytes": 1426312704
+}

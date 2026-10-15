@@ -14,9 +14,11 @@ from exllamav3 import Cache, Config, Generator, Model, Tokenizer, TopPSampler
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model_dir", type=Path)
+    parser.add_argument("--recipe", type=Path,
+                        default=Path(__file__).with_name("recipe-4.05bpw.json"))
     parser.add_argument("--report", required=True, type=Path)
     args = parser.parse_args()
-    recipe = json.loads(Path(__file__).with_name("recipe-4.05bpw.json").read_text())
+    recipe = json.loads(args.recipe.read_text())
 
     assert torch.cuda.device_count() == 1, "Expose only the R9700"
     device_name = torch.cuda.get_device_name(0)

@@ -1,0 +1,19 @@
+{
+  "started_at": "2026-10-15T00:01:56.839201+00:00",
+  "source_code_revision": "15a1dddc37ba996acd88b5d5aec93819a293e2dd",
+  "container": "rocm-exl3-r9700-conv",
+  "gpu_uuid": "GPU-a8e9ddefa2d60f55",
+  "source": "IndexTeam/Index-Translate-2B",
+  "source_revision": "9bc08445315723eb9b77d1b93505915eb03c3f01",
+  "source_weight_sha256": "2f499211fe352913464be69365e2e5724f913051efb3ae2b6fd0fa617a4c0b60",
+  "conversion_finished_at": "2026-10-15T00:18:20.596500+00:00",
+  "conversion_wall_s": 983.8,
+  "command": "python convert.py -i /models/safetensors/Index-Translate-2B-BF16 -o /work/models/Index-Translate-2B-exl3-4.05bpw -w /work/runs/index-translate-2b-4.05bpw/checkpoint -rcp /src/doc/index_translate_2b_quantization/recipe-4.05bpw.json -hb 8 -mb 4 -vb 16 --out_scales auto -cb mul1 -cr 250 -cc 2048 -d 0",
+  "phase_sums_s": {
+    "capture": 225.935,
+    "quantize": 589.103,
+    "advance": 76.599
+  },
+  "validated_at": "2026-10-15T00:18:55.394387+00:00",
+  "validation": "passed: exact decoder allocation, head=8, MTP=4, two translation samples, SHA-256"
+}
