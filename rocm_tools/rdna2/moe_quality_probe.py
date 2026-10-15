@@ -62,6 +62,8 @@ Job.receive_logits = receive_logits
 def main():
     assert sys.argv[sys.argv.index("--mode") + 1] == "ar"
     status = probe.main()
+    if status:
+        return status
     assert len(_CASES) == len(_REFERENCE["runs"]) == len(_PROMPTS)
     for case, reference in zip(_CASES, _REFERENCE["runs"]):
         assert case["targets"] == reference["tokens"]

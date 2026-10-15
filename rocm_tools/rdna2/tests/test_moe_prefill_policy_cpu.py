@@ -31,12 +31,12 @@ class PolicyTests(unittest.TestCase):
     def test_validated_pair(self):
         chosen = policy.select_policy(**self.config())
         self.assertTrue(chosen.enabled)
-        self.assertEqual(chosen.fused_rows, 32)
+        self.assertEqual(chosen.fused_rows, 128)
         self.assertEqual(chosen.fusion, "fused")
 
     def test_optional_triton(self):
         chosen = policy.select_policy(**self.config(triton_compatible=False))
-        self.assertTrue(chosen.enabled)
+        self.assertFalse(chosen.enabled)
         self.assertEqual(chosen.fusion, "0")
 
     def test_arch_qualifiers(self):

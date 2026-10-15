@@ -30,9 +30,10 @@ def select_policy(
             (2560, 640, 3, False, True),
             (640, 2560, 3, False, True),
         )
+        and triton_compatible
         and not folded
         and deterministic
     )
     if not eligible:
         return PrefillPolicy()
-    return PrefillPolicy(True, 32, "fused" if triton_compatible else "0")
+    return PrefillPolicy(True, 128, "fused" if triton_compatible else "0")
