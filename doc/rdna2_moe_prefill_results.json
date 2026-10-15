@@ -1,0 +1,151 @@
+{
+  "complete": true,
+  "runtime_and_token_audits_pass": true,
+  "generated_token_positions_per_mode_and_block": 1536,
+  "warmups_excluded_from_performance": true,
+  "gpu_tests_overlap": false,
+  "cases": [
+    {
+      "mode": "ar",
+      "language": "ja",
+      "prefill_samples_s": {
+        "off1": [
+          16.199514865875244,
+          16.213416576385498
+        ],
+        "on": [
+          16.107890844345093,
+          16.172534465789795
+        ],
+        "off2": [
+          16.215179920196533,
+          16.309487104415894
+        ]
+      },
+      "baseline_prefill_s": 16.234399616718292,
+      "candidate_prefill_s": 16.140212655067444,
+      "prefill_reduction_fraction": 0.005801690476674892,
+      "baseline_off_block_drift_fraction": 0.003447253222089053,
+      "beats_both_off_blocks": true,
+      "baseline_observed_decode_tps": 28.72952790817079,
+      "candidate_observed_decode_tps": 29.30986695461931,
+      "observed_decode_regression_fraction": -0.020200089897177476,
+      "baseline_total_delivery_s": 25.1580952310469,
+      "candidate_total_delivery_s": 24.876493453979492
+    },
+    {
+      "mode": "ar",
+      "language": "code",
+      "prefill_samples_s": {
+        "off1": [
+          16.387345790863037,
+          16.565587282180786
+        ],
+        "on": [
+          16.28782343864441,
+          16.55270290374756
+        ],
+        "off2": [
+          16.527029275894165,
+          16.628952503204346
+        ]
+      },
+      "baseline_prefill_s": 16.527228713035583,
+      "candidate_prefill_s": 16.420263171195984,
+      "prefill_reduction_fraction": 0.006472079723519042,
+      "baseline_off_block_drift_fraction": 0.006161779456918426,
+      "beats_both_off_blocks": true,
+      "baseline_observed_decode_tps": 28.729683410513267,
+      "candidate_observed_decode_tps": 27.935152634076054,
+      "observed_decode_regression_fraction": 0.027655396165850665,
+      "baseline_total_delivery_s": 25.437457264226396,
+      "candidate_total_delivery_s": 25.58401489048265
+    },
+    {
+      "mode": "mtp",
+      "language": "ja",
+      "prefill_samples_s": {
+        "off1": [
+          16.62679409980774,
+          16.66728401184082
+        ],
+        "on": [
+          17.241141080856323,
+          16.567086458206177
+        ],
+        "off2": [
+          16.927438259124756,
+          16.874621152877808
+        ]
+      },
+      "baseline_prefill_s": 16.77403438091278,
+      "candidate_prefill_s": 16.90411376953125,
+      "prefill_reduction_fraction": -0.007754806367064937,
+      "baseline_off_block_drift_fraction": 0.015257406997440714,
+      "beats_both_off_blocks": false,
+      "baseline_observed_decode_tps": 35.80944097352949,
+      "candidate_observed_decode_tps": 36.79366611667054,
+      "observed_decode_regression_fraction": -0.027485074225777506,
+      "baseline_total_delivery_s": 23.95336450979812,
+      "candidate_total_delivery_s": 23.885584831470624
+    },
+    {
+      "mode": "mtp",
+      "language": "code",
+      "prefill_samples_s": {
+        "off1": [
+          17.062317848205566,
+          17.13291072845459
+        ],
+        "on": [
+          16.706451416015625,
+          16.995068073272705
+        ],
+        "off2": [
+          16.819961547851562,
+          17.287739753723145
+        ]
+      },
+      "baseline_prefill_s": 17.075732469558716,
+      "candidate_prefill_s": 16.850759744644165,
+      "prefill_reduction_fraction": 0.013174997050089288,
+      "baseline_off_block_drift_fraction": -0.002559634157415447,
+      "beats_both_off_blocks": true,
+      "baseline_observed_decode_tps": 55.220697392204436,
+      "candidate_observed_decode_tps": 56.8101434827061,
+      "observed_decode_regression_fraction": -0.028783520773246307,
+      "baseline_total_delivery_s": 21.75738284608815,
+      "candidate_total_delivery_s": 21.40205929102376
+    }
+  ],
+  "mean_prefill_reduction_fraction": 0.004423490220804571,
+  "make_default": false,
+  "performance_gates": {
+    "declared_before_final_benchmarks": true,
+    "minimum_mean_prefill_reduction_fraction": 0.01,
+    "candidate_prefill_must_beat_both_off_block_means_in_each_mode_and_language": true,
+    "maximum_observed_decode_regression_fraction": 0.02,
+    "numerical_and_runtime_audits_must_pass": true,
+    "scope": "two fixed8192-token prompts, two timed samples per language and AR/MTP block; no general hardware/model claim"
+  },
+  "source": "18b4b81 with frozen-source-baseline-rollback.patch",
+  "original_native_sha256": "57afa48c9a61b9e7ba2721917bf011096d7cc947e43b2a8444ee8350f0820718",
+  "limitations": "Two frozen prompts, two timed samples per language in each block; counters active but no GPU event profiler. No statistical significance/general performance claim.",
+  "quality_sample": {
+    "teacher_forced_positions": 128,
+    "mean_kl": 0.0,
+    "max_kl": 0.0,
+    "mean_nll_delta": 0.0,
+    "relative_ppl_delta": 0.0,
+    "pilot_layers_per_rank": 47,
+    "checked_exact_experts_per_rank": [
+      86,
+      87
+    ]
+  },
+  "installed_sidecar": {
+    "path": "/work/lib-context-mr-bounds/exl3_moe_group_ext.cpython-312-x86_64-linux-gnu.so",
+    "sha256": "7fd60ba3056502d41678b1f1add210975e070ee3ffa2538cdebad5d0d0684066",
+    "original_core_retained": true
+  }
+}

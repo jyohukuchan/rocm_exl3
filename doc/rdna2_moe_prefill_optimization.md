@@ -12,7 +12,8 @@ GPUs, true TP2/RCCL, H2560/I640, 512 experts (256/256 or257/255 per TP pair), to
 three-bit mul1 weights, FP16 intermediates and SiLU. Triton3.7 is required.
 No CPU expert split, latent projection or activation clamp is covered by auto.
 Other models and unavailable dependencies retain the individual-expert route.
-CUDA's reconstruction defaults remain unchanged.
+The general folded-reconstruction default remains unchanged, including streamed
+CPU experts; only exact ROCm auto explicitly selects unfolded reconstruction.
 
 The exact route keeps the fused threshold128, each expert's unpadded GEMM M,
 FP16 rounding at activation-transform boundaries, and FP32 weighted accumulation
@@ -81,4 +82,34 @@ these blocks. OS, ARC and swap settings are unchanged.
 Raw commands, process/power/memory audits, numerical reports, rejected trials and
 source snapshots are under
 `/home/homelab1/coding-local/aiter-rdna2-artifacts/moe-prefill-optimization`.
-Final performance results are being collected by `run_sidecar_final.py`.
+Final performance results were collected by `run_sidecar_final.py`; all six
+performance blocks and the47-layer pilot completed and passed cleanup/audits.
+
+## Final decision: retain ROCm default off
+
+| Mode / input | OFF prefill s | ON prefill s | Time reduction | OFF decode tok/s | ON decode tok/s |
+|---|---:|---:|---:|---:|---:|
+| AR / ja | 16.234 | 16.140 | +0.58% | 28.73 | 29.31 |
+| AR / code | 16.527 | 16.420 | +0.65% | 28.73 | 27.94 |
+| MTP / ja | 16.774 | 16.904 | -0.78% | 35.81 | 36.79 |
+| MTP / code | 17.076 | 16.851 | +1.32% | 55.22 | 56.81 |
+
+OFF is the mean of four timed samples from the surrounding two blocks; ON is
+the mean of two timed samples. Positive reduction means shorter prefill time.
+The mean reduction across four cases is0.44%. MTP Japanese prefill regressed
+0.78%, and AR code observed decode throughput fell2.77%. The small differences
+and run-to-run spread do not establish a reliable general acceleration. No
+statistical significance is claimed. The predeclared promotion gates failed;
+`EXL3_ROCM_BATCH_RECON` therefore remains0. `auto` provides the exact opt-in route.
+
+All1536 generated token positions per block match the reference in both modes;
+MTP draft acceptance/rejection histories match too. Model fingerprint, cache
+format/capacity, native hash, TP/RAM audits and power restoration match. The
+installed host bridge was copied alongside the original core in
+`/work/lib-context-mr-bounds`; the original core hash is unchanged. In this
+installation, setting `EXL3_ROCM_BATCH_RECON=auto` is sufficient with the existing
+library path. Default and auto startup import checks both pass.
+
+See [machine-readable results](rdna2_moe_prefill_results.json) for every timed
+prefill sample, drift, observed decode rate and promotion gates. The complete
+raw reports and runtime manifests remain in the artifact directory above.
