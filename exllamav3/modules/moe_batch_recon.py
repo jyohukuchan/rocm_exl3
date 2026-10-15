@@ -140,6 +140,10 @@ class BatchReconLayer:
         # fp32 gate / up outputs (models whose intermediates overflow fp16, e.g. gemma4): the
         # activation kernels take fp32 in and write the fp16 activation the down GEMM consumes
         self.interm_fp32 = interm_fp32
+        mode = os.environ.get("EXL3_ROCM_MOE_PREFILL", "0")
+        self.fast_gather = (mode in ("gather", "fused") and torch.version.hip is not None
+                            and self.gated and not self.folded and not interm_fp32)
+        self.fast_guad = self.fast_gather and mode == "fused" and act == "silu" and self.act_limit == 0.0
         # Per-expert sign vectors. Folded (default): [E] int64 address tables pointing into the
         # caller's own suh/svh tensors, no copy (expert swaps copy_ in place, so the addresses
         # stay valid; a stacked copy cost ~7.5 MiB per 512-expert layer, 180 MiB per device on
@@ -166,6 +170,10 @@ class BatchReconLayer:
         rows = min(self.cap * cmax, RECON_ROWS, int(assignments * PAD_MAX) + cmax)
         total = 2 * self.cap * (max(kg * ng, kd * nd) + ku * nu)        # scratch1 + Wu
         total += rows * ku * 2                                           # gathered input
+        if not self.folded:
+            # Unfolded transforms need a second live input slab (also covers
+            # the fused gather's separate gate/up outputs).
+            total += rows * max(ku, kd) * 2
         idt = 4 if self.interm_fp32 else 2
         total += rows * nu * idt * (2 if self.gated else 1)              # u (+ g)
         if self.interm_fp32:
@@ -174,21 +182,27 @@ class BatchReconLayer:
             total += rows * nd * 4                                       # down slab
         return total
 
-    def _linear(self, x, W, p, ids, out_n, out_dtype = torch.half, out = None):
+    def _linear(self, x, W, p, ids, out_n, out_dtype = torch.half, out = None,
+                pre_transformed = False, skip_post = False, optimized = False):
         """x: [B, cmax, k] input slab, W: [B, k, n] -> [B, cmax, n]. Unfolded: the same
         arithmetic as the per-expert path (had_r_128 with fp16 pre-scale in, fp16/fp32 post-
         scale out), with the per-expert scale rows picked from the stacked tables"""
         B, cmax, k = x.shape
-        if not self.folded:
+        if not self.folded and not pre_transformed:
             suh, svh = self.scales[p]
             xh = torch.empty_like(x)
             ext.had_r_128_batch(x.view(B * cmax, k), xh.view(B * cmax, k), suh, None, ids, cmax, 1.0)
             x = xh
         y = out if out is not None else torch.empty((B, cmax, out_n), dtype = out_dtype, device = x.device)
         ext.hgemm_batched(x, W, y)
-        if not self.folded:
+        if not self.folded and not skip_post:
+            svh = self.scales[p][1]
             y2 = y.view(B * cmax, out_n)
-            ext.had_r_128_batch(y2, y2, None, svh, ids, cmax, 1.0)
+            if optimized and y2.dtype == torch.float:
+                from ..rocm_py.moe_prefill import hadamard_batch
+                hadamard_batch(y2, y2, svh, ids, cmax, False)
+            else:
+                ext.had_r_128_batch(y2, y2, None, svh, ids, cmax, 1.0)
         return y
 
     def _recon(self, W, ptrs, p, ids_d, K, cb):
@@ -251,12 +265,21 @@ class BatchReconLayer:
             ptr_d = td.index_select(0, ids_d)
 
         # Gather index into the sorted assignment list, [B, cmax]; pads read the sentinel
-        ar = torch.arange(cmax, device = dev)
-        src = meta[1].unsqueeze(1) + ar.unsqueeze(0)
-        src = torch.where(ar.unsqueeze(0) < meta[2].unsqueeze(1), src, A).view(-1)
-        tok = tok_ext.index_select(0, src)
-        w = w_ext.index_select(0, src)
-        x = y_ext.index_select(0, tok).view(B, cmax, ku)
+        fast = self.fast_gather and out_slab is not None
+        guad = fast and self.fast_guad
+        if fast:
+            from ..rocm_py.moe_prefill import gather_pre_hadamard
+            xg, xu = gather_pre_hadamard(
+                y_ext, tok_ext, meta, ids_d, self.scales["g"][0], self.scales["u"][0],
+                B, cmax, A)
+            x = None
+        else:
+            ar = torch.arange(cmax, device = dev)
+            src = meta[1].unsqueeze(1) + ar.unsqueeze(0)
+            src = torch.where(ar.unsqueeze(0) < meta[2].unsqueeze(1), src, A).view(-1)
+            tok = tok_ext.index_select(0, src)
+            w = w_ext.index_select(0, src)
+            x = y_ext.index_select(0, tok).view(B, cmax, ku)
 
         # Gate / up. Weight scratch is prefill-shaped and comes from the caching allocator per
         # call (the down projection reuses the gate slab, which is dead after the activation)
@@ -265,17 +288,25 @@ class BatchReconLayer:
         idt = torch.float if self.interm_fp32 else torch.half
         Wu = torch.empty((B, ku, nu), dtype = torch.half, device = dev)
         self._recon(Wu, ptr_u, "u", ids_d, Ku, self.cb_u)
-        u = self._linear(x, Wu, "u", ids_d, nu, out_dtype = idt)
+        u = self._linear(xu if fast else x, Wu, "u", ids_d, nu, out_dtype = idt,
+                         pre_transformed = fast, skip_post = guad, optimized = fast)
         del Wu
         if self.gated:
             Kg = self.dims_g[2]
             Wg = scratch1[:B * kg * ng].view(B, kg, ng)
             self._recon(Wg, ptr_g, "g", ids_d, Kg, self.cb_g)
-            g = self._linear(x, Wg, "g", ids_d, ng, out_dtype = idt)
+            g = self._linear(xg if fast else x, Wg, "g", ids_d, ng, out_dtype = idt,
+                             pre_transformed = fast, skip_post = guad, optimized = fast)
             g2, u2 = g.view(B * cmax, ng), u.view(B * cmax, nu)
         else:
             g2 = u2 = u.view(B * cmax, nu)
-        if self.interm_fp32:
+        if fast:
+            del xg, xu
+        if guad:
+            from ..rocm_py.moe_prefill import post_silu_pre
+            u = post_silu_pre(g2, u2, self.scales["g"][1], self.scales["u"][1],
+                              self.scales["d"][0], ids_d, cmax).view(B, cmax, nu)
+        elif self.interm_fp32:
             a = torch.empty((B * cmax, nu), dtype = torch.half, device = dev)
             self.act_call(g2, u2, a, self.act_limit)
             u = a.view(B, cmax, nu)
@@ -292,7 +323,8 @@ class BatchReconLayer:
         # per layer, no copy). Otherwise accumulate here
         if out_slab is not None:
             assert nd == out_slab.shape[1], "slot scratch width must match the down projection"
-            self._linear(u, Wd, "d", ids_d, nd, out_dtype = torch.float, out = out_slab.view(B, cmax, nd))
+            self._linear(u, Wd, "d", ids_d, nd, out_dtype = torch.float, out = out_slab.view(B, cmax, nd),
+                         pre_transformed = guad, optimized = fast)
             return
         d = self._linear(u, Wd, "d", ids_d, nd, out_dtype = torch.float)
         d2 = d.view(B * cmax, nd)

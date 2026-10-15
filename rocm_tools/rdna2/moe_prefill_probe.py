@@ -16,6 +16,9 @@ from rocm_tools.rdna2 import tp_run
 
 _STATE = threading.local()
 _STATS = Counter()
+_CHECKED_LAYERS = set()
+_LAYOUTS = {}
+_SEEN_BATCH_LAYERS = set()
 _original_batch = sparse.BlockSparseMLP._run_batch_recon
 _original_group = batch.BatchReconLayer.run_group
 _original_audit = tp_run.tp_audit_rank
@@ -38,12 +41,31 @@ def run_group(
     result = _original_group(
         self, y_ext, out_ext, tok_ext, w_ext, ids, starts, counts, ptrs, out_slab
     )
+    if id(self) not in _SEEN_BATCH_LAYERS:
+        _SEEN_BATCH_LAYERS.add(id(self))
+        layout = {
+            "g": self.dims_g,
+            "u": self.dims_u,
+            "d": self.dims_d,
+            "cb_g": self.cb_g,
+            "cb_u": self.cb_u,
+            "cb_d": self.cb_d,
+            "folded": self.folded,
+            "interm_fp32": self.interm_fp32,
+            "fast_gather": getattr(self, "fast_gather", False),
+            "fast_guad": getattr(self, "fast_guad", False),
+        }
+        _LAYOUTS[repr(layout)] = layout
     _STATS["groups"] += 1
     _STATS["experts"] += len(ids)
     _STATS["real_rows"] += sum(counts)
     _STATS["padded_rows"] += len(ids) * max(counts)
     _STATS["folded"] = int(self.folded)
-    if _STATS["checked_groups"] < _VALIDATE and out_slab is not None:
+    if (
+        _STATS["checked_groups"] < _VALIDATE
+        and out_slab is not None
+        and _STATE.owner.key not in _CHECKED_LAYERS
+    ):
         owner = _STATE.owner
         for i, (expert, start, count) in enumerate(zip(ids, starts, counts)):
             x = y_ext.index_select(0, tok_ext[start : start + count])
@@ -79,6 +101,8 @@ def run_group(
             _STATS["checked_experts"] += 1
             assert relative <= 0.005 and rms <= 0.001, (relative, rms)
         _STATS["checked_groups"] += 1
+        _CHECKED_LAYERS.add(owner.key)
+        _STATS["checked_layers"] = len(_CHECKED_LAYERS)
     return result
 
 
@@ -93,6 +117,7 @@ def audit(local_context):
         "stats": dict(_STATS),
         "batch_recon": sparse.BATCH_RECON,
         "folded_default": batch.RECON_FOLDED,
+        "layouts": list(_LAYOUTS.values()),
     }
     _OUTPUT.with_name(
         f'{_OUTPUT.stem}-moe-rank-{result["device"]}-{os.getpid()}.json'
