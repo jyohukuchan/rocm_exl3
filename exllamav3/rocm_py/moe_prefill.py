@@ -76,13 +76,14 @@ def hadamard_batch(x, out, table, ids, rows_per_expert, pre, groups=4):
     return out
 
 
-@triton.jit(do_not_specialize=["EXPERTS", "CMAX", "SENTINEL"])
+@triton.jit(do_not_specialize=["EXPERTS", "CMAX", "SENTINEL", "META_STRIDE"])
 def _gather_input(
     X,
     TOKENS,
     META,
     Y,
     EXPERTS,
+    META_STRIDE,
     CMAX,
     COLS: tl.constexpr,
     SENTINEL,
@@ -91,8 +92,8 @@ def _gather_input(
     row = tl.program_id(0)
     expert = row // CMAX
     r = row % CMAX
-    start = tl.load(META + EXPERTS + expert)
-    count = tl.load(META + 2 * EXPERTS + expert)
+    start = tl.load(META + META_STRIDE + expert)
+    count = tl.load(META + 2 * META_STRIDE + expert)
     source = tl.where(r < count, start + r, SENTINEL)
     token = tl.load(TOKENS + source)
     c = tl.arange(0, BLOCK)
@@ -108,6 +109,7 @@ def gather_input(x, tokens, meta, experts, cmax, sentinel):
         meta,
         out,
         experts,
+        meta.stride(0),
         cmax,
         x.shape[1],
         sentinel,
@@ -117,7 +119,7 @@ def gather_input(x, tokens, meta, experts, cmax, sentinel):
     return out
 
 
-@triton.jit(do_not_specialize=["EXPERTS", "CMAX", "SENTINEL"])
+@triton.jit(do_not_specialize=["EXPERTS", "CMAX", "SENTINEL", "META_STRIDE"])
 def _gather_pre_hadamard(
     X,
     TOKENS,
@@ -128,6 +130,7 @@ def _gather_pre_hadamard(
     G,
     U,
     EXPERTS,
+    META_STRIDE,
     CMAX,
     COLS: tl.constexpr,
     SENTINEL,
@@ -138,8 +141,8 @@ def _gather_pre_hadamard(
     chunk = transform % (COLS // 128)
     b, r = row // CMAX, row % CMAX
     valid = row < EXPERTS * CMAX
-    start = tl.load(META + EXPERTS + b, valid, 0)
-    count = tl.load(META + 2 * EXPERTS + b, valid, 0)
+    start = tl.load(META + META_STRIDE + b, valid, 0)
+    count = tl.load(META + 2 * META_STRIDE + b, valid, 0)
     source = tl.where(r < count, start + r, SENTINEL)
     token = tl.load(TOKENS + source, valid, 0)
     expert = tl.load(IDS + b, valid, 0)
@@ -175,6 +178,7 @@ def gather_pre_hadamard(
         gate,
         up,
         experts,
+        meta.stride(0),
         cmax,
         x.shape[1],
         sentinel,

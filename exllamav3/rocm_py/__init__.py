@@ -1342,9 +1342,14 @@ def apply() -> list[str]:
     # Both flags are module globals read at load / call time.
     try:
         from ..modules import block_sparse_mlp as _bst2
-        if not _env_on("EXL3_ROCM_BATCH_RECON", False):
+        batch_choice = os.environ.get("EXL3_ROCM_BATCH_RECON", "0")
+        if batch_choice == "auto":
+            _bst2.BATCH_RECON = os.environ.get("EXL3_MOE_BATCH_RECON", "1") != "0"
+            _bst2.ROCM_BATCH_RECON_AUTO = True
+            applied.append("batched expert reconstruction auto: exact validated gfx1030 TP2 geometry only")
+        elif not _env_on("EXL3_ROCM_BATCH_RECON", False):
             _bst2.BATCH_RECON = False
-            applied.append("batched expert reconstruct tier off (unvalidated on RDNA; EXL3_ROCM_BATCH_RECON=1)")
+            applied.append("batched expert reconstruction off (EXL3_ROCM_BATCH_RECON=auto for validated geometry)")
         if not _env_on("EXL3_ROCM_MOE_MTILE", False):
             _bst2.MTILE = False
             applied.append("fused-MoE row-tile tiers off (only the 16-row instance exists on RDNA)")

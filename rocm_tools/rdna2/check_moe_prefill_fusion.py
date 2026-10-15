@@ -22,6 +22,17 @@ def main():
                 [torch.zeros(1, device="cuda", dtype=torch.long), counts.cumsum(0)[:-1]]
             )
             meta = torch.stack((ids, starts, counts, ids, ids, ids))
+            # A group is a strided slice of the layer-wide metadata slab.
+            full_meta = torch.cat(
+                (
+                    torch.zeros((6, 1), device="cuda", dtype=torch.long),
+                    meta,
+                    torch.zeros((6, 2), device="cuda", dtype=torch.long),
+                ),
+                dim=1,
+            )
+            meta = full_meta[:, 1:5]
+            ids = meta[0]
             total = int(counts.sum())
             x = torch.randn((513, hidden), device="cuda", dtype=torch.half)
             x[-1].zero_()

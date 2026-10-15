@@ -22,6 +22,7 @@ _LAYOUTS = {}
 _SEEN_BATCH_LAYERS = set()
 _original_batch = sparse.BlockSparseMLP._run_batch_recon
 _original_group = batch.BatchReconLayer.run_group
+_original_prepare = batch.BatchReconLayer.prepare_groups_metadata
 _original_audit = tp_run.tp_audit_rank
 _OUTPUT = Path(sys.argv[sys.argv.index("--output") + 1])
 _VALIDATE = int(os.environ.get("EXL3_MOE_VALIDATE_GROUPS", "0"))
@@ -42,10 +43,30 @@ def run_batch(self, *args, **kwargs):
 
 
 def run_group(
-    self, y_ext, out_ext, tok_ext, w_ext, ids, starts, counts, ptrs=None, out_slab=None
+    self,
+    y_ext,
+    out_ext,
+    tok_ext,
+    w_ext,
+    ids,
+    starts,
+    counts,
+    ptrs=None,
+    out_slab=None,
+    prepared=None,
 ):
     result = _original_group(
-        self, y_ext, out_ext, tok_ext, w_ext, ids, starts, counts, ptrs, out_slab
+        self,
+        y_ext,
+        out_ext,
+        tok_ext,
+        w_ext,
+        ids,
+        starts,
+        counts,
+        ptrs,
+        out_slab,
+        prepared,
     )
     if id(self) not in _SEEN_BATCH_LAYERS:
         _SEEN_BATCH_LAYERS.add(id(self))
@@ -198,6 +219,15 @@ if _VALIDATE_SCHEDULER or _TUNE_GROUPS:
     ext.exl3_moe = run_fused
 
 
+def prepare_metadata(self, *args):
+    result = _original_prepare(self, *args)
+    if result is not None:
+        _STATS["metadata_transfers"] += 1
+        _STATS["metadata_bytes"] += result[0].numel() * result[0].element_size()
+    return result
+
+
+batch.BatchReconLayer.prepare_groups_metadata = prepare_metadata
 sparse.BlockSparseMLP._run_batch_recon = run_batch
 batch.BatchReconLayer.run_group = run_group
 

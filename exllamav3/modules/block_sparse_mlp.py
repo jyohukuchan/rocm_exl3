@@ -29,6 +29,7 @@ TEMP_ROWS_GRAPH = 32
 # Batched reconstruct tier for the experts above the fused kernel's row capacity at prefill
 # (moe_batch_recon.py); EXL3_MOE_BATCH_RECON=0 restores the per-expert reconstruct loop
 BATCH_RECON = os.environ.get("EXL3_MOE_BATCH_RECON", "1") != "0"
+ROCM_BATCH_RECON_AUTO = False
 # Row tiles for the fused kernel: experts with more than MTILE_T1 rows run through a 32-row tile
 # instance, more than MTILE_T2 through a 64-row one (32 for the N = 256 shape), each its own
 # launch over its expert range (mul1 codebook only). EXL3_MOE_MTILE=0 keeps the single 16-row
@@ -792,6 +793,36 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             self.load_routing(**kwargs)
 
 
+    def _rocm_prefill_policy(self):
+        from ..rocm_py.moe_prefill_policy import PrefillPolicy, select_policy
+        if (not torch.version.hip or self.device is None or self.cpu_offload
+                or self.cpu_split_first is not None or self.latent_in is not None
+                or self.latent_out is not None or self.act_limit
+                or not hasattr(ext, "hgemm_exact_group")
+                or any(m is None for m in (self.multi_gate, self.multi_up, self.multi_down))
+                or os.environ.get("EXL3_MOE_RECON_GEMM", "exact") != "exact"):
+            return PrefillPolicy()
+        geometry = (self.hidden_size, self.intermediate_size_padded, self.num_experts,
+                    self.num_local_experts, self.num_experts_per_tok, self.activation_fn,
+                    self.interm_dtype == torch.half)
+        if geometry != (2560, 640, 512, 256, 10, "silu", True):
+            return PrefillPolicy()
+        arch = torch.cuda.get_device_properties(self.device).gcnArchName
+        if arch.split(":", 1)[0] != "gfx1030":
+            return PrefillPolicy()
+        try:
+            import triton
+            compatible = tuple(int(x) for x in triton.__version__.split(".")[:2]) == (3, 7)
+        except (ImportError, ValueError):
+            compatible = False
+        projections = tuple((m.in_features, m.out_features, m.K, *m.q_cb())
+                            for m in (self.multi_gate, self.multi_up, self.multi_down))
+        return select_policy(arch=arch, geometry=geometry, projections=projections,
+                             triton_compatible=compatible,
+                             folded=os.environ.get("EXL3_MOE_RECON_FOLDED", "0") != "0",
+                             deterministic=FUSED_DET)
+
+
     def _batch_recon_layer(self, y):
         """Per-module batched reconstruct state (moe_batch_recon.BatchReconLayer), built on
         first use; None when the module's configuration isn't covered (same conditions as the
@@ -799,8 +830,9 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         if self.batch_recon is False:
             return None
         if self.batch_recon is None:
+            policy = self._rocm_prefill_policy() if ROCM_BATCH_RECON_AUTO else None
             ok = (
-                BATCH_RECON and self.bc is not None and self.support_quant_paths and
+                (policy is None or policy.enabled) and BATCH_RECON and self.bc is not None and self.support_quant_paths and
                 self.interm_dtype in (torch.half, None, torch.float) and self.multi_up is not None and
                 self.multi_up.in_features == y.shape[1] and
                 self.multi_down.out_features == y.shape[1] and
@@ -819,7 +851,10 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                 (md.in_features, md.out_features, md.K),
                 mg.q_cb() if mg is not None else None, mu.q_cb(), md.q_cb(),
                 self.activation_fn, self.act_limit, self.device, scales,
-                interm_fp32 = self.interm_dtype != torch.half)
+                interm_fp32 = self.interm_dtype != torch.half,
+                gemm_mode = "exact" if policy is not None and policy.enabled else None,
+                fast_prefill = os.environ.get("EXL3_ROCM_MOE_PREFILL", policy.fusion)
+                    if policy is not None and policy.enabled else None)
             self.batch_recon.set_static_pointers(
                 mg.ptrs_trellis if mg is not None else None, mu.ptrs_trellis, md.ptrs_trellis)
         return self.batch_recon
@@ -876,7 +911,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             del t
 
     def _run_batch_recon(self, recon, y, fhs_ext, token_sorted, weight_sorted, expert_count_list, groups,
-                         scratch = None, tables = None):
+                         scratch = None, tables = None, prepared = None):
         """Run the planned groups through the batched reconstruct tier. With a slot scratch each
         group's down projection lands in its slots (summed later by exl3_moe_gather); otherwise
         each group accumulates into fhs_ext (rows + 1, the last row a padding sink). Returns the
@@ -894,7 +929,16 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             # groups were laid out after the fused slots, in plan order, len(grp) * cmax each
             slot = sum(c for c in expert_count_list[:self.num_local_experts or self.num_experts]
                        if 0 < c <= self.fused_rows) if self.fused_mode_buffers is not None else 0
+        offset = 0
+        if prepared is None:
+            prepared = recon.prepare_groups_metadata(groups, expert_count_list)
         for grp in groups:
+            group_meta = None
+            if prepared is not None:
+                meta, ptrs = prepared
+                stop = offset + len(grp)
+                group_meta = (meta[:, offset:stop], tuple(p[offset:stop] if p is not None else None for p in ptrs))
+                offset = stop
             out_slab = None
             if scratch is not None:
                 cmax = max(expert_count_list[e] for e in grp)
@@ -903,7 +947,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             recon.run_group(
                 y_ext, fhs_ext, tok_ext, w_ext,
                 grp, [starts[e] for e in grp], [expert_count_list[e] for e in grp],
-                out_slab = out_slab)
+                out_slab = out_slab, prepared = group_meta)
             handled.update(grp)
         return handled
 
@@ -1083,6 +1127,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                             from .moe_batch_recon import plan_groups
                             groups = plan_groups(heavy, lambda e: expert_count_list[e], recon.cap)
 
+                prepared_batch = recon.prepare_groups_metadata(groups, expert_count_list) if groups else None
                 exact_accum = bool(recon is not None and recon.exact_gemm and groups)
                 if exact_accum and not FUSED_DET:
                     raise ValueError("exact grouped MoE requires deterministic slot scratch")
@@ -1192,7 +1237,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                 if groups:
                     batched = self._run_batch_recon(
                         recon, y, fhs_ext, token_sorted, weight_sorted, expert_count_list, groups,
-                        scratch, tables)
+                        scratch, tables, prepared = prepared_batch)
 
                 # One fixed-order gather over every slot
                 if scratch is not None:
@@ -1246,7 +1291,8 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                                 interm_a_ = interm_a[:count]
 
                             yh = torch.empty((count * 2, self.expert_size), dtype = torch.half, device = self.device)
-                            self.bc.run_single_expert_dq(current_state, expert_idx, yh, interm_, interm_a_, out_state)
+                            self.bc.run_single_expert_dq(current_state, expert_idx, yh, interm_, interm_a_,
+                                                         out_state_ if torch.version.hip else out_state)
                             current_state = out_state_
                     else:
 

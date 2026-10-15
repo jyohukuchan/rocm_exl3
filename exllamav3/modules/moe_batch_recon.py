@@ -34,8 +34,9 @@ RECON_ROWS = max(1, int(os.environ.get("EXL3_MOE_RECON_ROWS", 16384)))
 # Dequantized weight scratch budget (two live projections at a time)
 RECON_MB = max(1, int(os.environ.get("EXL3_MOE_RECON_MB", 256)))
 # Folded reconstruct (suh / Hadamard / svh applied to the dequantized weights, the dense
-# Linear prefill formulation) vs Hadamards on the activation slabs. Default on
-RECON_FOLDED = os.environ.get("EXL3_MOE_RECON_FOLDED", "1") != "0"
+# Linear prefill formulation) vs Hadamards on the activation slabs. CUDA defaults
+# to folded; ROCm defaults to the original unfolded rounding boundaries.
+RECON_FOLDED = os.environ.get("EXL3_MOE_RECON_FOLDED", "0" if torch.version.hip else "1") != "0"
 # Batching pays while a single expert's GEMM cannot fill the GPU: with 128x128 output tiles an
 # m x n GEMM launches ceil(m/128) * ceil(n/128) blocks, and below roughly the SM count the
 # strided-batched kernel wins by a wide margin. EXL3_MOE_RECON_TILES sets the budget
@@ -113,7 +114,7 @@ class BatchReconLayer:
     differ between GPU-resident and streamed experts)."""
 
     def __init__(self, dims_g, dims_u, dims_d, cb_g, cb_u, cb_d, activation, act_limit, device,
-                 scales, folded = None, interm_fp32 = False):
+                 scales, folded = None, interm_fp32 = False, gemm_mode = None, fast_prefill = None):
         # dims: (k, n, K); cb: (mcg, mul1); scales: per projection ("g", "u", "d") a pair of
         # lists of per-expert suh (k) and svh (n) half tensors, stacked here into [E, dim]
         # tables
@@ -140,14 +141,14 @@ class BatchReconLayer:
         # fp32 gate / up outputs (models whose intermediates overflow fp16, e.g. gemma4): the
         # activation kernels take fp32 in and write the fp16 activation the down GEMM consumes
         self.interm_fp32 = interm_fp32
-        self.exact_gemm = os.environ.get("EXL3_MOE_RECON_GEMM", "batched") == "exact"
+        self.exact_gemm = (gemm_mode if gemm_mode is not None else os.environ.get("EXL3_MOE_RECON_GEMM", "batched")) == "exact"
         if self.exact_gemm:
             if self.folded:
                 raise ValueError("exact MoE grouping requires unfolded weight reconstruction")
             # Original-shape GEMMs also cover large experts; include every
             # non-fused expert so one final kernel can preserve expert order.
             self.max_rows = 1 << 30
-        mode = os.environ.get("EXL3_ROCM_MOE_PREFILL", "0")
+        mode = fast_prefill if fast_prefill is not None else os.environ.get("EXL3_ROCM_MOE_PREFILL", "0")
         self.fast_gather = (mode in ("gather", "fused") and torch.version.hip is not None
                             and self.gated and not self.folded and not interm_fp32)
         self.fast_guad = self.fast_gather and mode == "fused" and act == "silu" and self.act_limit == 0.0
@@ -238,6 +239,20 @@ class BatchReconLayer:
         """Resident experts: [E] int64 device tensors of trellis addresses per projection"""
         self.ptr_tables = (ptrs_g, ptrs_u, ptrs_d)
 
+    def prepare_groups_metadata(self, groups, expert_counts):
+        """One host transfer and one pointer gather per projection per layer."""
+        if self.ptr_tables is None:
+            return None
+        ids = [expert for group in groups for expert in group]
+        starts = np.cumsum([0] + expert_counts[:-1], dtype=np.int64)
+        meta_h = np.asarray([ids, [starts[e] for e in ids], [expert_counts[e] for e in ids]], dtype=np.int64)
+        meta = torch.from_numpy(meta_h).to(self.device, non_blocking=True)
+        tg, tu, td = self.ptr_tables
+        ptrs = (tg.index_select(0, meta[0]) if tg is not None else None,
+                tu.index_select(0, meta[0]), td.index_select(0, meta[0]))
+        return meta, ptrs
+
+
     def run_group(
         self,
         y_ext: torch.Tensor,       # (rows + 1, k_in) half; last row zero, k_in == dims_u[0]
@@ -252,6 +267,7 @@ class BatchReconLayer:
         out_slab: torch.Tensor | None = None,  # (B * cmax, ho) fp32 view of the layer's slot
                                    # scratch: the down projection is written there unweighted and
                                    # nothing is accumulated here (exl3_moe_gather sums the slots)
+        prepared: tuple | None = None,
     ):
         B = len(counts)
         assert B <= self.cap
@@ -265,23 +281,27 @@ class BatchReconLayer:
         # source is a fresh pageable tensor: CUDA stages those immediately without waiting on
         # the stream (measured: the host returns in ~0.2 ms with 300 ms of work queued), and
         # nothing here is read back. Everything else is derived on the device.
-        meta_h = np.zeros((6, B), dtype = np.int64)
-        meta_h[0] = ids
-        meta_h[1] = starts
-        meta_h[2] = counts
-        if ptrs is not None:
-            for i, pl in enumerate(ptrs):
-                if pl is not None:
-                    meta_h[3 + i] = pl
-        meta = torch.from_numpy(meta_h).to(dev, non_blocking = True)
-        ids_d = meta[0]
-        if ptrs is not None:
-            ptr_g, ptr_u, ptr_d = meta[3], meta[4], meta[5]
+        if prepared is not None:
+            meta, (ptr_g, ptr_u, ptr_d) = prepared
+            ids_d = meta[0]
         else:
-            tg, tu, td = self.ptr_tables
-            ptr_g = tg.index_select(0, ids_d) if tg is not None else None
-            ptr_u = tu.index_select(0, ids_d)
-            ptr_d = td.index_select(0, ids_d)
+            meta_h = np.zeros((6, B), dtype = np.int64)
+            meta_h[0] = ids
+            meta_h[1] = starts
+            meta_h[2] = counts
+            if ptrs is not None:
+                for i, pl in enumerate(ptrs):
+                    if pl is not None:
+                        meta_h[3 + i] = pl
+            meta = torch.from_numpy(meta_h).to(dev, non_blocking = True)
+            ids_d = meta[0]
+            if ptrs is not None:
+                ptr_g, ptr_u, ptr_d = meta[3], meta[4], meta[5]
+            else:
+                tg, tu, td = self.ptr_tables
+                ptr_g = tg.index_select(0, ids_d) if tg is not None else None
+                ptr_u = tu.index_select(0, ids_d)
+                ptr_d = td.index_select(0, ids_d)
 
         # Gather index into the sorted assignment list, [B, cmax]; pads read the sentinel
         fast = self.fast_gather and out_slab is not None
