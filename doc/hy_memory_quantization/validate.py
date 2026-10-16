@@ -43,6 +43,17 @@ def main():
     qcfg = json.loads((args.model_dir / "config.json").read_text())["quantization_config"]
     assert qcfg["bits"] == 4.08 and qcfg["head_bits"] == 8
     assert qcfg["codebook"] == "mul1"
+    unquantized_dtypes = Counter()
+    for key in config.stc.tensor_file_map:
+        if key == "model.embed_tokens.weight" or key.endswith("norm.weight") or key.endswith("router.gate.weight"):
+            dtype = config.stc.get_tensor_meta(key)[key]["dtype"]
+            assert dtype in ("F16", "BF16"), (key, dtype)
+            unquantized_dtypes[dtype] += 1
+        elif key.endswith(".mlp.expert_bias"):
+            dtype = config.stc.get_tensor_meta(key)[key]["dtype"]
+            assert dtype == "F32", (key, dtype)
+            unquantized_dtypes[dtype] += 1
+    assert sum(unquantized_dtypes.values()) == 288, unquantized_dtypes
     config.stc.close()
     cache = Cache(model, max_num_tokens=4096, max_batch_size=1)
     model.load(device="cuda:0", progressbar=True)
@@ -108,6 +119,7 @@ def main():
               "gpu": torch.cuda.get_device_name(0), "torch": torch.__version__, "hip": torch.version.hip,
               "decoder_numel": numel, "decoder_bpw": total_bits / numel,
               "decoder_tensor_bits": dict(Counter(recipe["tensors"].values())),
+              "unquantized_tensor_dtypes": dict(unquantized_dtypes),
               "quantization_config": qcfg, "samples": samples, "shards": shards,
               "total_weight_bytes": sum(s["size_bytes"] for s in shards),
               "peak_allocated_vram_bytes": torch.cuda.max_memory_allocated(0)}
