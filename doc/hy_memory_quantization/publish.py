@@ -55,6 +55,8 @@ def main():
     shutil.copy2(args.source_dir / "README.md", args.model_dir / "SOURCE_MODEL_CARD.md")
     for name in ("recipe-4bit-base.json", "calibration-metadata.json", "validation.json"):
         shutil.copy2(args.run_dir / name, args.model_dir / name)
+    if (args.run_dir / "validation-initial.json").exists():
+        shutil.copy2(args.run_dir / "validation-initial.json", args.model_dir / "validation-initial.json")
     packaging_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     revision_file = args.run_dir / "conversion-engine-revision.txt"
     engine_revision = revision_file.read_text().strip() if revision_file.exists() else packaging_revision
@@ -120,6 +122,15 @@ and abstention when employer/address evidence is absent. Full prompts and respon
 GPU/runtime details and weight SHA-256 digests are in `validation.json`.
 These checks do not measure quality loss relative to BF16 or establish benchmark
 equivalence with the source model.
+
+**Prompt specificity:** in an initial check with broader instructions, the model
+kept a superseded location with an annotation and retained a temporary weather
+observation. The final checks explicitly request only currently valid facts,
+complete removal of superseded items and exclusion of transient weather.
+`validation-initial.json` preserves those original prompts, responses and the
+failed correction check. Use explicit memory-bank policies in deployment;
+these observations have not been compared against BF16 and cannot be attributed
+specifically to quantization.
 
 ## Download and inference
 

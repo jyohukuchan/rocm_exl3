@@ -72,7 +72,7 @@ def main():
         # per-module random seeds, recipe or quantization code.
         checkpoint = run / "checkpoint/ckpt/job.json"
         fresh = not args.resume
-        while True:
+        while not (output / "quantization_config.json").is_file():
             next_idx = 0 if fresh else json.loads(checkpoint.read_text())["next_module_idx"]
             limit = next_idx + args.modules_per_process - 1
             if fresh:
