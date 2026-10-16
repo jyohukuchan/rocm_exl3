@@ -38,7 +38,11 @@ class HyV3Config(Config):
         self.assert_cfg(bool, "moe_router_enable_expert_bias", True, True)
         self.assert_cfg(bool, "route_norm", True, True)
         self.intermediate_size = self.read_cfg(int, "intermediate_size", no_default)
-        self.moe_intermediate_size = self.read_cfg(int, "moe_intermediate_size", no_default)
+        # HYV3 checkpoints may retain a legacy moe_intermediate_size that differs
+        # from the actual routed/shared expert width (Hy-Memory: 1536 vs 768).
+        self.moe_intermediate_size = self.read_cfg(
+            int, ["expert_hidden_dim", "moe_intermediate_size"], no_default
+        )
         self.num_shared_experts = self.read_cfg(int, "num_shared_experts", 1)
         self.num_experts = self.read_cfg(int, "num_experts", 192)
         self.num_experts_per_tok = self.read_cfg(int, "num_experts_per_tok", 8)
