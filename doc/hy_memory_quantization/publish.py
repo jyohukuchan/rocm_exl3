@@ -4,6 +4,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -32,6 +33,17 @@ def main():
     parser.add_argument("--publish", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
+    # The conversion container runs as root. Hand only this release directory
+    # back to the invoking user before writing its card or creating hard links.
+    work = Path("/home/homelab1/datapool/rocm-exl3-rdna2")
+    model_dir = args.model_dir.resolve()
+    if model_dir.stat().st_uid != os.getuid():
+        relative = model_dir.relative_to(work / "models")
+        assert relative == Path("Hy-Memory-30B-A3B-exl3-4.08bpw")
+        subprocess.run([
+            "docker", "exec", "rocm-exl3-r9700-conv", "chown", "-R",
+            f"{os.getuid()}:{os.getgid()}", str(Path("/work/models") / relative),
+        ], check=True)
     report = json.loads((args.run_dir / "validation.json").read_text())
     assert report["passed"] and len(report["samples"]) == 3
     for shard in report["shards"]:
