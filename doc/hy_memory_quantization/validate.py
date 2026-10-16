@@ -60,12 +60,14 @@ def main():
     tokenizer = Tokenizer.from_config(config)
     generator = Generator(model=model, cache=cache, tokenizer=tokenizer)
     tasks = [
-        ("extraction", 'Extract explicit stable user facts. Do not infer or invent information. '
+        ("extraction", 'Extract only persistent user facts and preferences. Do not infer or invent information. '
+         'Exclude temporary observations such as today\'s weather. '
          'Return only a JSON object with a "memories" list of strings.',
          'My name is Nora. I live in Madrid. I am vegetarian and use Julia for work. '
          'I prefer concise answers. It is raining today.'),
-        ("correction", 'Update the memory bank from the latest explicit evidence. Replace superseded '
-         'facts and preserve unrelated facts. Return only JSON with a "memories" list of strings.',
+        ("correction", 'Return the updated memory bank containing only currently valid facts. '
+         'Delete superseded facts completely; do not retain them with annotations or as history. '
+         'Preserve unrelated facts. Return only JSON with a "memories" list of strings.',
          'Existing bank: ["Nora lives in Rome", "Nora is vegetarian"]. '
          'New message from Nora: I moved permanently to Lisbon. I still do not eat meat.'),
         ("abstention", 'Extract only explicitly stated employer and home-address facts. '
@@ -99,6 +101,7 @@ def main():
             text = " ".join(memories).lower()
             if name == "extraction":
                 assert all(word in text for word in ("nora", "madrid", "vegetarian", "julia"))
+                assert all(word not in text for word in ("rain", "weather"))
             elif name == "correction":
                 assert "lisbon" in text and "rome" not in text
                 assert "vegetarian" in text or "meat" in text
