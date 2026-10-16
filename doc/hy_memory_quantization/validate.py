@@ -47,11 +47,11 @@ def main():
     for key in config.stc.tensor_file_map:
         if key == "model.embed_tokens.weight" or key.endswith("norm.weight") or key.endswith("router.gate.weight"):
             dtype = config.stc.get_tensor_meta(key)[key]["dtype"]
-            assert dtype in ("F16", "BF16"), (key, dtype)
+            assert dtype in ("torch.float16", "torch.bfloat16"), (key, dtype)
             unquantized_dtypes[dtype] += 1
         elif key.endswith(".mlp.expert_bias"):
             dtype = config.stc.get_tensor_meta(key)[key]["dtype"]
-            assert dtype == "F32", (key, dtype)
+            assert dtype == "torch.float32", (key, dtype)
             unquantized_dtypes[dtype] += 1
     assert sum(unquantized_dtypes.values()) == 288, unquantized_dtypes
     config.stc.close()
