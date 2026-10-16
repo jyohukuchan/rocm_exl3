@@ -69,3 +69,24 @@ and abstention tasks using the native chat template. `publish.py` packages the
 license, model card, recipe, metadata and validation evidence, uploads on explicit
 `--publish`, and checks anonymous remote file sizes and weight LFS SHA-256 hashes.
 These functional checks do not measure quality loss relative to BF16.
+
+## Long-run RAM control
+
+The 48-layer conversion's host RSS increased by roughly 2 GB per MoE layer,
+reaching 28.33 GB after eight blocks despite allocator trimming. The datapool's
+ZFS ARC also held about 63 GB of file cache. The workflow therefore recycles
+the converter process every eight modules through its native checkpoints.
+The FP32 calibration state, original token rows, tensor recipe and per-module
+random seeds survive the restart; no weights are requantized at a different
+precision. `--checkpoint_interval 1` ensures the end of every chunk is saved.
+The final process runs the remaining norm/head and compiles all saved tensors.
+
+Resume the workflow (conversion through public upload) with:
+
+```bash
+python3 doc/hy_memory_quantization/pipeline.py --resume --modules-per-process 8
+```
+
+The active job runs as the user service `hy-memory-exl3-4bit-base.service`.
+Progress and logs live under
+`/home/homelab1/datapool/rocm-exl3-rdna2/runs/hy-memory-30b-a3b-4bit-base/`.
