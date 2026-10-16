@@ -1,6 +1,8 @@
 from __future__ import annotations
 from typing_extensions import override
 import torch
+from pathlib import Path
+from ..util.file import maybe_read_json
 from ..model.config import Config, no_default
 from ..model.model import Model
 from ..util.rope import RopeStyle
@@ -222,6 +224,19 @@ class HyV3Model(Model):
 
     @override
     def default_chat_prompt(self, prompt: str, system_prompt: str = None) -> str:
+        directory = Path(self.config.directory)
+        tokenizer_config = maybe_read_json(str(directory / "tokenizer_config.json"))
+        if (directory / "chat_template.jinja").is_file() or tokenizer_config.get("chat_template"):
+            # Hy-Memory/Hy-MT2 use different control tokens from the original Hy3.
+            # The checkpoint's template is authoritative, including its no-think prefix.
+            from ..tokenizer import Tokenizer
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+            return Tokenizer.from_config(self.config).hf_render_chat_template(
+                messages, reasoning_effort="no_think"
+            )
         p = f"<｜hy_begin_of_sentence:opensource｜>"
         if system_prompt:
             p += system_prompt

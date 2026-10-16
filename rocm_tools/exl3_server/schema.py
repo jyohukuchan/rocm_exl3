@@ -1,6 +1,6 @@
 """Structured-output and tool-call constraints for the EXL3 HTTP server.
 
-The server uses Qwen's XML tool-call dialect.  This module deliberately keeps
+The server supports Qwen XML and HYV3's native argument-tag dialect. This module keeps
 the transport and generation jobs out of the implementation: it validates an
 OpenAI request, builds an llguidance grammar, and returns a small plan that the
 HTTP layer can attach to a generation job.  The grammar is active at the
@@ -8,6 +8,8 @@ HTTP layer can attach to a generation job.  The grammar is active at the
 ``tool_choice=auto``.  Each parameter is emitted as a JSON value inside the
 Qwen ``<parameter=...>`` element; this makes the JSON Schema constraint apply
 to the value itself instead of relying on a post-generation check.
+HYV3 activates on ``<tool_calls>`` and constrains JSON values in ``<arg_value>``
+elements, including the group terminator and a bounded number of calls.
 
 Imports of the model tokenizer, torch and llguidance are lazy.  The validation
 helpers are consequently safe to use from CPU-only request tests.
@@ -381,6 +383,29 @@ def _tool_call_grammar(tool_map: dict[str, dict], names: list[str]) -> str:
                       ensure_ascii=False, separators=(",", ":"))
 
 
+def _hy_tool_grammar(tool_map, names, *, include_marker, max_calls):
+    calls = []
+    for name in names:
+        schema = tool_map[name]["schema"]
+        required = set(schema.get("required", []))
+        parts = ["<tool_call>", _literal(name), "<tool_sep>", _literal("\n")]
+        for key in schema.get("properties", {}):
+            parameter = " ".join([
+                "<arg_key>", _literal(key), "</arg_key>", _literal("\n"), "<arg_value>",
+                _json_fragment(_parameter_fragment(schema, key)),
+                "</arg_value>", _literal("\n"),
+            ])
+            parts.append(parameter if key in required else f"( {parameter} )?")
+        parts.extend(["</tool_call>", _literal("\n")])
+        calls.append("( " + " ".join(parts) + " )")
+    choice = "( " + " | ".join(calls) + " )"
+    start = ("<tool_calls>" if include_marker else "") + ' "\\n" ' + choice
+    start += f" ( {choice} )?" * (max_calls - 1)
+    start += " </tool_calls>"
+    return json.dumps({"grammars": [{"name": "tool_start", "lark_grammar": "start: " + start}]},
+                      ensure_ascii=False)
+
+
 def _eos_token_ids(tokenizer: Any) -> list[int]:
     config = getattr(tokenizer, "config", None)
     values = getattr(config, "eos_token_id_list", None) or []
@@ -458,6 +483,7 @@ def prepare_constraints(
     thinking: bool = True,
     max_parallel_tool_calls: int = _MAX_PARALLEL_TOOL_CALLS,
     compile_filters: bool = True,
+    model_family: str = "qwen38",
 ) -> ConstraintPlan:
     """Build the generation plan for OpenAI structured output and tools.
 
@@ -500,6 +526,30 @@ def prepare_constraints(
                               max_parallel_tool_calls=max_parallel_tool_calls)
 
     selected = [choice["function"]["name"]] if isinstance(choice, dict) else list(tool_map)
+    if model_family == "hy_v3":
+        trigger = _token_id(tokenizer, "<tool_calls>", "HYV3 tool calling")
+        required = choice == "required" or isinstance(choice, dict)
+        prefix = (("</think>\n\n" if thinking else "") + "<tool_calls>\n") if required else None
+        plan = ConstraintPlan(
+            kind="tools", tools=normalized_tools, tool_choice=choice,
+            parallel_tool_calls=parallel_tool_calls, thinking=thinking,
+            max_parallel_tool_calls=max_parallel_tool_calls, trigger_token=trigger,
+            generation_prefix=prefix, requires_tool_call=required,
+            filter_spec={
+                "trigger_token": None if required else trigger,
+                "prefix_str": "<tool_calls>\n" if required else None,
+                "consume_prefix": required, "eos_after_completed": True,
+                "llg_grammar": _hy_tool_grammar(tool_map, selected, include_marker=required,
+                                               max_calls=max_parallel_tool_calls if parallel_tool_calls else 1),
+            },
+            template_instructions=("Use the native HYV3 <tool_calls> group and "
+                                   "<tool_call>name<tool_sep> format with arg_key/arg_value pairs. "
+                                   "Encode each arg_value as JSON, including quotes for strings. "
+                                   "Stop after </tool_calls>; do not emit placeholders."),
+        )
+        if compile_filters:
+            plan.build_filters(tokenizer)
+        return plan
     trigger = _token_id(tokenizer, "<tool_call>", "tool calling")
     is_required = choice == "required" or isinstance(choice, dict)
     # For required/named calls the HTTP layer may prepend this exact marker to

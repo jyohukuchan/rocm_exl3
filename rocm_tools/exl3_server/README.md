@@ -23,6 +23,42 @@ The server uses the model's own Hugging Face chat template for chat requests.
 The model directory must contain a compatible tokenizer and chat template for
 `/v1/chat/completions`; `/v1/completions` can accept a caller-rendered prompt.
 
+## Hy-Memory-30B-A3B
+
+`HYV3ForCausalLM` checkpoints use their native chat template. Hy-Memory's
+`expert_hidden_dim=768` takes precedence over the legacy
+`moe_intermediate_size=1536`. The model has no MTP component; serve it without `-mtp`.
+
+The default mode is `no_think`. Native `low`/`high` are preserved; client aliases
+`none` → `no_think`, `minimal`/`medium` → `low`, and `xhigh` → `high` are accepted.
+An explicit request mode overrides the derived default thinking flag.
+`enable_thinking: true` without an effort selects `low`; false selects `no_think`.
+
+The server converts native `<tool_calls>` / `<tool_sep>` / `<arg_key>` /
+`<arg_value>` output into OpenAI tool calls. Schema-constrained argument values
+are JSON typed. SSE buffers each native call until its closing token, then emits
+the complete tool call; incomplete control tags do not leak into visible content.
+The server never executes a generated tool. JSON Schema responses also work in
+both ordinary JSON and SSE modes.
+
+For a single visible GPU:
+
+```bash
+ulimit -S -n 65536
+python rocm_tools/exl3_server/server.py \
+  -m /path/to/Hy-Memory-30B-A3B-exl3-4.08bpw \
+  -gs 24 -cs 8192 -ambs 1 -smn hy-memory
+```
+
+For the V620 pair add `-tp -tpb nccl` and use `-gs 24,24`. ROCm uses RCCL
+through the `nccl` backend; the default CUDA `native` TP backend is not the
+ROCm TP implementation. Raise the launcher nofile limit before spawning workers:
+the default 1024 can produce a misleading GPU OOM while VRAM is still available.
+
+[RDNA2/RDNA4 verification and reproduction](../../doc/hy_memory_support/README.md)
+cover the published 4.08bpw model, including 3,331-token prefill followed by a
+short request. Maximum-context quality/capacity and RDNA3/3.5 are outside that check.
+
 ## Connecting OpenCode
 
 OpenCode v2.0.12 uses an OpenAI-compatible provider definition. Copy
@@ -134,7 +170,7 @@ not an independently enforced OpenAI instruction hierarchy.
 
 `response_format: {"type": "text"}` means ordinary unconstrained text, including
 tool use and the optional timing footer. Reasoning levels `minimal` and `high`
-map to this model's native `low` and `xhigh`; `none` disables thinking. `low`,
+map to Qwen's native `low` and `xhigh`; `none` disables thinking. `low`,
 `medium`, and `xhigh` remain native values. These are prompt hints, not fixed
 reasoning-token budgets. Aliases work in top-level fields and template kwargs;
 the configured default remains xhigh when no override is supplied.

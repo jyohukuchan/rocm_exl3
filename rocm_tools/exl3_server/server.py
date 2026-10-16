@@ -498,6 +498,23 @@ def check_model(name):
         raise HTTPException(404, f"Unknown model {name!r}; use {state.model_name!r}")
 
 
+def chat_model_family() -> str:
+    return "hy_v3" if getattr(state.config, "architecture", None) == "HYV3ForCausalLM" else "qwen38"
+
+
+def template_controls(overrides: dict) -> dict:
+    kwargs = dict(state.default_template_kwargs)
+    kwargs.update(overrides)
+    if chat_model_family() == "hy_v3":
+        # An explicit request mode must not inherit the default mode's derived
+        # enable_thinking flag (and vice versa).
+        if "reasoning_effort" in overrides and "enable_thinking" not in overrides:
+            kwargs.pop("enable_thinking", None)
+        elif "enable_thinking" in overrides and "reasoning_effort" not in overrides:
+            kwargs.pop("reasoning_effort", None)
+    return protocol.reasoning_kwargs(kwargs, model_family=chat_model_family())
+
+
 def chat_controls(req: ChatCompletionRequest) -> tuple[list, Any, dict]:
     try:
         tools = protocol.normalize_tool_definitions(req.tools)
@@ -507,14 +524,13 @@ def chat_controls(req: ChatCompletionRequest) -> tuple[list, Any, dict]:
             choice = "none"
     except protocol.ProtocolError as e:
         raise HTTPException(400, str(e)) from e
-    kwargs = dict(state.default_template_kwargs)
-    kwargs.update(req.chat_template_kwargs or {})
+    kwargs = dict(req.chat_template_kwargs or {})
     if req.enable_thinking is not None:
         kwargs["enable_thinking"] = req.enable_thinking
     if req.reasoning_effort is not None:
         kwargs["reasoning_effort"] = req.reasoning_effort
     try:
-        kwargs = protocol.reasoning_kwargs(kwargs)
+        kwargs = template_controls(kwargs)
     except protocol.ProtocolError as e:
         raise HTTPException(400, str(e)) from e
     selected = tools
@@ -802,7 +818,7 @@ async def prepare_chat(body):
             body.response_format = None
         plan = structured.prepare_constraints(state.tokenizer, tools, choice,
                                                body.parallel_tool_calls, body.response_format,
-                                               thinking=thinking)
+                                               thinking=thinking, model_family=chat_model_family())
         embeddings = await state.vision.prepare(body.messages, state.tokenizer) if state.vision is not None else []
     except protocol.ProtocolError as e:
         raise HTTPException(400, str(e)) from e
@@ -844,7 +860,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
 
     def parser_for(index=0):
         return protocol.IncrementalAssistantParser(
-            tools=tools, initial_reasoning=thinking,
+            model_family=chat_model_family(), tools=tools, initial_reasoning=thinking,
             id_factory=lambda i: f"call_{cmpl_id[9:]}_{index}_{i}")
 
     if body.stream:
@@ -926,7 +942,7 @@ async def chat_completions(request: Request, body: ChatCompletionRequest):
     def create_choice(i):
         local_plan = plan if i == 0 else structured.prepare_constraints(
             state.tokenizer, tools, choice, body.parallel_tool_calls, body.response_format,
-            thinking=thinking)
+            thinking=thinking, model_family=chat_model_family())
         job = make_job(body, ids, max_new, body.stop, identifier=i, filters=local_plan.filters, embeddings=embeddings)
         by_job[id(job)] = traces[i]
         return job
@@ -1112,11 +1128,8 @@ async def apply_template(request: Request, body: ApplyTemplateRequest):
     check_auth(request)
     if not state.has_chat_template:
         raise HTTPException(400, "Model has no chat template")
-    kwargs = dict(state.default_template_kwargs)
-    if body.chat_template_kwargs:
-        kwargs.update(body.chat_template_kwargs)
     try:
-        kwargs = protocol.reasoning_kwargs(kwargs)
+        kwargs = template_controls(body.chat_template_kwargs or {})
         kwargs, qwen_xml = _qwen_xml_template_kwargs(state.tokenizer, kwargs)
         messages = protocol.messages_for_template(
             body.messages, json_parameter_values=qwen_xml, allow_images=state.vision is not None)
@@ -1334,6 +1347,10 @@ def main(args):
         state.default_template_kwargs = json.loads(args.chat_template_kwargs)
         assert isinstance(state.default_template_kwargs, dict), \
             "--chat_template_kwargs must be a JSON object"
+    if chat_model_family() == "hy_v3":
+        state.default_template_kwargs = protocol.reasoning_kwargs(
+            state.default_template_kwargs, model_family="hy_v3"
+        )
 
     # Validate the model's chat template up front so /v1/chat/completions fails loudly now,
     # not on the first request

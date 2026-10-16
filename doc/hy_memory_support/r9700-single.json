@@ -1,0 +1,45 @@
+{
+  "passed": true,
+  "devices": [
+    {
+      "index": 0,
+      "name": "AMD Radeon AI PRO R9700",
+      "arch": "gfx1201"
+    }
+  ],
+  "tensor_parallel": false,
+  "active_devices": [],
+  "load_s": 5.813868741039187,
+  "native_extension": "/work/lib-r9700-opt/exllamav3_ext.cpython-312-x86_64-linux-gnu.so",
+  "torch": "2.12.0+rocm7.2",
+  "hip": "7.2.53211",
+  "samples": [
+    {
+      "task": "extraction",
+      "prompt_tokens": 62,
+      "response": "{\n  \"memories\": [\n    \"Nora's name is Nora\",\n    \"Nora lives in Madrid\",\n    \"Nora uses Julia at work\",\n    \"Nora is vegetarian\"\n  ]\n}",
+      "wall_s": 3.1642789759207517,
+      "passed": true
+    },
+    {
+      "task": "long_correction",
+      "prompt_tokens": 3331,
+      "response": "{\n  \"memories\": [\n    \"Nora lives in Lisbon\",\n    \"Nora is vegetarian\"\n  ]\n}",
+      "wall_s": 5.206454729894176,
+      "passed": true
+    },
+    {
+      "task": "abstention_after_long",
+      "prompt_tokens": 66,
+      "response": "{\n  \"memories\": []\n}",
+      "wall_s": 1.0445043330546468,
+      "passed": true
+    }
+  ],
+  "rlimit_nofile": [
+    65536,
+    524288
+  ],
+  "scope": "Functional generation checks; no BF16 quality or maximum-context claim.",
+  "native_extension_sha256": "8120e6a1a128c8ac99f6955445802669c601194d0de2fc586d04712e4ed137db"
+}

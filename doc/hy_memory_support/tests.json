@@ -1,0 +1,7 @@
+{
+  "date_jst": "2026-10-17",
+  "passed": 129,
+  "skipped": 7,
+  "command": "python -m pytest -q tests/test_hy_v3_config.py rocm_tools/exl3_server/tests/test_hy_memory_cpu.py rocm_tools/exl3_server/tests/test_protocol_cpu.py rocm_tools/exl3_server/tests/test_schema_cpu.py rocm_tools/exl3_server/tests/test_server_http.py",
+  "scope": "Relevant architecture, protocol, schema, and HTTP contract tests; optional fixtures skipped."
+}

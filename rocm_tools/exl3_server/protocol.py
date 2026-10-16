@@ -2,7 +2,7 @@
 
 The HTTP layer owns authentication, scheduling and SSE transport.  This module
 only normalizes tool history, validates tool request controls, and converts the
-Qwen XML assistant format into structured OpenAI tool calls.  It intentionally
+Qwen XML and native HYV3 assistant formats into structured OpenAI tool calls. It intentionally
 never executes a tool.
 """
 
@@ -133,10 +133,20 @@ def _text_content(content: Any) -> str:
     raise ProtocolError("message content must be a string or an array of supported content parts")
 
 
-def reasoning_kwargs(kwargs: dict) -> dict:
+def reasoning_kwargs(kwargs: dict, *, model_family: str = "qwen38") -> dict:
     """Adapt common client levels to this model's native low/medium/xhigh hints."""
     result = dict(kwargs)
     effort = result.get("reasoning_effort")
+    if model_family == "hy_v3":
+        aliases = {"none": "no_think", "no_think": "no_think", "minimal": "low",
+                   "low": "low", "medium": "low", "high": "high", "xhigh": "high"}
+        if effort is not None and (not isinstance(effort, str) or effort not in aliases):
+            raise ProtocolError("HYV3 reasoning_effort must be no_think, low or high (or a client alias)")
+        native = aliases.get(effort, "low" if result.get("enable_thinking") else "no_think")
+        if result.get("enable_thinking") is False:
+            native = "no_think"
+        result.update(reasoning_effort=native, enable_thinking=native != "no_think")
+        return result
     aliases = {"minimal": "low", "low": "low", "medium": "medium", "high": "xhigh", "xhigh": "xhigh"}
     if effort == "none":
         result["enable_thinking"] = False
@@ -608,22 +618,79 @@ def _parse_json_call(raw: str, index: int) -> dict | None:
     return _tool_call({"id": f"call_{index}", "function": {"name": name, "arguments": args}}, index)
 
 
+def _parse_hy_calls(text, tools, id_factory, allow_partial):
+    calls, spans = [], []
+    schemas = _tool_schemas(tools)
+    starts = list(_regex_finditer_outside_quotes(re.compile(r"<tool_call>"), text))
+    for start in starts:
+        end = _find_tag_outside_quotes(text, "</tool_call>", start.end())
+        if end < 0:
+            if allow_partial:
+                continue
+            raise ProtocolError("incomplete HYV3 tool_call")
+        body = text[start.end():end]
+        header = re.match(r"\s*([A-Za-z_][A-Za-z0-9_.-]{0,63})<tool_sep>\s*", body)
+        if not header:
+            raise ProtocolError("malformed HYV3 tool name/separator")
+        name, pos, arguments = header.group(1), header.end(), {}
+        while body[pos:].strip():
+            key = re.match(r"\s*<arg_key>(.*?)</arg_key>\s*<arg_value>", body[pos:], re.DOTALL)
+            if not key:
+                raise ProtocolError("malformed HYV3 argument")
+            pname = key.group(1)
+            value_start = pos + key.end()
+            value_end = _find_tag_outside_quotes(body, "</arg_value>", value_start)
+            if value_end < 0 or pname in arguments:
+                raise ProtocolError("incomplete or duplicate HYV3 argument")
+            raw = body[value_start:value_end].strip()
+            schema = schemas.get(name, {}).get("properties", {}).get(pname, {})
+            arguments[pname] = (raw if schema.get("type") == "string" and not raw.startswith('"')
+                                else _decode_parameter_value(raw))
+            pos = value_end + len("</arg_value>")
+        index = len(calls)
+        calls.append(_tool_call({"id": id_factory(index) if id_factory else f"call_{index}",
+                                 "function": {"name": name, "arguments": arguments}}, index))
+        spans.append((start.start(), end + len("</tool_call>")))
+    wrappers = list(_regex_finditer_outside_quotes(re.compile(r"</?tool_calls>"), text))
+    if wrappers and not allow_partial and (not calls or wrappers[-1].group() != "</tool_calls>"):
+        raise ProtocolError("incomplete HYV3 tool_calls group")
+    spans.extend((m.start(), m.end()) for m in wrappers)
+    return calls, spans
+
+
 def parse_assistant_output(text: str, *, model_family: str = "qwen38",
                            tools: Iterable[dict] | None = None,
                            tool_choice: Any = "auto",
                            parallel_tool_calls: bool = True,
                            id_factory: Callable[[int], str] | None = None,
                            allow_partial: bool = False) -> dict:
-    """Parse Qwen ``<think>`` and function XML without executing tools."""
+    """Parse reasoning and family-specific tool calls without executing tools."""
     if not isinstance(text, str):
         raise ProtocolError("assistant output must be text")
-    reasoning, visible = _remove_top_level_think(text)
-    calls, spans = _parse_qwen_xml_calls(visible, id_factory=id_factory)
-    if not allow_partial and next(_iter_tool_call_starts(visible), None) is not None and not calls:
+    if model_family == "hy_v3":
+        thoughts = list(_regex_finditer_outside_quotes(_THINK_RE, text))
+        reasoning = "\n".join(m.group(1).strip() for m in thoughts).strip()
+        visible = text
+        for match in reversed(thoughts):
+            visible = visible[:match.start()] + visible[match.end():]
+        dangling = next(_regex_finditer_outside_quotes(re.compile(r"<think>", re.IGNORECASE), visible), None)
+        if dangling is not None:
+            if not allow_partial:
+                reasoning = "\n".join(filter(None, [reasoning, visible[dangling.end():].strip()]))
+            visible = visible[:dangling.start()]
+    else:
+        reasoning, visible = _remove_top_level_think(text)
+    if model_family == "hy_v3":
+        calls, spans = _parse_hy_calls(visible, tools, id_factory, allow_partial)
+    else:
+        calls, spans = _parse_qwen_xml_calls(visible, id_factory=id_factory)
+    if model_family != "hy_v3" and not allow_partial and next(_iter_tool_call_starts(visible), None) is not None and not calls:
         raise ProtocolError("incomplete or malformed tool_call block")
     # Remove parsed blocks while preserving all ordinary assistant text.
     for start, end in sorted(spans, reverse=True):
         visible = visible[:start] + visible[end:]
+    if model_family == "hy_v3" and calls:
+        visible = re.sub(r"<｜reasoning_mode｜>reasoning_effort:(?:no_think|low|high)\s*$", "", visible)
     content = visible.strip()
     validate_parallel_tool_calls(calls, parallel_tool_calls=parallel_tool_calls)
     result = {
@@ -705,7 +772,7 @@ def event_to_chat_delta(event: dict) -> dict:
 
 @dataclass
 class IncrementalAssistantParser:
-    """Incremental Qwen parser; buffers incomplete tags and UTF-8 bytes."""
+    """Incremental assistant parser; buffers incomplete tags and UTF-8 bytes."""
     model_family: str = "qwen38"
     tools: list[dict] | None = None
     initial_reasoning: bool = False
@@ -761,12 +828,13 @@ class IncrementalAssistantParser:
         if self.initial_reasoning and self._initial_reasoning_done:
             parse_input = ("<think>" + self._initial_reasoning_value + "</think>"
                            + self._text[self._initial_reasoning_cursor:])
-        parsed = parse_assistant_output(parse_input, tools=self.tools,
+        parsed = parse_assistant_output(parse_input, model_family=self.model_family, tools=self.tools,
                                         id_factory=self.id_factory,
                                         allow_partial=True)
         events = initial_events
         events.extend(self._events_from_parsed(parsed))
-        events.extend(self._stream_xml_events())
+        if self.model_family != "hy_v3":
+            events.extend(self._stream_xml_events())
         return events
 
     def _events_from_parsed(self, parsed: dict) -> list[dict]:
@@ -783,6 +851,32 @@ class IncrementalAssistantParser:
         if len(reasoning) > self._emitted_reasoning:
             events.append({"type": "reasoning_content", "delta": reasoning[self._emitted_reasoning:]})
             self._emitted_reasoning = len(reasoning)
+        if self.model_family == "hy_v3":
+            # Native argument values are buffered until a complete call closes.
+            # Never expose an incomplete control token/argument body as content.
+            safe = content
+            mode_marker = _find_tag_outside_quotes(safe, "<｜reasoning_mode｜>")
+            if mode_marker >= 0:
+                safe = safe[:mode_marker].rstrip()
+            thoughts = list(_regex_finditer_outside_quotes(re.compile(r"</?think>", re.IGNORECASE), self._text))
+            if thoughts and thoughts[-1].group().lower() == "<think>":
+                safe = ""
+            marker = _find_tag_outside_quotes(safe, "<tool")
+            if marker >= 0:
+                safe = safe[:marker].rstrip()
+            for tag in ("<think>", "</think>", "<tool_calls>", "</tool_calls>", "<tool_call>", "<｜reasoning_mode｜>"):
+                for length in range(1, len(tag)):
+                    if next(_regex_finditer_outside_quotes(re.compile(re.escape(tag[:length]) + r"$"), safe), None):
+                        safe = safe[:-length]
+                        break
+            if len(safe) > self._emitted_content:
+                events.append({"type": "content", "delta": safe[self._emitted_content:]})
+                self._emitted_content = len(safe)
+            calls = parsed.get("tool_calls") or []
+            for index in range(self._emitted_calls, len(calls)):
+                events.append({"type": "tool_call", "index": index, "tool_call": calls[index]})
+            self._emitted_calls = len(calls)
+            return events
         # Hold a trailing partial tool marker/body so tool-looking text is not
         # emitted as ordinary content before the XML block closes.
         safe_content = content
@@ -949,6 +1043,10 @@ class IncrementalAssistantParser:
             if tail:
                 self._text += tail
         parse_input = self._text
+        if self.model_family == "hy_v3" and self.initial_reasoning and not self._initial_reasoning_done:
+            # A token limit inside the template's open thought region must not
+            # reinterpret thought text (or tool-looking examples) as an answer.
+            parse_input = "<think>" + self._text + "</think>"
         if self.initial_reasoning and self._initial_reasoning_done:
             parse_input = ("<think>" + self._initial_reasoning_value + "</think>"
                            + self._text[self._initial_reasoning_cursor:])

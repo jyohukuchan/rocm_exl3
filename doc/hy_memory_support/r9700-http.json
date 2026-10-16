@@ -1,0 +1,151 @@
+{
+  "passed": true,
+  "health": {
+    "status": "ok",
+    "jobs": {
+      "active": 0,
+      "queued": 0
+    }
+  },
+  "defaults": {
+    "reasoning_effort": "no_think",
+    "enable_thinking": false
+  },
+  "templates": [
+    {
+      "requested": "no_think",
+      "native": "no_think",
+      "prompt": "<｜hy_begin▁of▁sentence｜><｜reasoning_mode｜>reasoning_effort:no_think<｜hy_User｜>ping<｜hy_Assistant｜><think></think>"
+    },
+    {
+      "requested": "high",
+      "native": "high",
+      "prompt": "<｜hy_begin▁of▁sentence｜><｜reasoning_mode｜>reasoning_effort:high<｜hy_User｜>ping<｜hy_Assistant｜><think>"
+    },
+    {
+      "requested": "xhigh",
+      "native": "high",
+      "prompt": "<｜hy_begin▁of▁sentence｜><｜reasoning_mode｜>reasoning_effort:high<｜hy_User｜>ping<｜hy_Assistant｜><think>"
+    }
+  ],
+  "samples": [
+    {
+      "task": "structured_memories",
+      "stream": false,
+      "response": "{\"memories\":[\":user_name:Nora\",\":user_location:Lisbon\"]}",
+      "passed": true,
+      "wall_s": 3.416872950969264
+    },
+    {
+      "task": "structured_memories",
+      "stream": true,
+      "response": "{\"memories\":[\":user_name:Nora\",\":user_location:Lisbon\"]}",
+      "passed": true,
+      "wall_s": 0.28461595508269966
+    },
+    {
+      "task": "native_tool_call",
+      "stream": false,
+      "function": "save_memory",
+      "arguments": {
+        "fact": "Nora lives in Lisbon.",
+        "revision": 2
+      },
+      "passed": true,
+      "tool_executed": false
+    },
+    {
+      "task": "native_tool_call",
+      "stream": true,
+      "function": "save_memory",
+      "arguments": {
+        "fact": "Nora lives in Lisbon.",
+        "revision": 2
+      },
+      "passed": true,
+      "tool_executed": false
+    }
+  ],
+  "runtime": {
+    "available": true,
+    "ok": true,
+    "path": "generic_model_init",
+    "execution": {
+      "actual": "single_device",
+      "loaded_tp": false,
+      "backend": {
+        "requested": "native",
+        "actual": null,
+        "rank_classes": {}
+      }
+    },
+    "devices": {
+      "expected": [
+        0
+      ],
+      "output": 0,
+      "arch_expected": null,
+      "parent_pid": null,
+      "ranks": []
+    },
+    "cache_policy": {
+      "requested": {
+        "policy": "fp16",
+        "layer_type": "CacheLayer_fp16",
+        "k_bits": null,
+        "v_bits": null,
+        "note": "no -cq given: FP16 caches (the specialized TP+MTP HTTP path requires quantized caches)"
+      },
+      "observed": {
+        "target": {
+          "layers_total": 48,
+          "bytes_total": 805306368,
+          "cls_counts": {
+            "CacheLayer_fp16": 48
+          },
+          "bits_variants": {
+            "CacheLayer_fp16": [
+              [
+                null,
+                null
+              ]
+            ]
+          }
+        }
+      },
+      "notes": []
+    },
+    "mtp_placement": {
+      "component_present": false,
+      "requested": false,
+      "device": null,
+      "unsharded": null,
+      "note": "generic model_init placement (draft device selection is model_init's, which may differ from the verified benchmark)"
+    },
+    "ngram": {
+      "expected_keys": [],
+      "single_ram_owner": {},
+      "replicated_copies": [],
+      "mlock": {
+        "env_requested": null,
+        "locked_total_bytes": null,
+        "records": null
+      }
+    },
+    "memory": null,
+    "cpu_helper": null,
+    "placement": null,
+    "problems": [],
+    "notes": [],
+    "power_policy": {
+      "policy": "disabled",
+      "note": "no --power-socket given; requests are NOT labelled policy-controlled"
+    },
+    "power_rank_syncs": [],
+    "generator_runtime": {
+      "active_jobs": 0,
+      "peak_active_jobs": 0,
+      "configured_max_batch_size": 1
+    }
+  }
+}

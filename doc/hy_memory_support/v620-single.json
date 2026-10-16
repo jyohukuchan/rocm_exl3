@@ -1,0 +1,46 @@
+{
+  "passed": true,
+  "devices": [
+    {
+      "index": 0,
+      "name": "AMD Radeon Pro V620",
+      "arch": "gfx1030"
+    },
+    {
+      "index": 1,
+      "name": "AMD Radeon Pro V620",
+      "arch": "gfx1030"
+    }
+  ],
+  "tensor_parallel": false,
+  "active_devices": [],
+  "load_s": 4.9204139148350805,
+  "native_extension": "/work/lib-moe-exact/exllamav3_ext.cpython-312-x86_64-linux-gnu.so",
+  "torch": "2.12.0+rocm7.2",
+  "hip": "7.2.53211",
+  "samples": [
+    {
+      "task": "extraction",
+      "prompt_tokens": 62,
+      "response": "{\n  \"memories\": [\n    \"Nora's name is Nora\",\n    \"Nora lives in Madrid\",\n    \"Nora uses Julia at work\",\n    \"Nora is vegetarian\"\n  ]\n}",
+      "wall_s": 6.24333551293239,
+      "passed": true
+    },
+    {
+      "task": "long_correction",
+      "prompt_tokens": 3331,
+      "response": "{\n  \"memories\": [\n    \"Nora lives in Lisbon\",\n    \"Nora is vegetarian\"\n  ]\n}",
+      "wall_s": 5.678142216056585,
+      "passed": true
+    },
+    {
+      "task": "abstention_after_long",
+      "prompt_tokens": 66,
+      "response": "{\n  \"memories\": []\n}",
+      "wall_s": 0.8056274289265275,
+      "passed": true
+    }
+  ],
+  "scope": "Functional generation checks; no BF16 quality or maximum-context claim.",
+  "native_extension_sha256": "76e31fbc6da5ba6a41095b214fe65a149cb75f8a30b96af31bbcb44734b15620"
+}

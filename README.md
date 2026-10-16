@@ -32,6 +32,7 @@ AMD/CUDA behavior has not all been revalidated by this project.
 | Capability | Hardware | Status on this fork | Evidence |
 |---|---|---|---|
 | Single-GPU inference (bench + quality gates) | 1× V620 (gfx1030) | **Validated** — Qwen3-8B EXL3 4bpw, Qwen3-30B-A3B EXL3 3bpw | [doc/rdna2_phase2_results.md](doc/rdna2_phase2_results.md) |
+| Hy-Memory-30B-A3B EXL3 4.08bpw | 1× V620; 2× V620 TP2; 1× R9700 | **Validated** — native prompts, memory extraction/update, short-after-long generation; JSON Schema and native tool calls over JSON/SSE on R9700 and V620 TP2 | [doc/hy_memory_support/README.md](doc/hy_memory_support/README.md) |
 | Layer-split load (`use_per_device`) | 2× V620 | **Validated** (batch 1, placement-audited) | [doc/v620_pair_results.md](doc/v620_pair_results.md) |
 | Tensor-parallel load + RCCL collectives | 2× V620 | **Validated** — Qwen3.8-Flash-Next 3.05bpw + packed MTP3, K5/V4 KV, Engram CPU table, batches 1–4 | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md), [doc/v620_tp_decode_optimization.md](doc/v620_tp_decode_optimization.md) |
 | MTP draft windows 1–4 | 2× V620, TP2 | **Supported and exercised**; deeper drafts are *not* universally faster — acceptance is workload-dependent (screening table in the context/batch report) | [doc/qwen38_v620_context_batch.md](doc/qwen38_v620_context_batch.md) |
@@ -564,7 +565,7 @@ python examples/chat.py -h
 | **GLM 5.3-Flash**                                | `Glm5NextForConditionalGeneration` | ✓ |  |
 | **GPT-OSS**                                      | `GptOssForCausalLM` |  |  |
 | **HyperCLOVAX**                                  | `HyperCLOVAXForCausalLM`<br>`HCXVisionV2ForCausalLM` | ✓ |  |
-| **Hy3**                                          | `HYV3ForCausalLM` |  |  |
+| **Hy3 / Hy-Memory-30B-A3B**                       | `HYV3ForCausalLM` |  | `expert_hidden_dim`, native checkpoint chat template; [RDNA2/RDNA4 verification](doc/hy_memory_support/README.md) |
 | **IQuest-Coder**                                 | `IQuestCoderForCausalLM` |  |  |
 | **Laguna 2.1**                                   | `LagunaForCausalLM` |  |  |
 | **LFM 2.5**                                      | `Lfm2ForCausalLM`<br>`Lfm2MoeForCausalLM` |  |  |

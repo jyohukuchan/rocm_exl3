@@ -1,0 +1,239 @@
+{
+  "passed": true,
+  "health": {
+    "status": "ok",
+    "jobs": {
+      "active": 0,
+      "queued": 0
+    }
+  },
+  "defaults": {
+    "reasoning_effort": "no_think",
+    "enable_thinking": false
+  },
+  "templates": [
+    {
+      "requested": "no_think",
+      "native": "no_think",
+      "prompt": "<｜hy_begin▁of▁sentence｜><｜reasoning_mode｜>reasoning_effort:no_think<｜hy_User｜>ping<｜hy_Assistant｜><think></think>"
+    },
+    {
+      "requested": "high",
+      "native": "high",
+      "prompt": "<｜hy_begin▁of▁sentence｜><｜reasoning_mode｜>reasoning_effort:high<｜hy_User｜>ping<｜hy_Assistant｜><think>"
+    },
+    {
+      "requested": "xhigh",
+      "native": "high",
+      "prompt": "<｜hy_begin▁of▁sentence｜><｜reasoning_mode｜>reasoning_effort:high<｜hy_User｜>ping<｜hy_Assistant｜><think>"
+    }
+  ],
+  "samples": [
+    {
+      "task": "structured_memories",
+      "stream": false,
+      "response": "{\"memories\":[\":user_name:Nora\",\":user_location:Lisbon\"]}",
+      "passed": true,
+      "wall_s": 6.902651180978864
+    },
+    {
+      "task": "structured_memories",
+      "stream": true,
+      "response": "{\"memories\":[\":user_name:Nora\",\":user_location:Lisbon\"]}",
+      "passed": true,
+      "wall_s": 0.6523323820438236
+    },
+    {
+      "task": "native_tool_call",
+      "stream": false,
+      "function": "save_memory",
+      "arguments": {
+        "fact": "Nora lives in Lisbon.",
+        "revision": 2
+      },
+      "passed": true,
+      "tool_executed": false
+    },
+    {
+      "task": "native_tool_call",
+      "stream": true,
+      "function": "save_memory",
+      "arguments": {
+        "fact": "Nora lives in Lisbon.",
+        "revision": 2
+      },
+      "passed": true,
+      "tool_executed": false
+    }
+  ],
+  "runtime": {
+    "available": true,
+    "ok": true,
+    "path": "generic_model_init",
+    "execution": {
+      "actual": "tp2",
+      "loaded_tp": true,
+      "backend": {
+        "requested": "nccl",
+        "actual": "nccl",
+        "rank_classes": {
+          "0": "TPBackendRCCL",
+          "1": "TPBackendRCCL"
+        }
+      }
+    },
+    "devices": {
+      "expected": [
+        0,
+        1
+      ],
+      "output": 0,
+      "arch_expected": "gfx1030",
+      "parent_pid": 179570,
+      "ranks": [
+        {
+          "device": 0,
+          "pid": 179570,
+          "gcn_arch": "gfx1030",
+          "name": "AMD Radeon Pro V620",
+          "torch_allocated_bytes": 8199067648,
+          "torch_peak_bytes": 8199067648,
+          "torch_reserved_bytes": 8218738688
+        },
+        {
+          "device": 1,
+          "pid": 179649,
+          "gcn_arch": "gfx1030",
+          "name": "AMD Radeon Pro V620",
+          "torch_allocated_bytes": 8174353920,
+          "torch_peak_bytes": 8174353920,
+          "torch_reserved_bytes": 8193572864
+        }
+      ]
+    },
+    "cache_policy": {
+      "requested": {
+        "policy": "fp16",
+        "layer_type": "CacheLayer_fp16",
+        "k_bits": null,
+        "v_bits": null,
+        "note": "no -cq given: FP16 caches (the specialized TP+MTP HTTP path requires quantized caches)"
+      },
+      "observed": {
+        "target": {
+          "layers_total": 96,
+          "bytes_total": 805306368,
+          "cls_counts": {
+            "CacheLayer_fp16": 96
+          },
+          "bits_variants": {
+            "CacheLayer_fp16": [
+              [
+                null,
+                null
+              ]
+            ]
+          }
+        }
+      },
+      "notes": []
+    },
+    "mtp_placement": {
+      "component_present": false,
+      "requested": false,
+      "device": null,
+      "unsharded": null,
+      "note": "generic model_init placement (draft device selection is model_init's, which may differ from the verified benchmark)"
+    },
+    "ngram": {
+      "expected_keys": [],
+      "single_ram_owner": {},
+      "replicated_copies": [],
+      "mlock": {
+        "env_requested": false,
+        "locked_total_bytes": 0,
+        "records": {
+          "0": {
+            "device": 0,
+            "pid": 179570,
+            "env_mlock": "0",
+            "tables": []
+          },
+          "1": {
+            "device": 1,
+            "pid": 179649,
+            "env_mlock": "0",
+            "tables": []
+          }
+        }
+      }
+    },
+    "memory": {
+      "unique_pids": {
+        "179570": {
+          "devices": [
+            0
+          ],
+          "proc_mem": {
+            "vm_rss_kb": 5876380,
+            "pss_kb": 5200334,
+            "vm_swap_kb": 0,
+            "minflt": 3653414,
+            "majflt": 0
+          },
+          "note": "counted once even though it also owns the parent-side shells"
+        },
+        "179649": {
+          "devices": [
+            1
+          ],
+          "proc_mem": {
+            "vm_rss_kb": 2862204,
+            "pss_kb": 2190004,
+            "vm_swap_kb": 0,
+            "minflt": 1709169,
+            "majflt": 0
+          },
+          "note": null
+        }
+      },
+      "totals": {
+        "vm_rss_kb": 8738584,
+        "pss_kb": 7390338,
+        "vm_swap_kb": 0
+      },
+      "torch_by_rank": [
+        {
+          "device": 0,
+          "pid": 179570,
+          "allocated_bytes": 8199067648,
+          "peak_bytes": 8199067648,
+          "reserved_bytes": 8218738688
+        },
+        {
+          "device": 1,
+          "pid": 179649,
+          "allocated_bytes": 8174353920,
+          "peak_bytes": 8174353920,
+          "reserved_bytes": 8193572864
+        }
+      ]
+    },
+    "cpu_helper": null,
+    "placement": null,
+    "problems": [],
+    "notes": [
+      "no n-gram table expected or found on any rank: tableless checkpoint (dense/MoE D/M); RAM-owner audit is a recorded no-op, not a failure"
+    ],
+    "power_policy": {
+      "policy": "disabled",
+      "note": "no --power-socket given; requests are NOT labelled policy-controlled"
+    },
+    "power_rank_syncs": [],
+    "generator_runtime": {
+      "active_jobs": 0,
+      "peak_active_jobs": 0,
+      "configured_max_batch_size": 1
+    }
+  }
+}
