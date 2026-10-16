@@ -9,7 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
-from huggingface_hub import HfApi, ModelCard
+from huggingface_hub import HfApi, ModelCard, hf_hub_download
 
 
 SOURCE = "tencent/Hy-Memory-30B-A3B"
@@ -24,6 +24,44 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def verify_publication(api, model_dir, repo_id, revision, entries):
+    """Account for Hub-managed LFS rules before auditing the published package."""
+    anonymous = HfApi(token=False)
+    attrs = Path(hf_hub_download(repo_id, ".gitattributes", revision=revision, token=False)).read_bytes()
+    attrs_path = model_dir / ".gitattributes"
+    normalized = not attrs_path.exists() or attrs_path.read_bytes() != attrs
+    if normalized:
+        attrs_path.write_bytes(attrs)
+        entry = {"path": ".gitattributes", "bytes": len(attrs), "sha256": hashlib.sha256(attrs).hexdigest()}
+        entries = sorted([e for e in entries if e["path"] != ".gitattributes"] + [entry], key=lambda e: e["path"])
+        manifest = model_dir / "FILE_MANIFEST.json"
+        manifest.write_text(json.dumps({"files": entries}, indent=2) + "\n")
+        # upload_folder may add LFS rules for large JSON files. Only the manifest
+        # needs a follow-up commit; the normalized attributes are already on the Hub.
+        commit = api.upload_file(
+            repo_id=repo_id, path_or_fileobj=str(manifest), path_in_repo="FILE_MANIFEST.json",
+            commit_message="Record Hub-managed LFS attributes in the release manifest",
+        )
+        revision = commit.oid
+    remote = anonymous.model_info(repo_id, revision=revision, files_metadata=True)
+    assert not remote.private and remote.card_data.license == "apache-2.0"
+    by_name = {f.rfilename: f for f in remote.siblings}
+    assert set(by_name) == {e["path"] for e in entries} | {"FILE_MANIFEST.json", ".gitattributes"}
+    for entry in entries:
+        info = by_name[entry["path"]]
+        assert info.size == entry["bytes"], entry["path"]
+        if entry["path"].endswith(".safetensors"):
+            assert info.lfs.sha256 == entry["sha256"], entry["path"]
+    for name in ("README.md", "LICENSE", "NOTICE", "RELEASE_METADATA.json", "FILE_MANIFEST.json"):
+        path = Path(hf_hub_download(repo_id, name, revision=revision, token=False))
+        assert path.read_bytes() == (model_dir / name).read_bytes(), name
+    return {"repo_id": repo_id, "url": f"https://huggingface.co/{repo_id}",
+            "commit": revision, "commit_url": f"https://huggingface.co/{repo_id}/commit/{revision}",
+            "license": "apache-2.0", "uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "files": sorted(by_name), "hub_lfs_attributes_normalized": normalized,
+            "verification": "Anonymous access; all file sizes and weight LFS SHA-256 digests match; README, license, notice, release metadata and manifest bytes match."}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("model_dir", type=Path)
@@ -31,6 +69,8 @@ def main():
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--repo-id", default="jyohukuchan/Hy-Memory-30B-A3B-exl3-4.08bpw")
     parser.add_argument("--publish", action="store_true")
+    parser.add_argument("--verify-existing", action="store_true",
+                        help="Finish verification of this exact package without reuploading weights")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     # The conversion container runs as root. Hand only this release directory
@@ -44,6 +84,23 @@ def main():
             "docker", "exec", "rocm-exl3-r9700-conv", "chown", "-R",
             f"{os.getuid()}:{os.getgid()}", str(Path("/work/models") / relative),
         ], check=True)
+    if args.verify_existing:
+        api = HfApi()
+        assert api.whoami()["name"] == args.repo_id.split("/")[0]
+        remote = HfApi(token=False).model_info(args.repo_id)
+        local_metadata = (model_dir / "RELEASE_METADATA.json").read_bytes()
+        metadata = json.loads(local_metadata)
+        assert metadata["source_model"] == SOURCE and metadata["source_revision"] == REVISION
+        assert metadata["repo_id"] == args.repo_id
+        remote_metadata = Path(hf_hub_download(
+            args.repo_id, "RELEASE_METADATA.json", revision=remote.sha, token=False,
+        )).read_bytes()
+        assert remote_metadata == local_metadata, "Existing repository is not this release package"
+        entries = json.loads((model_dir / "FILE_MANIFEST.json").read_text())["files"]
+        result = verify_publication(api, model_dir, args.repo_id, remote.sha, entries)
+        (args.run_dir / "hf-publication.json").write_text(json.dumps(result, indent=2) + "\n")
+        print(json.dumps(result, indent=2), flush=True)
+        return
     report = json.loads((args.run_dir / "validation.json").read_text())
     assert report["passed"] and len(report["samples"]) == 3
     for shard in report["shards"]:
@@ -205,20 +262,7 @@ claims and provenance for the original model belong to its authors.
         allow_patterns=[p.name for p in files] + ["FILE_MANIFEST.json"],
         commit_message="Publish validated mixed-precision EXL3 quantization of Hy-Memory-30B-A3B",
     )
-    # Verify anonymous metadata and every publicly exposed LFS digest/size.
-    remote = HfApi(token=False).model_info(args.repo_id, revision=commit.oid, files_metadata=True)
-    assert not remote.private and remote.card_data.license == "apache-2.0"
-    by_name = {f.rfilename: f for f in remote.siblings}
-    assert set(by_name) == {p.name for p in files} | {"FILE_MANIFEST.json", ".gitattributes"}
-    for entry in entries:
-        info = by_name[entry["path"]]
-        assert info.size == entry["bytes"], entry["path"]
-        if entry["path"].endswith(".safetensors"):
-            assert info.lfs.sha256 == entry["sha256"], entry["path"]
-    result = {"repo_id": args.repo_id, "url": f"https://huggingface.co/{args.repo_id}",
-              "commit": commit.oid, "commit_url": commit.commit_url,
-              "license": "apache-2.0", "uploaded_at": datetime.now(timezone.utc).isoformat(),
-              "files": sorted(by_name), "verification": "Anonymous metadata; all sizes and weight LFS SHA-256 digests match."}
+    result = verify_publication(api, model_dir, args.repo_id, commit.oid, entries)
     (args.run_dir / "hf-publication.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2), flush=True)
 
