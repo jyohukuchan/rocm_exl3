@@ -1,0 +1,11 @@
+{
+  "rows": 250,
+  "columns": 2048,
+  "seed": 20261016,
+  "general_corpus_rows": 150,
+  "synthetic_memory_rows": 100,
+  "synthetic_episodes": 1800,
+  "source_revision": "64a460a94d5498b7316fb02395c72d01c47a7347",
+  "sha256": "1e7866e8b9e285ef29fa91392c227e895d21ee9ff36e338b45eaa864c930db80",
+  "description": "Bundled EXL3 corpus mix plus fictional extraction, correction, coding and Japanese memory examples; not a self-sampled trace or benchmark dataset."
+}

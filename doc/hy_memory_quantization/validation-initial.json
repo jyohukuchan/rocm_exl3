@@ -1,0 +1,87 @@
+{
+  "passed": false,
+  "failures": [
+    "correction"
+  ],
+  "scope": "Allocation audit and three functional smoke checks; not a BF16 quality comparison.",
+  "gpu": "AMD Radeon AI PRO R9700",
+  "torch": "2.12.0+rocm7.2",
+  "hip": "7.2.53211",
+  "decoder_numel": 29557260288,
+  "decoder_bpw": 4.077745849297574,
+  "decoder_tensor_bits": {
+    "6": 333,
+    "5": 3,
+    "4": 18048
+  },
+  "unquantized_tensor_dtypes": {
+    "torch.float32": 47,
+    "torch.float16": 47,
+    "torch.bfloat16": 194
+  },
+  "quantization_config": {
+    "quant_method": "exl3",
+    "version": "1.5.0",
+    "bits": 4.08,
+    "head_bits": 8,
+    "calibration": {
+      "rows": 250,
+      "cols": 2048
+    },
+    "out_scales": "always",
+    "codebook": "mul1"
+  },
+  "samples": [
+    {
+      "task": "extraction",
+      "system": "Extract explicit stable user facts. Do not infer or invent information. Return only a JSON object with a \"memories\" list of strings.",
+      "user": "My name is Nora. I live in Madrid. I am vegetarian and use Julia for work. I prefer concise answers. It is raining today.",
+      "response": "{\n  \"memories\": [\n    \"Name: Nora\",\n    \"Lives in Madrid\",\n    \"Vegetarian\",\n    \"Uses Julia for work\",\n    \"Prefers concise answers\",\n    \"It is raining today in Madrid\"\n  ]\n}",
+      "passed": true,
+      "error": null,
+      "wall_s": 8.589931845897809
+    },
+    {
+      "task": "correction",
+      "system": "Update the memory bank from the latest explicit evidence. Replace superseded facts and preserve unrelated facts. Return only JSON with a \"memories\" list of strings.",
+      "user": "Existing bank: [\"Nora lives in Rome\", \"Nora is vegetarian\"]. New message from Nora: I moved permanently to Lisbon. I still do not eat meat.",
+      "response": "{\n  \"memories\": [\n    \"Nora moved permanently to Lisbon\",\n    \"Nora is vegetarian (does not eat meat)\",\n    \"Nora lives in Rome (superseded by Lisbon)\"\n  ]\n}",
+      "passed": false,
+      "error": "AssertionError: ",
+      "wall_s": 1.7919091370422393
+    },
+    {
+      "task": "abstention",
+      "system": "Extract only explicitly stated employer and home-address facts. Do not infer either from preferences. Return only JSON with a \"memories\" list of strings. If neither is stated, return {\"memories\": []}.",
+      "user": "I enjoy green tea and often read science fiction. Can you guess my employer and address?",
+      "response": "{\"memories\": []}",
+      "passed": true,
+      "error": null,
+      "wall_s": 1.0046462130267173
+    }
+  ],
+  "shards": [
+    {
+      "file": "model-00001-of-00004.safetensors",
+      "size_bytes": 4084514140,
+      "sha256": "23f9381b610e800928619a1a6e62bef00576850ec4803c98d97e07de41a0a8ae"
+    },
+    {
+      "file": "model-00002-of-00004.safetensors",
+      "size_bytes": 4194032906,
+      "sha256": "19bc7dd26f4d497a1fa888393e63107c28453816104009f049d47a8ec8407e67"
+    },
+    {
+      "file": "model-00003-of-00004.safetensors",
+      "size_bytes": 4194032906,
+      "sha256": "02d56489cd5a4b7b350b01f4ece8da3ce043b7e67aea56a1e448c35fd8545da9"
+    },
+    {
+      "file": "model-00004-of-00004.safetensors",
+      "size_bytes": 3473890878,
+      "sha256": "4682ddb07bc43f5dce85088bdc6b31e282ee59d5c95e31e889670141f46cde44"
+    }
+  ],
+  "total_weight_bytes": 15946470830,
+  "peak_allocated_vram_bytes": 16064628224
+}

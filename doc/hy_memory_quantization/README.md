@@ -6,6 +6,43 @@ Original weights are Apache-2.0 without additional restrictions. The release
 preserves Tencent's complete LICENSE and copyright and identifies the modified
 quantization in NOTICE.
 
+## Completed release (2026-10-16 JST)
+
+Public model:
+[`jyohukuchan/Hy-Memory-30B-A3B-exl3-4.08bpw`](https://huggingface.co/jyohukuchan/Hy-Memory-30B-A3B-exl3-4.08bpw).
+
+- Four weight shards: **15,946,470,830 bytes / 15.946 GB / 14.851 GiB**.
+- Decoder: **4.077745849297574 bpw**; head: **8 bits**.
+- All 18,384 decoder allocations and the head match the stored EXL3 trellis shapes.
+- All 288 unquantized tensors passed their dtype audit: 194 BF16 embeddings/norms,
+  47 FP16 routers, and 47 original FP32 routing-bias tensors.
+- All 48 blocks completed without non-finite calibration warnings. The conversion
+  used checkpoint-based process recycling to bound host allocator growth.
+- Final memory extraction, correction and abstention smoke checks passed on R9700.
+  These are functional checks, not a BF16 quality benchmark.
+- The original Apache-2.0 LICENSE is preserved byte-for-byte with a modification
+  NOTICE, source model-card text, recipe, calibration metadata and validation evidence.
+
+The installed model is
+`/home/homelab1/datapool/ai_models/safetensors/Hy-Memory-30B-A3B-exl3-4.08bpw`.
+It shares hard-linked files with the converter output under
+`/home/homelab1/datapool/rocm-exl3-rdna2/models/Hy-Memory-30B-A3B-exl3-4.08bpw`.
+See [run.json](run.json), [validation.json](validation.json),
+[file-manifest.json](file-manifest.json), [hf-publication.json](hf-publication.json)
+and the [model card](model-card.md). Anonymous access, all file sizes and the four
+weight LFS SHA-256 digests were verified. README, LICENSE, NOTICE, release metadata
+and manifest bytes also match the public release. The manifest includes the LFS
+rules automatically added by the Hub to `.gitattributes`; verification recovery
+updated only the manifest, without reuploading or modifying weights.
+
+**Observed prompt behavior:** the initial broader instructions retained a
+superseded location with an annotation and included temporary weather.
+The stricter checks explicitly require only currently valid facts, complete
+deletion of superseded information and exclusion of transient observations.
+All three passed with those instructions. The initial prompts and responses
+remain in [validation-initial.json](validation-initial.json); this behavior has
+not been compared with BF16 and cannot be attributed specifically to quantization.
+
 ## Compatibility
 
 HYV3's `expert_hidden_dim` is authoritative when present. This checkpoint has
@@ -87,6 +124,6 @@ Resume the workflow (conversion through public upload) with:
 python3 doc/hy_memory_quantization/pipeline.py --resume --modules-per-process 8
 ```
 
-The active job runs as the user service `hy-memory-exl3-4bit-base.service`.
+This run used the user service `hy-memory-exl3-4bit-base.service`.
 Progress and logs live under
 `/home/homelab1/datapool/rocm-exl3-rdna2/runs/hy-memory-30b-a3b-4bit-base/`.

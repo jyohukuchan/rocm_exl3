@@ -1,0 +1,33 @@
+{
+  "repo_id": "jyohukuchan/Hy-Memory-30B-A3B-exl3-4.08bpw",
+  "url": "https://huggingface.co/jyohukuchan/Hy-Memory-30B-A3B-exl3-4.08bpw",
+  "commit": "7daad27940c8e546cb06bc8ac3aad066395f12dc",
+  "commit_url": "https://huggingface.co/jyohukuchan/Hy-Memory-30B-A3B-exl3-4.08bpw/commit/7daad27940c8e546cb06bc8ac3aad066395f12dc",
+  "license": "apache-2.0",
+  "uploaded_at": "2026-10-16T13:05:43.562099+00:00",
+  "files": [
+    ".gitattributes",
+    "FILE_MANIFEST.json",
+    "LICENSE",
+    "NOTICE",
+    "README.md",
+    "RELEASE_METADATA.json",
+    "SOURCE_MODEL_CARD.md",
+    "calibration-metadata.json",
+    "chat_template.jinja",
+    "config.json",
+    "model-00001-of-00004.safetensors",
+    "model-00002-of-00004.safetensors",
+    "model-00003-of-00004.safetensors",
+    "model-00004-of-00004.safetensors",
+    "model.safetensors.index.json",
+    "quantization_config.json",
+    "recipe-4bit-base.json",
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "validation-initial.json",
+    "validation.json"
+  ],
+  "hub_lfs_attributes_normalized": true,
+  "verification": "Anonymous access; all file sizes and weight LFS SHA-256 digests match; README, license, notice, release metadata and manifest bytes match."
+}
