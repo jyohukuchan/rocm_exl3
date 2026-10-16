@@ -55,7 +55,9 @@ def main():
     shutil.copy2(args.source_dir / "README.md", args.model_dir / "SOURCE_MODEL_CARD.md")
     for name in ("recipe-4bit-base.json", "calibration-metadata.json", "validation.json"):
         shutil.copy2(args.run_dir / name, args.model_dir / name)
-    engine_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    packaging_revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    revision_file = args.run_dir / "conversion-engine-revision.txt"
+    engine_revision = revision_file.read_text().strip() if revision_file.exists() else packaging_revision
     weight_gb = report["total_weight_bytes"] / 1e9
     weight_gib = report["total_weight_bytes"] / 2**30
     card = f'''---
@@ -171,7 +173,8 @@ claims and provenance for the original model belong to its authors.
         "Quantization and release packaging by jyohukuchan. Original weights are Apache-2.0.\n"
     )
     metadata = {"source_model": SOURCE, "source_revision": REVISION,
-                "engine_revision": engine_revision, "license": "apache-2.0",
+                "engine_revision": engine_revision, "packaging_revision": packaging_revision,
+                "license": "apache-2.0",
                 "decoder_bpw": report["decoder_bpw"], "head_bits": 8,
                 "repo_id": args.repo_id, "created_at": datetime.now(timezone.utc).isoformat()}
     (args.model_dir / "RELEASE_METADATA.json").write_text(json.dumps(metadata, indent=2) + "\n")
