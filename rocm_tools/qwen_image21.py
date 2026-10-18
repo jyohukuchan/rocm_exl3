@@ -44,6 +44,10 @@ def implementation_identity():
     from diffusers import QwenImage21Pipeline, QwenImage21Transformer2DModel
 
     return {"cli_sha256": SCRIPT_SHA256, "dependency_pins": read_json(SOURCES),
+            "exl3_diffusion_runtime_sha256": {
+                name: hashlib.sha256((Path(__file__).resolve().parents[1] / "exllamav3/diffusion" / name).read_bytes()).hexdigest()
+                for name in ("linear.py", "checkpoint.py")
+            },
             "runtime_source_sha256": {
                 cls.__name__: hashlib.sha256(Path(inspect.getfile(cls)).read_bytes()).hexdigest()
                 for cls in (QwenImage21Pipeline, QwenImage21Transformer2DModel)
@@ -142,6 +146,7 @@ def encode(args):
     write_json(args.output / "encoding.json", {
         "source": source(args.variant), "versions": versions(), "prompts": prompts,
         "implementation": implementation_identity(),
+        "embeddings_sha256": hashlib.sha256((args.output / "embeddings.safetensors").read_bytes()).hexdigest(),
         "original_images": image_identity(original_images), "encoded_images": image_identity(images),
         "output_resolution": args.output_resolution, "load_seconds": load_seconds,
         "encode_seconds": times, "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
@@ -152,17 +157,25 @@ def encode(args):
 
 def generate(args):
     import torch
+    from PIL import ImageStat
     from diffusers import QwenImage21Pipeline, QwenImage21Transformer2DModel, AutoencoderKLQwenImage21
     from safetensors.torch import load_file
 
     verify_source(args)
     torch.cuda.set_device(args.device)
+    initial_free, initial_total = torch.cuda.mem_get_info()
+    if args.purpose == "benchmark" and initial_total - initial_free > 512 * 1024**2:
+        raise RuntimeError("Benchmark GPU is already in use; wait for other GPU work to finish")
     cached = read_json(args.encoding / "encoding.json") if args.encoding else None
     if cached:
         if cached["source"] != source(args.variant):
             raise ValueError("Cached encoding belongs to a different model revision")
         if cached["versions"]["diffusers"] != versions()["diffusers"] or cached["versions"]["transformers"] != versions()["transformers"]:
             raise ValueError("Cached encoding library versions differ from current runtime")
+        if cached.get("implementation", {}).get("runtime_source_sha256") != implementation_identity()["runtime_source_sha256"]:
+            raise ValueError("Cached encoding Diffusers source differs from current runtime")
+        if cached.get("embeddings_sha256") != hashlib.sha256((args.encoding / "embeddings.safetensors").read_bytes()).hexdigest():
+            raise ValueError("Cached embedding checksum mismatch")
     images = images_from_paths(args.images)
     if cached and image_identity(images) != cached["original_images"]:
         raise ValueError("Reference images differ from cached text encoding")
@@ -229,6 +242,7 @@ def generate(args):
     if args.cfg > 1 and kwargs["negative_prompt"] is None:
         raise ValueError("CFG > 1 requires a negative prompt")
 
+    expected_steps = len(pipe.config.sample_sigmas) if pipe.config.sample_sigmas else kwargs["num_inference_steps"]
     capture = None
     if args.capture:
         from exllamav3.diffusion.calibration import ActivationCapture
@@ -274,8 +288,20 @@ def generate(args):
         step_ends.append(event)
         if capture:
             capture.step = index + 1
+        if index + 1 == expected_steps and not torch.isfinite(data["latents"]).all():
+            raise RuntimeError("Nonfinite final diffusion latents")
         return data
 
+    original_decode = vae.decode
+
+    def checked_decode(*values, **decode_kwargs):
+        decoded = original_decode(*values, **decode_kwargs)
+        sample = decoded[0] if isinstance(decoded, tuple) else decoded.sample
+        if not torch.isfinite(sample).all():
+            raise RuntimeError("Nonfinite VAE output")
+        return decoded
+
+    vae.decode = checked_decode
     records = []
     try:
         with torch.inference_mode():
@@ -299,7 +325,16 @@ def generate(args):
                     "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
                     "peak_reserved_bytes": torch.cuda.max_memory_reserved(),
                     "image_mode": output.mode, "image_size": list(output.size),
+                    "finite_final_latents": True, "finite_vae_output": True,
+                    "rgb_stddev": ImageStat.Stat(output.convert("RGB")).stddev,
+                    "pixel_sha256": hashlib.sha256(output.tobytes()).hexdigest(),
                 }
+                if output.mode == "RGBA":
+                    histogram = output.getchannel("A").histogram()
+                    pixels = output.width * output.height
+                    record["alpha"] = {"extrema": list(output.getchannel("A").getextrema()),
+                                       "transparent_fraction": histogram[0] / pixels,
+                                       "opaque_fraction": histogram[255] / pixels}
                 output.save(args.output / f"run-{run}.png")
                 records.append(record)
                 print(json.dumps({k: v for k, v in record.items() if k not in ("transformer_ms", "timesteps", "cache_modes")}), flush=True)
@@ -309,6 +344,7 @@ def generate(args):
             handle.remove()
         if capture:
             capture.close()
+        vae.decode = original_decode
     if capture:
         capture.save(args.capture, {"source": source(args.variant), "prompt": kwargs["prompt"],
                                     "negative_prompt": kwargs["negative_prompt"], "cfg": args.cfg,
@@ -326,9 +362,12 @@ def generate(args):
         "text_encoding": cached, "model_load_seconds": load_seconds,
         "settings": {**kwargs, "image": image_identity(images), "seed": args.seed,
                      "sample_sigmas": pipe.config.sample_sigmas, "vae_tiling": True,
+                     "reconstruction_workspace_bytes": args.workspace_mib * 1024**2 if quantization else None,
                      "offload": "none" if cached else "text-encoder" if quantization else args.offload},
         "measurements": records, "linear_shapes": shape_stats,
         "calibration_instrumented": bool(capture),
+        "measurement_purpose": "calibration" if capture else args.purpose,
+        "initial_gpu_free_total_bytes": [initial_free, initial_total],
         "timing_scope": ("Cached-prompt pipeline; encoding and model loading are separate." if cached else
                          "Full pipeline including text encoding, model CPU offload transfers and VAE; excludes initial loading and PNG save."),
     })
@@ -388,7 +427,8 @@ def main():
             parser.add_argument("--exl3", type=Path, help="EXL3 DiT checkpoint; DiT stays GPU resident")
             parser.add_argument("--offload", choices=("model", "text-encoder"), default="model",
                                 help="For BF16: model-level offload or stream only text encoder. EXL3 always uses text-encoder offload unless embeddings are cached.")
-            parser.add_argument("--workspace-mib", type=int, default=128)
+            parser.add_argument("--workspace-mib", type=int, default=256)
+            parser.add_argument("--purpose", choices=("diagnostic", "quality", "benchmark"), default="diagnostic")
     args = ap.parse_args()
     if args.command == "generate" and (args.repeats < 1 or args.warmup < 0):
         ap.error("repeats must be positive and warmup nonnegative")

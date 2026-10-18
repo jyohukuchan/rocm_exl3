@@ -8,7 +8,7 @@ from .linear import EXL3DiffusionLinear
 
 @torch.inference_mode()
 def quantize_linear(layer: nn.Linear, samples: torch.Tensor, *, bits=4, device="cuda:0",
-                    seed=0, workspace_bytes=128 * 1024**2):
+                    seed=0, workspace_bytes=256 * 1024**2):
     """Convert one layer from representative inputs, preserving its BF16 bias.
 
     Samples must come from the layer's real input across denoising timesteps.

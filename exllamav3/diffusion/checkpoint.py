@@ -115,7 +115,7 @@ def convert_transformer(model_path, destination, calibration_dirs, *, bits=4, de
     return manifest
 
 
-def load_transformer(directory, *, device="cuda:0", workspace_bytes=128 * 1024**2):
+def load_transformer(directory, *, device="cuda:0", workspace_bytes=256 * 1024**2):
     """Load EXL3 buffers directly without allocating original dense block weights."""
     from accelerate import init_empty_weights
     from diffusers import QwenImage21Transformer2DModel

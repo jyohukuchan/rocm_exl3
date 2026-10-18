@@ -4,15 +4,17 @@
 
 ## 実装済みの基盤
 
-- `EXL3DiffusionLinear` はEXL3の重みを列方向に分割して復元し、入力がBF16なら重み側をBF16に変換してGEMMを実行する。入力活性値をFP16へ落とさない。復元用バッファは既定128 MiB以内で、全層の高精度重みを保持しない。
+- `EXL3DiffusionLinear` はEXL3の重みを列方向に分割して復元し、入力がBF16なら重み側をBF16に変換してGEMMを実行する。入力活性値をFP16へ落とさない。復元用バッファは既定256 MiB以内で、全層の高精度重みを保持しない。実モデルの最大Linearに必要なFP16とBF16の復元領域は計192 MiBで、この上限なら1回のGEMMで扱える。
 - `quantize_linear` は採取した入力からFP32のHessian近似を作り、既存のEXL3量子化器で変換する。空の校正や非有限値、無校正fallbackはエラーとして扱う。
 - `ActivationCapture` は指定denoising stepの各層入力から一定数の行を採取する。CLIは初期・中間・終盤を採取し、校正付き実行を性能ベンチマークと区別する。
 - checkpointは層単位のEXL3 safetensorsと高精度保持層に分けて保存する。変換は層単位で再開でき、完了したcheckpointだけを読み込める。読み込みでは元の高精度DiTを構築・ロードせず、meta parameterに高精度保持層を割り当てる。導出される非永続bufferは通常通り初期化する。
 - CLIはBF16生成、text encodingの分離・再利用、校正採取、変換、EXL3読み込みに対応する。Turboのsampling sigmasは元のpipeline設定から保持する。
 
-R9700で6件のテストが成功した。対象はFP16/BF16の分割復元、FP16範囲を超えるBF16入力、state保存・復元、実量子化とholdout入力、step別校正、小さなQwenImage21Transformerの7層変換・checkpoint再読み込み・forward。同じcheckpointの再読み込み後の出力一致も確認した。**小さなモデルのテストは、公式7B重みの画質を証明するものではない。**
+R9700環境でGPUとCPUの計8件のテストが成功した。対象はFP16/BF16の分割復元、FP16範囲を超えるBF16入力、state保存・復元、実量子化とholdout入力、step別校正、小さなQwenImage21Transformerの7層変換・checkpoint再読み込み・forward、実行再開時の設定検証、比較条件の一致検証。同じcheckpointの再読み込み後の出力一致も確認した。**小さなモデルのテストは、公式7B重みの画質を証明するものではない。**
 
 公式通常版のBF16では1024平方・40stepの最初の生成が完走した。校正用プロンプトの青いティーポットと2個のオレンジを目視確認し、224個のLinearからstep 0・20・39で入力を採取した。形状は4096×4096、4096×12288、12288×4096。サンプルの最大絶対値は137。この実行は校正処理を含むため速度比較には使用しない。
+
+両モデルとも3種類の校正用入力でBF16実行が完走した。通常版は40step、Turboは保存済みの8個のsigmasを使い、Turboのcache modeは最初だけextract、続く7回はcachedになった。通常版では青から緑へのティーポットの編集も目視確認した。各モデルの224層の全変換と固定評価ケースの比較は進行中。
 
 ## 環境
 
@@ -68,11 +70,29 @@ python rocm_tools/qwen_image21.py generate --variant base --model MODEL \
 
 同じ `--encoding` を使って `--exl3` なしで実行すると、BF16 DiTのGPU常駐比較になる。画像編集ではencodeとgenerateの両方に同じ `--images` を渡す。入力画像の内容とresize後の内容を検証し、異なる参照画像のembeddingを誤用しない。CFGを有効にする場合はencodeに `--negative-prompt`、generateに `--cfg` を指定する。
 
-プロンプトを直接渡すEXL3推論では、DiTを常駐させて高精度text encoderだけをモジュール単位でCPU offloadする経路を用意している。BF16にも `--offload text-encoder` を指定すれば同じ配置方針で比較できる。この経路の公式7Bモデルでの検証は進行中。text encoderを丸ごとGPUへ転送する既定のBF16経路とは区別する。
+プロンプトを直接渡すEXL3推論では、DiTを常駐させて高精度text encoderだけをモジュール単位でCPU offloadする経路を用意している。BF16にも `--offload text-encoder` を指定すれば同じ配置方針で比較できる。この配置はTurboのBF16校正3ケースで動作確認済み。EXL3の全体検証は進行中。text encoderを丸ごとGPUへ転送する既定のBF16経路とは区別する。
 
 Turboは `--variant turbo` と対応するモデル・校正・checkpointを使う。`--steps` は指定せず、保存された8-step scheduleを使う。通常版の校正やcheckpointの流用はsource検証で拒否する。
 
 校正用3ケースと評価用6ケースは [固定ケース](../rocm_tools/qwen_image21_cases.json) に分けている。編集の評価ではBF16で生成した参照画像を両方式へ渡し、参照画像自体の違いを比較に混ぜない。
+
+## 固定ケースの実行と比較
+
+`qwen_image21_suite.py` は各処理を別プロセスで実行し、出力とログを指定rootに保存する。再開時はsource、プロンプト、seed、解像度、参照画像、sampling設定、step数、KV cacheの使用を照合する。設定が異なる既存出力は上書きせずエラーにする。
+
+```bash
+python rocm_tools/qwen_image21_suite.py calibrate --variant base --model MODEL --root RUN
+python rocm_tools/qwen_image21_suite.py convert --variant base --model MODEL --root RUN
+python rocm_tools/qwen_image21_suite.py evaluate --variant base --model MODEL --root RUN
+python rocm_tools/qwen_image21_suite.py benchmark --variant base --model MODEL --root RUN
+python rocm_tools/qwen_image21_compare.py --variant base --model MODEL --root RUN --output RUN/base/comparison.json
+```
+
+Turboにも対応するモデルパスと `--variant turbo` で同じ手順を実行する。`evaluate` はプロンプトembeddingを共有したBF16/EXL3の両方式で6ケースを生成する。`--precision bf16` や `--case text` で段階的に実行できるが、最終比較には全ケースが必要。参照元のphotoとcompositionをBF16で生成してから編集ケースへ進む。
+
+`benchmark` はcompositionを対象に、両方式をtext-encoder offloadでwarmup 1回＋計測3回実行する。開始時にGPUに別の大きな割当があれば停止する。校正・変換・他のGPUジョブが完了してから実行する。品質用の生成と、独立して測る性能ベンチマークは区別される。
+
+比較CLIは出力PNGと記録したpixel hash、最終latent/VAEのfinite検証、224層の実EXL3呼び出しを照合し、重み容量・時間・VRAM・画像差分を集計する。白背景へ合成したRGB差とalpha差は診断値であり、画質の自動合格条件ではない。出力JSONのmanual reviewはpendingのままなので、固定ケースのcriteriaに沿って画像を見て判断する。
 
 ## 計測値の読み方
 
@@ -82,6 +102,8 @@ Turboは `--variant turbo` と対応するモデル・校正・checkpointを使�
 - `denoising_ms`：最初のTransformer呼び出し直前から最後のscheduler step直後までのGPUイベント時間。CPU offloadを使う場合、最初のDiT転送等もこの範囲に入り得る。
 - `transformer_ms`：各呼び出しのイベント時間。最初のprefillと以降のcached呼び出しを区別できる。
 - `calibration_instrumented=true`：CPUへのサンプル転送などを含む診断用の値。性能比較には使用しない。
+- `measurement_purpose`：quality、benchmark、calibration、diagnosticを区別する。品質確認中に他の計算が並行していても、その時間を独立したbenchmarkへ混ぜない。
+- `finite_final_latents`、`finite_vae_output`、`alpha`：非有限値は生成をエラーにし、出力画像のalpha分布を記録する。RGBAの完全一致を要求するものではない。
 - `peak_allocated_bytes` と `peak_reserved_bytes`：プロセスのPyTorch allocatorで計測した値。GPU全体の使用量とは異なる。
 
 ## テスト
@@ -89,5 +111,5 @@ Turboは `--variant turbo` と対応するモデル・校正・checkpointを使�
 GPU拡張と固定したDiffusersが利用できる環境で実行する。
 
 ```bash
-python -m pytest -q tests/test_diffusion_exl3_linear.py tests/test_diffusion_exl3_checkpoint.py
+python -m pytest -q tests/test_diffusion_exl3_linear.py tests/test_diffusion_exl3_checkpoint.py tests/test_qwen_image21_suite.py
 ```

@@ -15,7 +15,7 @@ class EXL3DiffusionLinear(nn.Module):
     """
 
     def __init__(self, in_features, out_features, trellis, suh, svh, bias=None,
-                 *, mcg=False, mul1=False, workspace_bytes=128 * 1024**2):
+                 *, mcg=False, mul1=False, workspace_bytes=256 * 1024**2):
         super().__init__()
         if min(in_features, out_features) <= 0 or in_features % 128 or out_features % 128:
             raise ValueError("EXL3 diffusion dimensions must be positive multiples of 128")
