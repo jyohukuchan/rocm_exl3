@@ -8,6 +8,7 @@ Cached-prompt pipeline timing is explicitly separate from text encoding/load.
 import argparse
 import hashlib
 import importlib.metadata
+import inspect
 import json
 from pathlib import Path
 import subprocess
@@ -19,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 SOURCES = Path(__file__).with_name("qwen_image21_sources.json")
+SCRIPT_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
 def read_json(path):
@@ -36,6 +38,16 @@ def source(variant):
 def versions():
     return {name: importlib.metadata.version(name) for name in
             ("torch", "diffusers", "transformers", "accelerate", "huggingface-hub", "safetensors")}
+
+
+def implementation_identity():
+    from diffusers import QwenImage21Pipeline, QwenImage21Transformer2DModel
+
+    return {"cli_sha256": SCRIPT_SHA256, "dependency_pins": read_json(SOURCES),
+            "runtime_source_sha256": {
+                cls.__name__: hashlib.sha256(Path(inspect.getfile(cls)).read_bytes()).hexdigest()
+                for cls in (QwenImage21Pipeline, QwenImage21Transformer2DModel)
+            }}
 
 
 def download(args):
@@ -129,6 +141,7 @@ def encode(args):
     save_file(tensors, args.output / "embeddings.safetensors")
     write_json(args.output / "encoding.json", {
         "source": source(args.variant), "versions": versions(), "prompts": prompts,
+        "implementation": implementation_identity(),
         "original_images": image_identity(original_images), "encoded_images": image_identity(images),
         "output_resolution": args.output_resolution, "load_seconds": load_seconds,
         "encode_seconds": times, "peak_allocated_bytes": torch.cuda.max_memory_allocated(),
@@ -156,15 +169,13 @@ def generate(args):
     args.output.mkdir(parents=True, exist_ok=True)
     started = time.perf_counter()
     quantization = None
-    if cached or args.exl3:
+    if cached or args.exl3 or args.offload == "text-encoder":
         if args.exl3:
             from exllamav3.diffusion.checkpoint import load_transformer
             transformer, quantization = load_transformer(args.exl3, device=args.device,
                                                          workspace_bytes=args.workspace_mib * 1024**2)
             if quantization["source"] != source(args.variant):
                 raise ValueError("EXL3 checkpoint belongs to a different source revision")
-            if not cached:
-                raise ValueError("EXL3 currently requires --encoding to keep the DiT resident")
         else:
             transformer = QwenImage21Transformer2DModel.from_pretrained(
                 args.model / "transformer", torch_dtype=torch.bfloat16,
@@ -175,6 +186,17 @@ def generate(args):
             device_map={"": args.device}, local_files_only=True,
         ).eval()
         pipe = make_pipeline(args.model, transformer=transformer, vae=vae)
+        if not cached:
+            from accelerate import cpu_offload
+            from transformers import Qwen3VLForConditionalGeneration
+            encoder = Qwen3VLForConditionalGeneration.from_pretrained(
+                args.model / "text_encoder", dtype=torch.bfloat16,
+                local_files_only=True, attn_implementation="sdpa",
+            ).eval()
+            # Keep DiT resident and stream only the high-precision text encoder
+            # one module at a time, so it does not dictate the VRAM peak.
+            cpu_offload(encoder, execution_device=torch.device(args.device), offload_buffers=True)
+            pipe.register_modules(text_encoder=encoder)
     else:
         pipe = QwenImage21Pipeline.from_pretrained(args.model, torch_dtype=torch.bfloat16, local_files_only=True)
         pipe.enable_model_cpu_offload(device=args.device)
@@ -297,13 +319,14 @@ def generate(args):
                                     "use_kv_cache": not args.no_kv_cache})
     write_json(args.output / "report.json", {
         "source": source(args.variant), "versions": versions(),
+        "implementation": implementation_identity(),
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "gpu": torch.cuda.get_device_name(), "arch": torch.cuda.get_device_properties(args.device).gcnArchName,
         "precision": "exl3" if quantization else "bf16", "quantization": quantization,
         "text_encoding": cached, "model_load_seconds": load_seconds,
         "settings": {**kwargs, "image": image_identity(images), "seed": args.seed,
                      "sample_sigmas": pipe.config.sample_sigmas, "vae_tiling": True,
-                     "model_cpu_offload": not bool(cached)},
+                     "offload": "none" if cached else "text-encoder" if quantization else args.offload},
         "measurements": records, "linear_shapes": shape_stats,
         "calibration_instrumented": bool(capture),
         "timing_scope": ("Cached-prompt pipeline; encoding and model loading are separate." if cached else
@@ -362,7 +385,9 @@ def main():
             parser.add_argument("--repeats", type=int, default=1)
             parser.add_argument("--capture", type=Path, help="Save timestep activation samples; timings are then diagnostic only")
             parser.add_argument("--capture-rows", type=int, default=128)
-            parser.add_argument("--exl3", type=Path, help="EXL3 DiT checkpoint; requires --encoding")
+            parser.add_argument("--exl3", type=Path, help="EXL3 DiT checkpoint; DiT stays GPU resident")
+            parser.add_argument("--offload", choices=("model", "text-encoder"), default="model",
+                                help="For BF16: model-level offload or stream only text encoder. EXL3 always uses text-encoder offload unless embeddings are cached.")
             parser.add_argument("--workspace-mib", type=int, default=128)
     args = ap.parse_args()
     if args.command == "generate" and (args.repeats < 1 or args.warmup < 0):

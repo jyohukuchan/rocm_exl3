@@ -1,0 +1,80 @@
+{
+  "schema_version": 1,
+  "evaluation_reference_policy": "Resolve reference_case IDs to the corresponding model's BF16 evaluation PNGs for both BF16 and EXL3; never use calibration or EXL3 outputs as evaluation references.",
+  "calibration": [
+    {
+      "id": "calibration-01",
+      "prompt": "A blue ceramic teapot and two oranges on a wooden kitchen table, soft morning window light, realistic product photography.",
+      "seed": 42,
+      "width": 1024,
+      "height": 1024
+    },
+    {
+      "id": "calibration-02",
+      "prompt": "A colorful watercolor travel poster of a mountain village beside a lake, with the clearly readable heading SPRING, balanced graphic composition.",
+      "seed": 123,
+      "width": 1024,
+      "height": 1024
+    },
+    {
+      "id": "calibration-03",
+      "prompt": "Change the blue ceramic teapot to a glossy green teapot. Keep the two oranges, wooden table, composition and lighting unchanged.",
+      "reference_cases": ["calibration-01"],
+      "seed": 456,
+      "width": 1024,
+      "height": 1024
+    }
+  ],
+  "evaluation": [
+    {
+      "id": "photo",
+      "prompt": "A studio photograph of a small red wooden toy sailboat with a white triangular sail resting on blue fabric. Soft lighting, sharp realistic detail, the whole boat visible.",
+      "seed": 1701,
+      "width": 2048,
+      "height": 2048,
+      "review": "A coherent red toy sailboat, white sail and blue fabric; no new severe structural defects relative to BF16."
+    },
+    {
+      "id": "text",
+      "prompt": "A minimalist cream poster with the single word HELLO in large dark blue capital letters, surrounded by small yellow stars. Clean flat graphic design, no other text.",
+      "seed": 1702,
+      "width": 1024,
+      "height": 1024,
+      "review": "Compare HELLO legibility, unintended text and poster layout against BF16."
+    },
+    {
+      "id": "composition",
+      "prompt": "A red sphere on the left and a blue cube on the right, sitting on a pale gray surface, a small yellow pyramid between them, clean studio rendering.",
+      "seed": 1703,
+      "width": 1024,
+      "height": 1024,
+      "review": "Compare object counts, colors and left/right arrangement against BF16."
+    },
+    {
+      "id": "edit",
+      "prompt": "Change only the red hull of the toy sailboat to green. Preserve the white sail, blue fabric, lighting and camera angle.",
+      "reference_cases": ["photo"],
+      "seed": 1704,
+      "width": 1024,
+      "height": 1024,
+      "review": "Requested hull color changes while boat identity, sail and scene are preserved relative to BF16."
+    },
+    {
+      "id": "rgba",
+      "prompt": "This is an RGBA image with transparency. An orange origami fox sticker, full body, neat folded paper, isolated subject. The image has alpha channel and the background is transparent.",
+      "seed": 1705,
+      "width": 1024,
+      "height": 1024,
+      "review": "Nontrivial alpha channel, visible fox, usable cutout edges; compare subject and transparency with BF16."
+    },
+    {
+      "id": "multi_ref",
+      "prompt": "Create a single studio scene showing the toy sailboat from the first reference next to the red sphere and blue cube from the second reference. Preserve the boat design and object colors.",
+      "reference_cases": ["photo", "composition"],
+      "seed": 1706,
+      "width": 1024,
+      "height": 1024,
+      "review": "The scene combines recognizable content from both references, compared with BF16."
+    }
+  ]
+}
