@@ -1,0 +1,78 @@
+{
+  "reviewer": "Codex visual inspection",
+  "scope": "Three fixed 1024px cases, one seed each; observations, not a universal quality guarantee",
+  "cases": {
+    "base/3/text": {
+      "finding": "preserved",
+      "observation": "HELLOは正確に読める。星の位置・数・輪郭はBF16/4bitから変化する。",
+      "bf16_pixels_sha256": "3caca7975a375316c8fddc28872b3b11c3bc8d415cdef6127db3afe9d38b16ff",
+      "candidate_pixels_sha256": "39c3748849d8085397dd90456c6745fced47530f3c3b038d295b3a31a80fb96a"
+    },
+    "base/3/composition": {
+      "finding": "preserved",
+      "observation": "左の赤い球、右の青い立方体、中央の黄色いピラミッドを維持。光沢や位置・大きさに差がある。",
+      "bf16_pixels_sha256": "4d6fc5a131d76b36eb80870797e9961d1c2e12aa1d2ecd77f0537b45afac8de0",
+      "candidate_pixels_sha256": "e29a767cb1558fe1d7b7992fe32fd87a2733632b1c9377332bc75195b2f50f47"
+    },
+    "base/3/multi_ref": {
+      "finding": "degraded",
+      "observation": "赤い船体・赤い球・青い立方体は識別できるが、参照の白い帆が失われ、黄色いピラミッドが船の背後へ移る。物体の大きさ・配置も大きく変化する。",
+      "bf16_pixels_sha256": "b38d698df8fe54703435ae2e47c19dca8bfe961c415b92cf257401e8453e2fe6",
+      "candidate_pixels_sha256": "6bf5e0e137031c10e73d329b6238f1ded6e3eb6d83ec05a750374a2779df900a"
+    },
+    "base/5/text": {
+      "finding": "preserved",
+      "observation": "HELLOは正確に読める。BF16と同じクリーム背景・青文字・黄色い星を保つが、星の配置には小差がある。",
+      "bf16_pixels_sha256": "3caca7975a375316c8fddc28872b3b11c3bc8d415cdef6127db3afe9d38b16ff",
+      "candidate_pixels_sha256": "1020294670f0e06b148016d10d8a870b61bca378fcbd2f752950e20f45051a86"
+    },
+    "base/5/composition": {
+      "finding": "preserved",
+      "observation": "赤い球・青い立方体・黄色いピラミッドの色と左右配置を維持し、BF16に近い。光沢・大きさには小差がある。",
+      "bf16_pixels_sha256": "4d6fc5a131d76b36eb80870797e9961d1c2e12aa1d2ecd77f0537b45afac8de0",
+      "candidate_pixels_sha256": "5503edae41c0ab7cabf214a443086799a299208a748376de490385f536d3c41a"
+    },
+    "base/5/multi_ref": {
+      "finding": "preserved",
+      "observation": "白い帆を含む赤い船、赤い球、青い立方体を維持する。BF16同様に黄色いピラミッドも残る。船の大きさ・配置には差があるが、3bitで見られた白い帆の欠落はない。",
+      "bf16_pixels_sha256": "b38d698df8fe54703435ae2e47c19dca8bfe961c415b92cf257401e8453e2fe6",
+      "candidate_pixels_sha256": "532ebed6189b8f9410f504325280eacb8ce141c510253edb436873a062d1954e"
+    },
+    "turbo/3/text": {
+      "finding": "preserved",
+      "observation": "HELLOは正確に読める。星の数・配置・形状がBF16/4bitより変わる。",
+      "bf16_pixels_sha256": "908097e83c2311700676c5894f4de46810f3a6e11729d872acd030f9054b9435",
+      "candidate_pixels_sha256": "c8ee70e477d6762b19e793060254f85eb5a1f0e9bcfff6d2c3b9614df659dc62"
+    },
+    "turbo/3/composition": {
+      "finding": "preserved",
+      "observation": "赤い球・青い立方体・黄色いピラミッドの色と左右配置を維持。立方体の色合い・向き・大きさには差がある。",
+      "bf16_pixels_sha256": "72ee701b560035d58ac634c475193eb5ac27b7f8c88da7971c17d6ef3461317b",
+      "candidate_pixels_sha256": "7cf4b98d94b903a0f84be44cc9ca6c1d77138aa8590e631f2eeae33c813240c5"
+    },
+    "turbo/3/multi_ref": {
+      "finding": "changed",
+      "observation": "白い帆と赤い船体、赤い球、青い立方体は保たれる。BF16の青い背景が灰色に変わり、球と立方体が大きくなって配置も変わる。立方体の右端は見切れる。BF16にある黄色いピラミッドは省略される（プロンプトでは要求していない）。",
+      "bf16_pixels_sha256": "a923b4047f0ecab23235e493755a154bc3e7051b496f4409a012bedcbae087aa",
+      "candidate_pixels_sha256": "55a2f7ca92e12c165f9b19838e63449309a28f1a6dc1757fc1d1e0992c61dbdc"
+    },
+    "turbo/5/text": {
+      "finding": "preserved",
+      "observation": "HELLOは正確に読め、BF16と同じ背景・文字色・星を保つ。星の配置には小差がある。",
+      "bf16_pixels_sha256": "908097e83c2311700676c5894f4de46810f3a6e11729d872acd030f9054b9435",
+      "candidate_pixels_sha256": "e00c33647eb26ba69d8ac476b7a9e09fe4b3dbcb17e41ff116351a8f10899e52"
+    },
+    "turbo/5/composition": {
+      "finding": "preserved",
+      "observation": "赤い球・青い立方体・黄色いピラミッドの色と左右配置を維持。大きさや位置には小差があるが、BF16に近い。",
+      "bf16_pixels_sha256": "72ee701b560035d58ac634c475193eb5ac27b7f8c88da7971c17d6ef3461317b",
+      "candidate_pixels_sha256": "b2fb118fdc661beb6b5140ae20753ac4ba84a8294961d73f725195eae9980119"
+    },
+    "turbo/5/multi_ref": {
+      "finding": "preserved",
+      "observation": "白い帆と赤い船、赤い球、青い立方体を保持。3bit/4bitで灰色になった背景もBF16と同様の青い布として残り、黄色いピラミッドも見える。物体の大きさ・位置や船内形状には小差がある。",
+      "bf16_pixels_sha256": "a923b4047f0ecab23235e493755a154bc3e7051b496f4409a012bedcbae087aa",
+      "candidate_pixels_sha256": "039e8d75192df3d641efb744205c7dd7ec92bf3aa79db64d09cb54d8a86aa1aa"
+    }
+  }
+}

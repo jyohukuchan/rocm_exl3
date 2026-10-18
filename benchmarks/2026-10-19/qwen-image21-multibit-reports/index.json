@@ -1,0 +1,122 @@
+{
+  "base-3bit-nmse-text.json.gz": {
+    "sha256": "24c8b80dfbbfac62f94e2a5e7913093826ae2af2f733e1a39320d504f9e5e566",
+    "source_json_sha256": "482b5ae9d191797eed1102c0258d2fe017b392d1a54a8eb4528eaefe15426bee"
+  },
+  "base-3bit-generation-text.json.gz": {
+    "sha256": "911825edf27c21bed7cb7f84f192b4ce76cfd9b61ea5a6061006d5f67e1cdd4f",
+    "source_json_sha256": "68ef2895a4cd8196b0007bbe01a890022d23c67c28ae059a7822acbf12739579"
+  },
+  "base-3bit-nmse-composition.json.gz": {
+    "sha256": "d36f7dfa981f4e975bb4f7e774e64118c12a7f3a0ae226e921b3424984d25b85",
+    "source_json_sha256": "a349010ab68fa1626f2c15a2189e3e72bed1deb19a86b73034130d39efc596ad"
+  },
+  "base-3bit-generation-composition.json.gz": {
+    "sha256": "3438fc2c09e822fe7290f12532a2212937907df23cb7bec83db1de2f5262f56f",
+    "source_json_sha256": "81bd113e97dee1d57ef89396546bfc88044a07ba98d8170561225dea28dc5d0f"
+  },
+  "base-3bit-nmse-multi_ref.json.gz": {
+    "sha256": "1a4974818fa3eecdac2b04d68580bacbf1801b1c5da7d5ac3802938eb4e86701",
+    "source_json_sha256": "16958f0649aa8787d85ffdefa1e5c8dba1ba68eb90f5d7d533e99642596c2d00"
+  },
+  "base-3bit-generation-multi_ref.json.gz": {
+    "sha256": "22b9c20757b51d17caaf4db87d736ef84e3390b8ad39004177ac1804fd6e9c11",
+    "source_json_sha256": "4b14d9529c00c5ccf920b24c55c36fe0acd7dceff74b7064f6bc43bec3be0237"
+  },
+  "base-4bit-nmse-text.json.gz": {
+    "sha256": "3a299d1120119cdd78c98a49ff24151081c38cdb8b733008f9eac61442dd4722",
+    "source_json_sha256": "7486c7eeaaaf426cb1350cd9887665e564c82a9d39293111bcdf98d96e6489ec"
+  },
+  "base-4bit-nmse-composition.json.gz": {
+    "sha256": "490e4af93c8edf9236a3a74e4082f33650af7c49e3f4e22479d485fcb10efa59",
+    "source_json_sha256": "bf9071c8cbd7b90584efa988204f062cbc4583e914ed19734a96df0464bd28e8"
+  },
+  "base-4bit-nmse-multi_ref.json.gz": {
+    "sha256": "cc6a93c75a043bd8f406b8794170dce210b47c6f999c9ac161c134e4832e6dc1",
+    "source_json_sha256": "c272f36224d7faf688bf01e28fe32017722a69dd7b292443afa9a5c8560750d3"
+  },
+  "base-5bit-nmse-text.json.gz": {
+    "sha256": "87bc17997c1932481faa993e4e32d6536cedce4fbf55ccc340392e3a844a84ee",
+    "source_json_sha256": "3618fcd1a604653f91ba49274925d26f1a7f9c0bba1ee7272164d15604398c3c"
+  },
+  "base-5bit-generation-text.json.gz": {
+    "sha256": "d7546ddb227c2d74a2d414d4d400c0cdfb432878dfc090946b21b25251e651c6",
+    "source_json_sha256": "db61c5cd8e06d66ffcc7ee81f49048dbeacc294128edfa840c1e668c63cf7c29"
+  },
+  "base-5bit-nmse-composition.json.gz": {
+    "sha256": "008c02b81b6d0a2030050d6dc62a3d9c75aebbabf6ece470e99ab1788f036e09",
+    "source_json_sha256": "9b68c16646bbf9851ec9762f9ff4b7a337ed5af1685e87c284dd19481b12f46c"
+  },
+  "base-5bit-generation-composition.json.gz": {
+    "sha256": "44815232c0acbd91f042272b3d7a497ff157d07d6c49dbc5e1dd9cc7cd611971",
+    "source_json_sha256": "ae2992868ea20623b7ef41c1cf970f1f46f154c4e5e30e7227e2200a36b7f113"
+  },
+  "base-5bit-nmse-multi_ref.json.gz": {
+    "sha256": "a703690e741f5731a76ae681b194fac2e8f72231b2f976266fd199b7d2fc3c2e",
+    "source_json_sha256": "b4c93898567e100e48689cd2121c40f334e5530d6bfe3f59164ec952f5c2c9c0"
+  },
+  "base-5bit-generation-multi_ref.json.gz": {
+    "sha256": "5a8779161d81cb1d9ea12f104d4c8aa7f7fb5c564592c9a3c68a7ab874ff67b1",
+    "source_json_sha256": "2842dc2276a653f2bf831270db34b6256ceb4c3ca89dfc5824820a4d12a3ab26"
+  },
+  "turbo-3bit-nmse-text.json.gz": {
+    "sha256": "bc17db89c08003f53da89ccde03ce831e610b3cbb03c1e2caa7ada946a173288",
+    "source_json_sha256": "f209ce49acc193ad22a1bd1b8cc6fe4e6f0cb8975cbe4d32f7b2258645855b1b"
+  },
+  "turbo-3bit-generation-text.json.gz": {
+    "sha256": "abbda8770b0cf1acdc04cb6f125eff331fca63eeb38161d1c64db5bed3022cbd",
+    "source_json_sha256": "9e3159e600ce31d47602aab7d99a1aa10d95d0f69a1d3e24dd33f822120485ce"
+  },
+  "turbo-3bit-nmse-composition.json.gz": {
+    "sha256": "6bb9e632e9005961b5d30c6451de8391bf224e8e727d33d4407195b0391f6e0f",
+    "source_json_sha256": "fcf66572d5f6375c4868342a17eb310154e828abab0aaac4a1431e26270fcea1"
+  },
+  "turbo-3bit-generation-composition.json.gz": {
+    "sha256": "27da590841c8196d9dc8ee7d0fcd7157bcb7d39b1fe1f6eb735f6d259d1d2121",
+    "source_json_sha256": "155aaf88426a1dca0791a081fbfbcee433221ab6193e6f4acaa388953dd14fef"
+  },
+  "turbo-3bit-nmse-multi_ref.json.gz": {
+    "sha256": "975ce6c61766977fd1ee1ce8f99f4de18486da48a59312a343bb26a09f1f7aa4",
+    "source_json_sha256": "b07a36392b60fbd81330611f5b32dd807f35712f82bd666b53649bcb2af4eea8"
+  },
+  "turbo-3bit-generation-multi_ref.json.gz": {
+    "sha256": "40d824ff4db06a941a7ed121cfa994cff81cbfd96a1cc1f9b6a056e6848f4964",
+    "source_json_sha256": "84c3a481be7cf6dcccfb6051f42d399f2b2736114314da15c63e7ba55b89cbc1"
+  },
+  "turbo-4bit-nmse-text.json.gz": {
+    "sha256": "25d330f83fa566bfe737c17af2d0ab5f675cef3d93607a9cb4118c67a01a4dfc",
+    "source_json_sha256": "07c6aeab4bab5de62477cf3a55016c6453c6c57a5dc87aaed408f4ebdb84d277"
+  },
+  "turbo-4bit-nmse-composition.json.gz": {
+    "sha256": "d42ac13a4e2f24de53a2d3d7b10925161f2ad7c9c43f95d3c3106ce4747ca1dc",
+    "source_json_sha256": "184df5a55f8160ba54feb1524f7b19f183a76fccf03d0e2033baaacb3e3a240e"
+  },
+  "turbo-4bit-nmse-multi_ref.json.gz": {
+    "sha256": "01832688fcc1283c8f7c18b52cd9aac72852fc85a995c4db69616454da70f3bc",
+    "source_json_sha256": "312334a4afb8441edf7b2184d7a7655f1d9b3c7534bc6efb1f281bfc44199b45"
+  },
+  "turbo-5bit-nmse-text.json.gz": {
+    "sha256": "eefd177b17f3ed659166ec944c87cb23073f2d60303e6d93262b765e2396d87e",
+    "source_json_sha256": "19acad91488e4d011e98205f2fac10c0a31f35150643e99123230c414cb28665"
+  },
+  "turbo-5bit-generation-text.json.gz": {
+    "sha256": "d4a2b89974a02e3507b8dbcf06dab5742743dcb5c336beb79b2569d89591e09d",
+    "source_json_sha256": "803130bf86f518338dfa90139feb79bbfe525114e1b1fd9702991315532b7a84"
+  },
+  "turbo-5bit-nmse-composition.json.gz": {
+    "sha256": "a7b2c82621aed81a63a70c2a4e8425ccadb3c630268d4dbbb13061b4126c6a04",
+    "source_json_sha256": "a038329adb30bca1d276f991dc38d3cef6204c4fd2c0340438e42bafbdb06e2a"
+  },
+  "turbo-5bit-generation-composition.json.gz": {
+    "sha256": "055e4abb7b63b0e6acdc2d9d0585c76b0495d17694d31ce90e74183217bb7620",
+    "source_json_sha256": "12808503c52e5c9fb2ee9960f5ea21f0c2a0d8955dee2a666d6a5f3f61eb33a9"
+  },
+  "turbo-5bit-nmse-multi_ref.json.gz": {
+    "sha256": "acc533035e30a67b0d18be37135d129f728ba0ac7de698d1bcdc918212f98a04",
+    "source_json_sha256": "209fd13c9996926ad87c04ccc541b0858023d6715f6ffd0704f6e294984db897"
+  },
+  "turbo-5bit-generation-multi_ref.json.gz": {
+    "sha256": "e6a665dd09bc9f876a7bc06d52242b5093044845885ccc107a920734277f9f3f",
+    "source_json_sha256": "348e2f206be08a2f9497b50fe26343b70a1153a7b4598e320bf26d069d21783d"
+  }
+}

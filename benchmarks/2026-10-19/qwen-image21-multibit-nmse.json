@@ -1,0 +1,348 @@
+{
+  "metric": "NMSE",
+  "cases": [
+    "text",
+    "composition",
+    "multi_ref"
+  ],
+  "aggregation": "sum squared error / sum BF16 prediction energy over all target elements and steps of the same three cases",
+  "calibration": "Each variant uses its own same three BF16 calibration captures at all bit widths; held-out evaluation prompts and references",
+  "scope": "R9700, 1024 square, batch 1, CFG 1, native 40/8 steps, own per-model prefix KV cache, all denoising steps on BF16 trajectory",
+  "limitations": "One fixed seed per case; different base/Turbo models are not ranked against each other. No new speed benchmark or 2048px certification for 3/5bit.",
+  "models": {
+    "base": {
+      "3": {
+        "bits": 3,
+        "source": {
+          "repo_id": "Qwen/Qwen-Image-2.1",
+          "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+        },
+        "effective_bits_per_source_element": 3.2540195073257534,
+        "source_state_bytes": 14230249472,
+        "quantized_state_bytes": 2622488576,
+        "unquantized_state_bytes": 271605760,
+        "calibration": [
+          "901d78df4fb98ff0448865ce2e433e7bab2159afc30233e4e5f53757d01de04d",
+          "fe09faaf3f38dbf8fc4f59d9d78b80524b4343bdbd956592e41c22f697eba867",
+          "b75fe9fdc3908b81a98294204bc13cdf74bd097f03de66f54981a9d862896c7a"
+        ],
+        "safetensors_bytes": 2894150976,
+        "layers": 224,
+        "all_saved_checksums_verified": true,
+        "cases": {
+          "text": {
+            "nmse": 0.0015912019201749603,
+            "squared_error_sum": 54460.19998069965,
+            "reference_squared_sum": 34225825.95596132,
+            "elements": 10485760,
+            "seed": 1702,
+            "steps": 40,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "39c3748849d8085397dd90456c6745fced47530f3c3b038d295b3a31a80fb96a",
+            "generation_finite": true
+          },
+          "composition": {
+            "nmse": 0.0020856355484395288,
+            "squared_error_sum": 60853.41388549012,
+            "reference_squared_sum": 29177395.797180675,
+            "elements": 10485760,
+            "seed": 1703,
+            "steps": 40,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "e29a767cb1558fe1d7b7992fe32fd87a2733632b1c9377332bc75195b2f50f47",
+            "generation_finite": true
+          },
+          "multi_ref": {
+            "nmse": 0.0046725569157543756,
+            "squared_error_sum": 109127.61091965012,
+            "reference_squared_sum": 23355009.449260324,
+            "elements": 10485760,
+            "seed": 1706,
+            "steps": 40,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "6bf5e0e137031c10e73d329b6238f1ded6e3eb6d83ec05a750374a2779df900a",
+            "generation_finite": true
+          }
+        },
+        "nmse": 0.0025869732666890187,
+        "squared_error_sum": 224441.22478583988,
+        "reference_squared_sum": 86758231.20240232
+      },
+      "4": {
+        "bits": 4,
+        "source": {
+          "repo_id": "Qwen/Qwen-Image-2.1",
+          "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+        },
+        "effective_bits_per_source_element": 4.2349330000558405,
+        "source_state_bytes": 14230249472,
+        "quantized_state_bytes": 3494903808,
+        "unquantized_state_bytes": 271605760,
+        "calibration": [
+          "901d78df4fb98ff0448865ce2e433e7bab2159afc30233e4e5f53757d01de04d",
+          "fe09faaf3f38dbf8fc4f59d9d78b80524b4343bdbd956592e41c22f697eba867",
+          "b75fe9fdc3908b81a98294204bc13cdf74bd097f03de66f54981a9d862896c7a"
+        ],
+        "safetensors_bytes": 3766566208,
+        "layers": 224,
+        "all_saved_checksums_verified": true,
+        "cases": {
+          "text": {
+            "nmse": 0.0004461190741037389,
+            "squared_error_sum": 15268.793785909178,
+            "reference_squared_sum": 34225825.95596132,
+            "elements": 10485760,
+            "seed": 1702,
+            "steps": 40,
+            "teacher_output_unchanged": true
+          },
+          "composition": {
+            "nmse": 0.0006186758313913627,
+            "squared_error_sum": 18051.349602655606,
+            "reference_squared_sum": 29177395.797180675,
+            "elements": 10485760,
+            "seed": 1703,
+            "steps": 40,
+            "teacher_output_unchanged": true
+          },
+          "multi_ref": {
+            "nmse": 0.0015087642451482896,
+            "squared_error_sum": 35237.203202144425,
+            "reference_squared_sum": 23355009.449260324,
+            "elements": 10485760,
+            "seed": 1706,
+            "steps": 40,
+            "teacher_output_unchanged": true
+          }
+        },
+        "nmse": 0.0007902114374688965,
+        "squared_error_sum": 68557.3465907092,
+        "reference_squared_sum": 86758231.20240232
+      },
+      "5": {
+        "bits": 5,
+        "source": {
+          "repo_id": "Qwen/Qwen-Image-2.1",
+          "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+        },
+        "effective_bits_per_source_element": 5.215846492785928,
+        "source_state_bytes": 14230249472,
+        "quantized_state_bytes": 4367319040,
+        "unquantized_state_bytes": 271605760,
+        "calibration": [
+          "901d78df4fb98ff0448865ce2e433e7bab2159afc30233e4e5f53757d01de04d",
+          "fe09faaf3f38dbf8fc4f59d9d78b80524b4343bdbd956592e41c22f697eba867",
+          "b75fe9fdc3908b81a98294204bc13cdf74bd097f03de66f54981a9d862896c7a"
+        ],
+        "safetensors_bytes": 4638981440,
+        "layers": 224,
+        "all_saved_checksums_verified": true,
+        "cases": {
+          "text": {
+            "nmse": 0.00014279651100533602,
+            "squared_error_sum": 4887.328532787145,
+            "reference_squared_sum": 34225825.95596132,
+            "elements": 10485760,
+            "seed": 1702,
+            "steps": 40,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "1020294670f0e06b148016d10d8a870b61bca378fcbd2f752950e20f45051a86",
+            "generation_finite": true
+          },
+          "composition": {
+            "nmse": 0.0001818862598510222,
+            "squared_error_sum": 5306.967393742128,
+            "reference_squared_sum": 29177395.797180675,
+            "elements": 10485760,
+            "seed": 1703,
+            "steps": 40,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "5503edae41c0ab7cabf214a443086799a299208a748376de490385f536d3c41a",
+            "generation_finite": true
+          },
+          "multi_ref": {
+            "nmse": 0.00034763536070019514,
+            "squared_error_sum": 8119.0271340500785,
+            "reference_squared_sum": 23355009.449260324,
+            "elements": 10485760,
+            "seed": 1706,
+            "steps": 40,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "532ebed6189b8f9410f504325280eacb8ce141c510253edb436873a062d1954e",
+            "generation_finite": true
+          }
+        },
+        "nmse": 0.00021108456000970495,
+        "squared_error_sum": 18313.32306057935,
+        "reference_squared_sum": 86758231.20240232
+      }
+    },
+    "turbo": {
+      "3": {
+        "bits": 3,
+        "source": {
+          "repo_id": "Qwen/Qwen-Image-2.1-Turbo",
+          "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+        },
+        "effective_bits_per_source_element": 3.2540195073257534,
+        "source_state_bytes": 14230249472,
+        "quantized_state_bytes": 2622488576,
+        "unquantized_state_bytes": 271605760,
+        "calibration": [
+          "4b8f63765bee63161c7c8b2e92733eb738234c96a0e912e43462af198744d54c",
+          "ff534a55170ed4c9dc9269ec104646a220dbfa9a482f117fba9fc1dee857dbbf",
+          "c5269aed74a092c5ed0e1b9be69948255b2fcc80ea8887ffa814914e5df2e2f4"
+        ],
+        "safetensors_bytes": 2894150976,
+        "layers": 224,
+        "all_saved_checksums_verified": true,
+        "cases": {
+          "text": {
+            "nmse": 0.0016004943202042926,
+            "squared_error_sum": 11604.776598885039,
+            "reference_squared_sum": 7250745.255630626,
+            "elements": 2097152,
+            "seed": 1702,
+            "steps": 8,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "c8ee70e477d6762b19e793060254f85eb5a1f0e9bcfff6d2c3b9614df659dc62",
+            "generation_finite": true
+          },
+          "composition": {
+            "nmse": 0.0022012535560329144,
+            "squared_error_sum": 13557.317978861469,
+            "reference_squared_sum": 6158907.928487068,
+            "elements": 2097152,
+            "seed": 1703,
+            "steps": 8,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "7cf4b98d94b903a0f84be44cc9ca6c1d77138aa8590e631f2eeae33c813240c5",
+            "generation_finite": true
+          },
+          "multi_ref": {
+            "nmse": 0.009668966154529696,
+            "squared_error_sum": 42264.166803959044,
+            "reference_squared_sum": 4371115.394189194,
+            "elements": 2097152,
+            "seed": 1706,
+            "steps": 8,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "55a2f7ca92e12c165f9b19838e63449309a28f1a6dc1757fc1d1e0992c61dbdc",
+            "generation_finite": true
+          }
+        },
+        "nmse": 0.003792089249953333,
+        "squared_error_sum": 67426.26138170555,
+        "reference_squared_sum": 17780768.578306887
+      },
+      "4": {
+        "bits": 4,
+        "source": {
+          "repo_id": "Qwen/Qwen-Image-2.1-Turbo",
+          "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+        },
+        "effective_bits_per_source_element": 4.2349330000558405,
+        "source_state_bytes": 14230249472,
+        "quantized_state_bytes": 3494903808,
+        "unquantized_state_bytes": 271605760,
+        "calibration": [
+          "4b8f63765bee63161c7c8b2e92733eb738234c96a0e912e43462af198744d54c",
+          "ff534a55170ed4c9dc9269ec104646a220dbfa9a482f117fba9fc1dee857dbbf",
+          "c5269aed74a092c5ed0e1b9be69948255b2fcc80ea8887ffa814914e5df2e2f4"
+        ],
+        "safetensors_bytes": 3766566208,
+        "layers": 224,
+        "all_saved_checksums_verified": true,
+        "cases": {
+          "text": {
+            "nmse": 0.000521165907186535,
+            "squared_error_sum": 3778.8412289291996,
+            "reference_squared_sum": 7250745.255630626,
+            "elements": 2097152,
+            "seed": 1702,
+            "steps": 8,
+            "teacher_output_unchanged": true
+          },
+          "composition": {
+            "nmse": 0.0005219796840151518,
+            "squared_error_sum": 3214.8248143900933,
+            "reference_squared_sum": 6158907.928487068,
+            "elements": 2097152,
+            "seed": 1703,
+            "steps": 8,
+            "teacher_output_unchanged": true
+          },
+          "multi_ref": {
+            "nmse": 0.006106986536670649,
+            "squared_error_sum": 26694.342862547222,
+            "reference_squared_sum": 4371115.394189194,
+            "elements": 2097152,
+            "seed": 1706,
+            "steps": 8,
+            "teacher_output_unchanged": true
+          }
+        },
+        "nmse": 0.0018946317622606584,
+        "squared_error_sum": 33688.00890586652,
+        "reference_squared_sum": 17780768.578306887
+      },
+      "5": {
+        "bits": 5,
+        "source": {
+          "repo_id": "Qwen/Qwen-Image-2.1-Turbo",
+          "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+        },
+        "effective_bits_per_source_element": 5.215846492785928,
+        "source_state_bytes": 14230249472,
+        "quantized_state_bytes": 4367319040,
+        "unquantized_state_bytes": 271605760,
+        "calibration": [
+          "4b8f63765bee63161c7c8b2e92733eb738234c96a0e912e43462af198744d54c",
+          "ff534a55170ed4c9dc9269ec104646a220dbfa9a482f117fba9fc1dee857dbbf",
+          "c5269aed74a092c5ed0e1b9be69948255b2fcc80ea8887ffa814914e5df2e2f4"
+        ],
+        "safetensors_bytes": 4638981440,
+        "layers": 224,
+        "all_saved_checksums_verified": true,
+        "cases": {
+          "text": {
+            "nmse": 0.00012064731635081829,
+            "squared_error_sum": 874.782956635263,
+            "reference_squared_sum": 7250745.255630626,
+            "elements": 2097152,
+            "seed": 1702,
+            "steps": 8,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "e00c33647eb26ba69d8ac476b7a9e09fe4b3dbcb17e41ff116351a8f10899e52",
+            "generation_finite": true
+          },
+          "composition": {
+            "nmse": 0.0001434889521379356,
+            "squared_error_sum": 883.735244972633,
+            "reference_squared_sum": 6158907.928487068,
+            "elements": 2097152,
+            "seed": 1703,
+            "steps": 8,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "b2fb118fdc661beb6b5140ae20753ac4ba84a8294961d73f725195eae9980119",
+            "generation_finite": true
+          },
+          "multi_ref": {
+            "nmse": 0.0004897173100924192,
+            "squared_error_sum": 2140.6108729458965,
+            "reference_squared_sum": 4371115.394189194,
+            "elements": 2097152,
+            "seed": 1706,
+            "steps": 8,
+            "teacher_output_unchanged": true,
+            "generation_pixel_sha256": "039e8d75192df3d641efb744205c7dd7ec92bf3aa79db64d09cb54d8a86aa1aa",
+            "generation_finite": true
+          }
+        },
+        "nmse": 0.0002192891188804322,
+        "squared_error_sum": 3899.1290745537926,
+        "reference_squared_sum": 17780768.578306887
+      }
+    }
+  }
+}
