@@ -67,3 +67,17 @@ def test_inference_cli_keeps_explicit_allocator_config(monkeypatch):
     assert configure_inference_allocator() == {
         "EXL3_EXPANDABLE_SEGMENTS": "0", "PYTORCH_ALLOC_CONF": None,
         "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:64"}
+
+
+def test_manual_review_cannot_approve_different_images():
+    from rocm_tools.qwen_image21_compare import attach_manual_review
+
+    report = {"cases": {"text": {"bf16_pixels_sha256": "bf16", "exl3_pixels_sha256": "exl3",
+                                 "manual_review": "pending"}}}
+    review = {"reviewer": "test", "cases": {"text": {"bf16_pixels_sha256": "bf16",
+              "exl3_pixels_sha256": "other", "verdict": "pass", "observation": "HELLO readable"}}}
+    with pytest.raises(ValueError, match="different generated images"):
+        attach_manual_review(report, review)
+    review["cases"]["text"]["exl3_pixels_sha256"] = "exl3"
+    attach_manual_review(report, review)
+    assert report["quality_screen_passed"] is True and not report["manual_review_required"]

@@ -10,7 +10,7 @@
 - checkpointは層単位のEXL3 safetensorsと高精度保持層に分けて保存する。変換は層単位で再開でき、完了したcheckpointだけを読み込める。読み込みでは元の高精度DiTを構築・ロードせず、meta parameterに高精度保持層を割り当てる。導出される非永続bufferは通常通り初期化する。
 - CLIはBF16生成、text encodingの分離・再利用、校正採取、変換、EXL3読み込みに対応する。Turboのsampling sigmasは元のpipeline設定から保持する。
 
-R9700環境でGPUとCPUの計9件のテストが成功した。対象はFP16/BF16の分割復元、FP16範囲を超えるBF16入力、state保存・復元、実量子化とholdout入力、step別校正、小さなQwenImage21Transformerの7層変換・checkpoint再読み込み・forward、実行再開時の設定検証、比較条件とアロケータ設定の検証。同じcheckpointの再読み込み後の出力一致も確認した。**小さなモデルのテストは、公式7B重みの画質を証明するものではない。**
+R9700環境でGPUとCPUの計10件のテストが成功した。対象はFP16/BF16の分割復元、FP16範囲を超えるBF16入力、state保存・復元、実量子化とholdout入力、step別校正、小さなQwenImage21Transformerの7層変換・checkpoint再読み込み・forward、実行再開時の設定検証、比較条件とアロケータ設定の検証。同じcheckpointの再読み込み後の出力一致も確認した。**小さなモデルのテストは、公式7B重みの画質を証明するものではない。**
 
 公式通常版のBF16では1024平方・40stepの最初の生成が完走した。校正用プロンプトの青いティーポットと2個のオレンジを目視確認し、224個のLinearからstep 0・20・39で入力を採取した。形状は4096×4096、4096×12288、12288×4096。サンプルの最大絶対値は137。この実行は校正処理を含むため速度比較には使用しない。
 
@@ -19,6 +19,8 @@ R9700環境でGPUとCPUの計9件のテストが成功した。対象はFP16/BF1
 通常版とTurboはそれぞれ224層すべての4bit変換を完了し、保存ファイルのチェックサムを確認した。両者とも高精度保持層・スケールを含むDiTの実効精度は約4.235 bit/weight、safetensorsは3,766,566,208 bytesで、元のBF16 DiTの約26.5%。text encoderとVAEはこの容量に含まない。[通常版の変換結果](../benchmarks/2026-10-19/qwen-image21-base-conversion.json)と[Turboの変換結果](../benchmarks/2026-10-19/qwen-image21-turbo-conversion.json)を参照。EXL3での実画像比較・独立した性能計測は進行中。
 
 ## 環境
+
+通常版EXL3は、2048平方の生成を含む固定6ケースを完走し、[BF16との目視比較](../benchmarks/2026-10-19/qwen-image21-base-quality-review.json)を終えた。全ケースで最終latentとVAE出力がfiniteで、224層すべてが全40stepでEXL3として呼ばれた。文字・配置・編集・透明背景・複数参照の指示は満たしているが、RGBAの耳や脚、複数参照の配置などは変わり、画素一致ではない。2048平方のキャッシュ済みプロンプト実行ではピークallocatedが約6.50 GiB。これはtext encodingを含む全体ベンチマークではない。Turboの固定ケース比較と独立した速度測定は進行中。
 
 重みrevisionと依存の固定値は [sources manifest](../rocm_tools/qwen_image21_sources.json) に保存している。ROCm版PyTorchとこのリポジトリの拡張を先に用意し、Diffusionの追加依存をインストールする。
 
@@ -97,6 +99,8 @@ Turboにも対応するモデルパスと `--variant turbo` で同じ手順を�
 生成CLIでは `EXL3_EXPANDABLE_SEGMENTS=0` を既定にし、EXL3のimportだけでアロケータ設定が変わることを防ぐ。明示したPyTorch allocator設定は保持し、EXL3の自動設定へ明示的にopt-inする場合はBF16側にも同じinitializerを適用する。設定はreportに保存する。既存の通常版BF16基準6件は純粋なDiffusers経路で既定のPyTorch allocatorを使っており、その等価設定を[監査記録](../benchmarks/2026-10-19/qwen-image21-allocator-audit.json)付きで事後追記した。画像・時間の値は変更していない。独立した性能比較は両方式とも同じ現行CLIで新規に測る。
 
 比較CLIは出力PNGと記録したpixel hash、最終latent/VAEのfinite検証、224層の実EXL3呼び出しを照合し、重み容量・時間・VRAM・画像差分を集計する。白背景へ合成したRGB差とalpha差は診断値であり、画質の自動合格条件ではない。出力JSONのmanual reviewはpendingのままなので、固定ケースのcriteriaに沿って画像を見て判断する。
+
+目視後は `--reviews RUN/base-exl3-review.json` で判定を添付できる。reviewの各caseには `verdict`、`observation`、`bf16_pixels_sha256`、`exl3_pixels_sha256` を記載する。画像hashが違う判定は拒否し、未確認ケースが残ればpendingを維持する。全件確認後の `quality_screen_passed` は明示的な目視判定を反映する値で、自動の画質判定ではない。
 
 ## 計測値の読み方
 

@@ -1,0 +1,84 @@
+{
+  "reviewer": "Codex visual inspection",
+  "scope": "All six fixed base-model cases visually reviewed against BF16. This is a limited functional/quality screen, not a general quality guarantee. Isolated timing benchmarks remain pending.",
+  "cases": {
+    "photo": {
+      "verdict": "pass",
+      "observation": "赤い木製帆船、白い帆、青い布を維持。横木や船内の形状に小差はあるが、明確な崩壊はない。VAE由来の細い境界跡はBF16にも存在する。",
+      "bf16_pixels_sha256": "435a67266f503c36e74a84cc1bfa91e1936387a1e30dde204340380f96659315",
+      "exl3_pixels_sha256": "8c16b8cd769467019b1057187f83be54a6ad9ce391786c0afae31b5e4e089f82",
+      "criterion": "A coherent red toy sailboat, white sail and blue fabric; no new severe structural defects relative to BF16.",
+      "image_size": [
+        2048,
+        2048
+      ],
+      "actual_steps": 40,
+      "executed_exl3_layers": 224
+    },
+    "text": {
+      "verdict": "pass",
+      "observation": "HELLOを正確に読める。星の位置に小差はあるが、余分な文字や判読性の悪化はない。",
+      "bf16_pixels_sha256": "3caca7975a375316c8fddc28872b3b11c3bc8d415cdef6127db3afe9d38b16ff",
+      "exl3_pixels_sha256": "b6a39f2dc025b085949da540b20d738592f9d1da011f8799372aeaad18289f16",
+      "criterion": "Compare HELLO legibility, unintended text and poster layout against BF16.",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "actual_steps": 40,
+      "executed_exl3_layers": 224
+    },
+    "composition": {
+      "verdict": "pass",
+      "observation": "赤い球が左、青い立方体が右、黄色いピラミッドが中央という配置と色を維持する。",
+      "bf16_pixels_sha256": "4d6fc5a131d76b36eb80870797e9961d1c2e12aa1d2ecd77f0537b45afac8de0",
+      "exl3_pixels_sha256": "2cabf21110e76b1838e949f10bc691f9ba11bd6ce64112d38d08de28152ccc79",
+      "criterion": "Compare object counts, colors and left/right arrangement against BF16.",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "actual_steps": 40,
+      "executed_exl3_layers": 224
+    },
+    "edit": {
+      "verdict": "pass",
+      "observation": "船体が緑になり、白い帆・青い布・カメラ構図を保持。BF16の編集結果と非常に近い。",
+      "bf16_pixels_sha256": "ebd4ce66bba8e820dc09c3d041773c115911d42a56aeca1c2eb139a1a555f748",
+      "exl3_pixels_sha256": "7b486540c167a4323a9000a896cad1c837451f91630bc9d61db630c50a8f7d30",
+      "criterion": "Requested hull color changes while boat identity, sail and scene are preserved relative to BF16.",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "actual_steps": 40,
+      "executed_exl3_layers": 224
+    },
+    "rgba": {
+      "verdict": "pass",
+      "observation": "オレンジ色の折り紙の狐と透明背景を維持。耳・脚・折り目の形状は変わるが、輪郭とalphaは使用可能。alphaが5/255以下の面積はBF16約67.86%、EXL3約67.91%。画素一致ではない。",
+      "bf16_pixels_sha256": "818b43b768aba628d4295f60d812f37b1e39300c8de75f7aa4d13aedb193d806",
+      "exl3_pixels_sha256": "8f5aae701540efafcb451fc3c9bf3638daeff6c6afc076c834baf93977bd0392",
+      "criterion": "Nontrivial alpha channel, visible fox, usable cutout edges; compare subject and transparency with BF16.",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "actual_steps": 40,
+      "executed_exl3_layers": 224
+    },
+    "multi_ref": {
+      "verdict": "pass",
+      "observation": "参照元の赤い帆船、赤い球、青い立方体を識別でき、色と主要な特徴を維持。大きさ・配置に差がある。BF16にあった黄色いピラミッドはないが、今回の指示対象には含まれない。",
+      "bf16_pixels_sha256": "b38d698df8fe54703435ae2e47c19dca8bfe961c415b92cf257401e8453e2fe6",
+      "exl3_pixels_sha256": "055b8ea9bceb42c11a2c53a3abe1c9387a498712a80adef4465261bd43fe86b9",
+      "criterion": "The scene combines recognizable content from both references, compared with BF16.",
+      "image_size": [
+        1024,
+        1024
+      ],
+      "actual_steps": 40,
+      "executed_exl3_layers": 224
+    }
+  }
+}

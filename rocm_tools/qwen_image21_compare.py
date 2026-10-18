@@ -56,6 +56,24 @@ def paired_reports(left, right):
         raise ValueError("BF16 and EXL3 allocator settings differ or lack provenance")
 
 
+def attach_manual_review(report, review):
+    unknown = set(review["cases"]) - set(report["cases"])
+    if unknown:
+        raise ValueError(f"Review contains unknown cases: {sorted(unknown)}")
+    for name, entry in review["cases"].items():
+        case = report["cases"][name]
+        if any(entry.get(key) != case[key] for key in ("bf16_pixels_sha256", "exl3_pixels_sha256")):
+            raise ValueError(f"Review refers to different generated images: {name}")
+        if entry.get("verdict") not in ("pass", "fail") or not entry.get("observation", "").strip():
+            raise ValueError(f"Review needs a verdict and observation: {name}")
+        case["manual_review"] = entry["verdict"]
+        case["manual_observation"] = entry["observation"]
+    report["manual_review_required"] = any(c["manual_review"] == "pending" for c in report["cases"].values())
+    report["quality_screen_passed"] = (None if report["manual_review_required"] else
+                                       all(c["manual_review"] == "pass" for c in report["cases"].values()))
+    report["reviewer"] = review.get("reviewer")
+
+
 def compare(args):
     cases = read_json(CASES)["evaluation"]
     checkpoint = args.root / f"{args.variant}-exl3-4bit"
@@ -84,8 +102,9 @@ def compare(args):
                             pair["bf16"]["measurements"][0])
         right = image_pixels(args.root / args.variant / "exl3" / case["id"] / "run-0.png",
                              pair["exl3"]["measurements"][0])
+        expected_calls = pair["exl3"]["measurements"][0]["actual_steps"]
         observed_layers = [name for name, layer in pair["exl3"]["linear_shapes"].items()
-                           if layer["weight_dtype"] == "exl3" and sum(layer["inputs"].values()) > 0]
+                           if layer["weight_dtype"] == "exl3" and sum(layer["inputs"].values()) == expected_calls]
         if set(observed_layers) != set(manifest["layers"]):
             raise ValueError(f"Not all EXL3 layers were executed in {case['id']}")
         report["cases"][case["id"]] = {
@@ -122,8 +141,11 @@ def compare(args):
     report["benchmark"]["pipeline_time_ratio"] = exl3["pipeline_seconds_median"] / bf16["pipeline_seconds_median"]
     report["benchmark"]["peak_allocated_ratio"] = exl3["peak_allocated_bytes_max"] / bf16["peak_allocated_bytes_max"]
     report["benchmark"]["denoising_target_met"] = report["benchmark"]["denoising_time_ratio"] <= 1.3
+    if args.reviews:
+        attach_manual_review(report, read_json(args.reviews))
+        report["review_file_sha256"] = hashlib.sha256(args.reviews.read_bytes()).hexdigest()
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2) + "\n")
+    args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
     print(json.dumps({"storage": report["storage"], "benchmark": report["benchmark"]}, indent=2))
 
 
@@ -133,6 +155,7 @@ def main():
     ap.add_argument("--model", type=Path, required=True)
     ap.add_argument("--root", type=Path, required=True)
     ap.add_argument("--output", type=Path, required=True)
+    ap.add_argument("--reviews", type=Path, help="Attach explicit image-hash-bound manual review decisions")
     compare(ap.parse_args())
 
 
