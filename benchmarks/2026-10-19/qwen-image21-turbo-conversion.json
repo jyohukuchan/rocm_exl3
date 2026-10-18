@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo_id": "Qwen/Qwen-Image-2.1-Turbo",
+    "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+  },
+  "bits": 4,
+  "source_state_numel": 7115124736,
+  "source_state_bytes": 14230249472,
+  "quantized_state_bytes": 3494903808,
+  "unquantized_state_bytes": 271605760,
+  "effective_bits_per_source_element": 4.2349330000558405,
+  "state_size_ratio": 0.26468331250349003,
+  "calibration": [
+    "4b8f63765bee63161c7c8b2e92733eb738234c96a0e912e43462af198744d54c",
+    "ff534a55170ed4c9dc9269ec104646a220dbfa9a482f117fba9fc1dee857dbbf",
+    "c5269aed74a092c5ed0e1b9be69948255b2fcc80ea8887ffa814914e5df2e2f4"
+  ],
+  "layer_count": 224,
+  "safetensors_bytes": 3766566208,
+  "all_saved_checksums_verified": true,
+  "scope": "Completed Turbo DiT conversion; actual EXL3 generation and quality/performance evaluation pending."
+}

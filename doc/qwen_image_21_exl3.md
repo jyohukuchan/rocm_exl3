@@ -16,7 +16,7 @@ R9700環境でGPUとCPUの計9件のテストが成功した。対象はFP16/BF1
 
 両モデルとも3種類の校正用入力でBF16実行が完走した。通常版は40step、Turboは保存済みの8個のsigmasを使い、Turboのcache modeは最初だけextract、続く7回はcachedになった。通常版では青から緑へのティーポットの編集も目視確認した。
 
-通常版は224層すべての4bit変換を完了し、保存ファイルのチェックサムを確認した。高精度保持層・スケールを含むDiTの実効精度は約4.235 bit/weight、safetensorsは3,766,566,208 bytesで、元のBF16 DiTの約26.5%。text encoderとVAEはこの容量に含まない。[変換結果](../benchmarks/2026-10-19/qwen-image21-base-conversion.json)を参照。EXL3での実画像比較・独立した性能計測とTurboの変換は進行中。
+通常版とTurboはそれぞれ224層すべての4bit変換を完了し、保存ファイルのチェックサムを確認した。両者とも高精度保持層・スケールを含むDiTの実効精度は約4.235 bit/weight、safetensorsは3,766,566,208 bytesで、元のBF16 DiTの約26.5%。text encoderとVAEはこの容量に含まない。[通常版の変換結果](../benchmarks/2026-10-19/qwen-image21-base-conversion.json)と[Turboの変換結果](../benchmarks/2026-10-19/qwen-image21-turbo-conversion.json)を参照。EXL3での実画像比較・独立した性能計測は進行中。
 
 ## 環境
 
