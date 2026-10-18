@@ -4,6 +4,7 @@ Start with [the V620 build and reproduction guide](reproduce_v620.md), [changes 
 
 ## Validated behavior and investigations
 
+- [EXL3 feasibility for image and video generation, with R9700 reconstruction measurements](diffusion_exl3_feasibility.md)
 - [V620 TP2 context, batch and MTP window measurements](qwen38_v620_context_batch.md)
 - [TP decode optimization and K5/V4 selection](v620_tp_decode_optimization.md)
 - [MTP results](qwen38_v620_mtp.md) and [official-source MTP precision comparison](qwen38_v620_mtp_precision.md)
