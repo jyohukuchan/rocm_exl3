@@ -263,6 +263,21 @@ def generate(args):
         steps = len(pipe.config.sample_sigmas) if pipe.config.sample_sigmas else kwargs["num_inference_steps"]
         capture = ActivationCapture(transformer, [0, steps // 2, steps - 1], args.capture_rows)
 
+    nmse = None
+    nmse_quantization = None
+    if args.nmse_exl3 or args.nmse_self:
+        from rocm_tools.qwen_image21_nmse import OutputNMSE
+        from diffusers.models.transformers.transformer_qwenimage21 import QwenImage21KVCache
+        if args.nmse_exl3:
+            from exllamav3.diffusion.checkpoint import load_transformer
+            candidate, nmse_quantization = load_transformer(
+                args.nmse_exl3, device=args.device, workspace_bytes=args.workspace_mib * 1024**2)
+            if nmse_quantization["source"] != source(args.variant):
+                raise ValueError("NMSE candidate source revision differs from BF16")
+        else:
+            candidate = transformer
+        nmse = OutputNMSE(candidate.forward, lambda: QwenImage21KVCache(len(transformer.transformer_blocks)))
+
     shape_stats, calls, step_ends = {}, [], []
     handles = []
     linear_types = (torch.nn.Linear,)
@@ -296,12 +311,17 @@ def generate(args):
     handles.extend((transformer.register_forward_pre_hook(start_transformer, with_kwargs=True),
                     transformer.register_forward_hook(end_transformer)))
 
+    if nmse:
+        handles.append(transformer.register_forward_hook(nmse.observe, with_kwargs=True))
+
     def step_callback(pipeline, index, timestep, data):
         event = torch.cuda.Event(enable_timing=True)
         event.record()
         step_ends.append(event)
         if capture:
             capture.step = index + 1
+        if nmse:
+            nmse.step = index + 1
         if index + 1 == expected_steps and not torch.isfinite(data["latents"]).all():
             raise RuntimeError("Nonfinite final diffusion latents")
         return data
@@ -380,10 +400,15 @@ def generate(args):
                      "reconstruction_workspace_bytes": args.workspace_mib * 1024**2 if quantization else None,
                      "offload": "none" if cached else "text-encoder" if quantization else args.offload},
         "measurements": records, "linear_shapes": shape_stats,
+        "nmse": ({**nmse.report(), "candidate": "exl3" if args.nmse_exl3 else "bf16-self",
+                  "quantization": nmse_quantization,
+                  "measurement_code_sha256": hashlib.sha256(
+                      Path(__file__).with_name("qwen_image21_nmse.py").read_bytes()).hexdigest()}
+                 if nmse else None),
         "calibration_instrumented": bool(capture),
-        "measurement_purpose": "calibration" if capture else args.purpose,
+        "measurement_purpose": "nmse" if nmse else "calibration" if capture else args.purpose,
         "initial_gpu_free_total_bytes": [initial_free, initial_total],
-        "timing_scope": ("Cached-prompt pipeline; encoding and model loading are separate." if cached else
+        "timing_scope": ("NMSE instrumented: includes candidate execution; not a speed/VRAM benchmark." if nmse else "Cached-prompt pipeline; encoding and model loading are separate." if cached else
                          "Full pipeline including text encoding, model CPU offload transfers and VAE; excludes initial loading and PNG save."),
     })
 
@@ -439,6 +464,9 @@ def main():
             parser.add_argument("--repeats", type=int, default=1)
             parser.add_argument("--capture", type=Path, help="Save timestep activation samples; timings are then diagnostic only")
             parser.add_argument("--capture-rows", type=int, default=128)
+            nmse_options = parser.add_mutually_exclusive_group()
+            nmse_options.add_argument("--nmse-exl3", type=Path, help="Compare this checkpoint on the BF16 trajectory; diagnostic only")
+            nmse_options.add_argument("--nmse-self", action="store_true", help="BF16 repeat-forward numerical floor on the same trajectory")
             parser.add_argument("--exl3", type=Path, help="EXL3 DiT checkpoint; DiT stays GPU resident")
             parser.add_argument("--offload", choices=("model", "text-encoder"), default="model",
                                 help="For BF16: model-level offload or stream only text encoder. EXL3 always uses text-encoder offload unless embeddings are cached.")
@@ -449,6 +477,10 @@ def main():
         ap.error("repeats must be positive and warmup nonnegative")
     if args.command == "generate" and args.capture and (args.warmup != 0 or args.repeats != 1):
         ap.error("calibration capture requires warmup=0 and repeats=1; benchmark separately")
+    if args.command == "generate" and (args.nmse_exl3 or args.nmse_self):
+        if (args.exl3 or args.capture or not args.encoding or args.warmup != 0
+                or args.repeats != 1 or args.purpose != "diagnostic" or args.cfg != 1):
+            ap.error("NMSE requires cached encoding, BF16 teacher, CFG=1, warmup=0, repeats=1, diagnostic purpose, no calibration")
     args.fn(args)
 
 

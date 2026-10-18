@@ -1,0 +1,38 @@
+{
+  "base-exl3-composition.json.gz": {
+    "sha256": "490e4af93c8edf9236a3a74e4082f33650af7c49e3f4e22479d485fcb10efa59",
+    "source_json_sha256": "bf9071c8cbd7b90584efa988204f062cbc4583e914ed19734a96df0464bd28e8"
+  },
+  "base-bf16-self-composition.json.gz": {
+    "sha256": "a9ca74421cd892a2a2f1eb1133b858020e2b93f5f656653b8f2117c13213692e",
+    "source_json_sha256": "e75a4f2c0863fabddf169f9027f439384cde05d59acc273b9356232d655ceb89"
+  },
+  "turbo-exl3-photo.json.gz": {
+    "sha256": "12a484d0a11f889f15f80106ed9971c1829b4b46ceb3a2201c7aa290cbdb61e5",
+    "source_json_sha256": "6b5a7b43534cfb0edc076ed2e0c47308c47dcb9789b814809428ab7a8749b001"
+  },
+  "turbo-exl3-text.json.gz": {
+    "sha256": "25d330f83fa566bfe737c17af2d0ab5f675cef3d93607a9cb4118c67a01a4dfc",
+    "source_json_sha256": "07c6aeab4bab5de62477cf3a55016c6453c6c57a5dc87aaed408f4ebdb84d277"
+  },
+  "turbo-exl3-composition.json.gz": {
+    "sha256": "d42ac13a4e2f24de53a2d3d7b10925161f2ad7c9c43f95d3c3106ce4747ca1dc",
+    "source_json_sha256": "184df5a55f8160ba54feb1524f7b19f183a76fccf03d0e2033baaacb3e3a240e"
+  },
+  "turbo-exl3-edit.json.gz": {
+    "sha256": "bd4109bdbeba80ba0e4cd7166b603467fdbc9a81785ba77656e25de6ebc527b7",
+    "source_json_sha256": "e61cbc29909d3218f4410f690e5028d786df26f343c7100e12fbc26db956942b"
+  },
+  "turbo-exl3-rgba.json.gz": {
+    "sha256": "754d444676b214db83d7373bb1d7009139d80e08008abc41a6b6423a1852f569",
+    "source_json_sha256": "c1910ea3684d19c2aa65b8422abae42350c8b405fb58cf4bd6298b917fe37b23"
+  },
+  "turbo-exl3-multi_ref.json.gz": {
+    "sha256": "01832688fcc1283c8f7c18b52cd9aac72852fc85a995c4db69616454da70f3bc",
+    "source_json_sha256": "312334a4afb8441edf7b2184d7a7655f1d9b3c7534bc6efb1f281bfc44199b45"
+  },
+  "turbo-bf16-self-composition.json.gz": {
+    "sha256": "69ce3e107732065b3f70f5875d11215db3f7b55984049527c217559026ab8f8d",
+    "source_json_sha256": "6bdc8c3b3cee643d25ed91ad8dc7ca5c10e85e7ba0a0698f4d06f09d9d8e1452"
+  }
+}

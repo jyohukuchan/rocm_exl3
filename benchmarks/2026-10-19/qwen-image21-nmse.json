@@ -1,0 +1,110 @@
+{
+  "metric": "NMSE",
+  "trajectory": "BF16",
+  "scope": "target image DiT predictions before scheduler; independent per-model prefix KV cache",
+  "aggregation": "sum squared error / sum reference squared over all scored elements and steps",
+  "limitations": "One fixed seed per case; no ranking of different quantizers established; diagnostic timings are not inference benchmarks",
+  "models": {
+    "base": {
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+      },
+      "nmse": 0.0006186758313913627,
+      "cases": {
+        "composition": {
+          "nmse": 0.0006186758313913627,
+          "squared_error_sum": 18051.349602655606,
+          "reference_squared_sum": 29177395.797180675,
+          "elements": 10485760,
+          "seed": 1703,
+          "width": 1024,
+          "height": 1024,
+          "steps": 40,
+          "bf16_image_unchanged": true
+        }
+      },
+      "bits": 4,
+      "effective_bpw": 4.2349330000558405,
+      "bf16_self_composition_nmse": 0.0
+    },
+    "turbo": {
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1-Turbo",
+        "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+      },
+      "nmse": 0.0013028038331149188,
+      "cases": {
+        "photo": {
+          "nmse": 0.0010072160175129225,
+          "squared_error_sum": 20682.679489326696,
+          "reference_squared_sum": 20534502.162105795,
+          "elements": 8388608,
+          "seed": 1701,
+          "width": 2048,
+          "height": 2048,
+          "steps": 8,
+          "bf16_image_unchanged": true
+        },
+        "text": {
+          "nmse": 0.000521165907186535,
+          "squared_error_sum": 3778.8412289291996,
+          "reference_squared_sum": 7250745.255630626,
+          "elements": 2097152,
+          "seed": 1702,
+          "width": 1024,
+          "height": 1024,
+          "steps": 8,
+          "bf16_image_unchanged": true
+        },
+        "composition": {
+          "nmse": 0.0005219796840151518,
+          "squared_error_sum": 3214.8248143900933,
+          "reference_squared_sum": 6158907.928487068,
+          "elements": 2097152,
+          "seed": 1703,
+          "width": 1024,
+          "height": 1024,
+          "steps": 8,
+          "bf16_image_unchanged": true
+        },
+        "edit": {
+          "nmse": 0.00044603095792552887,
+          "squared_error_sum": 1901.615241349312,
+          "reference_squared_sum": 4263415.369627356,
+          "elements": 2097152,
+          "seed": 1704,
+          "width": 1024,
+          "height": 1024,
+          "steps": 8,
+          "bf16_image_unchanged": true
+        },
+        "rgba": {
+          "nmse": 0.0011588825559572533,
+          "squared_error_sum": 6446.816139207931,
+          "reference_squared_sum": 5562958.995342518,
+          "elements": 2097152,
+          "seed": 1705,
+          "width": 1024,
+          "height": 1024,
+          "steps": 8,
+          "bf16_image_unchanged": true
+        },
+        "multi_ref": {
+          "nmse": 0.006106986536670649,
+          "squared_error_sum": 26694.342862547222,
+          "reference_squared_sum": 4371115.394189194,
+          "elements": 2097152,
+          "seed": 1706,
+          "width": 1024,
+          "height": 1024,
+          "steps": 8,
+          "bf16_image_unchanged": true
+        }
+      },
+      "bits": 4,
+      "effective_bpw": 4.2349330000558405,
+      "bf16_self_composition_nmse": 0.0
+    }
+  }
+}

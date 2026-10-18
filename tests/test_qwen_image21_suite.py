@@ -20,6 +20,9 @@ def test_resume_rejects_changed_sampling_and_invalid_measurements(tmp_path):
                           "cache_modes": ["extract"] + ["cached"] * 7}],
     }
     assert matching_report(report, case, [], "turbo", tmp_path, "bf16")
+    instrumented = copy.deepcopy(report)
+    instrumented["measurement_purpose"] = "nmse"
+    assert not matching_report(instrumented, case, [], "turbo", tmp_path, "bf16")
     wrong_seed = copy.deepcopy(report)
     wrong_seed["settings"]["seed"] += 1
     assert not matching_report(wrong_seed, case, [], "turbo", tmp_path, "bf16")

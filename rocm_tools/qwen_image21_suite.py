@@ -33,6 +33,8 @@ def expected_settings(case, refs, variant, model):
 
 def matching_report(report, case, refs, variant, model, precision, *, repeats=1, warmup=0,
                     checkpoint=None, offload=None, calibration=False):
+    if report.get("nmse") is not None or report.get("measurement_purpose") == "nmse":
+        return False
     expected, steps = expected_settings(case, refs, variant, model)
     if report.get("source") != source(variant) or report.get("precision") != precision:
         return False
@@ -136,14 +138,21 @@ def run_encoding(args, case, refs):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("phase", choices=("calibrate", "convert", "evaluate", "benchmark"))
+    ap.add_argument("phase", choices=("calibrate", "convert", "evaluate", "benchmark", "nmse"))
     ap.add_argument("--variant", choices=("base", "turbo"), required=True)
     ap.add_argument("--model", type=Path, required=True)
     ap.add_argument("--root", type=Path, required=True)
     ap.add_argument("--precision", choices=("bf16", "exl3", "both"), default="both")
     ap.add_argument("--case", action="append", help="Optional evaluation case selection")
     ap.add_argument("--offload", choices=("model", "text-encoder"), default="model")
+    ap.add_argument("--checkpoint", type=Path, help="NMSE candidate; defaults to the suite 4bit checkpoint")
+    ap.add_argument("--nmse-self", action="store_true", help="NMSE BF16 repeat-forward control")
+    ap.add_argument("--nmse-output", type=Path, help="Fresh directory for NMSE reports and summary")
     args = ap.parse_args()
+    if args.nmse_self and args.checkpoint:
+        ap.error("--nmse-self and --checkpoint are mutually exclusive")
+    if args.phase != "nmse" and (args.nmse_self or args.checkpoint or args.nmse_output):
+        ap.error("NMSE options require the nmse phase")
     cases = read_json(CASES)
     precisions = ("bf16", "exl3") if args.precision == "both" else (args.precision,)
     if args.phase == "calibrate":
@@ -172,11 +181,28 @@ def main():
             ap.error("Unknown evaluation case")
         if args.phase == "benchmark":
             selected = [c for c in cases["evaluation"] if c["id"] == "composition"]
+        nmse_reports = {}
+        nmse_directory = args.nmse_output or args.root / args.variant / "nmse" / ("bf16-self" if args.nmse_self else "exl3")
+        if args.phase == "nmse" and nmse_directory.exists():
+            raise ValueError("NMSE output already exists; use a fresh --nmse-output to avoid mixing experiments")
         for case in selected:
             refs = [args.root / args.variant / "bf16" / ref / "run-0.png" for ref in case.get("reference_cases", [])]
             if not all(p.exists() for p in refs):
                 raise ValueError("Generate the BF16 reference cases before dependent editing cases")
-            encoding = run_encoding(args, case, refs) if args.phase == "evaluate" else None
+            encoding = run_encoding(args, case, refs) if args.phase in ("evaluate", "nmse") else None
+            if args.phase == "nmse":
+                directory = nmse_directory / case["id"]
+                arguments = ["generate", "--variant", args.variant, "--model", args.model,
+                             "--encoding", encoding, "--output", directory, "--purpose", "diagnostic",
+                             "--width", case["width"], "--height", case["height"], "--seed", case["seed"]]
+                arguments.extend(["--nmse-self"] if args.nmse_self else
+                                 ["--nmse-exl3", args.checkpoint or args.root / f"{args.variant}-exl3-4bit"])
+                if refs:
+                    arguments.extend(["--images", *refs])
+                execute(arguments, directory.with_suffix(".log"))
+                report = read_json(directory / "report.json")
+                nmse_reports[case["id"]] = report["nmse"]
+                continue
             for precision in precisions:
                 directory = (args.root / args.variant / precision / case["id"] if args.phase == "evaluate" else
                              args.root / args.variant / "benchmark" / precision)
@@ -184,6 +210,18 @@ def main():
                                repeats=3 if args.phase == "benchmark" else 1,
                                warmup=1 if args.phase == "benchmark" else 0,
                                offload="text-encoder" if args.phase == "benchmark" else "model")
+
+        if nmse_reports:
+            from rocm_tools.qwen_image21 import write_json
+            error = math.fsum(r["squared_error_sum"] for r in nmse_reports.values())
+            signal = math.fsum(r["reference_squared_sum"] for r in nmse_reports.values())
+            write_json(nmse_directory / "summary.json", {
+                "source": source(args.variant), "nmse": error / signal,
+                "squared_error_sum": error, "reference_squared_sum": signal,
+                "aggregation": "global ratio of sums over all selected cases/steps/target elements; not mean case NMSE",
+                "cases": nmse_reports,
+            })
+            print(json.dumps({"variant": args.variant, "nmse": error / signal}), flush=True)
 
 
 if __name__ == "__main__":

@@ -132,6 +132,32 @@ Turboにも対応するモデルパスと `--variant turbo` で同じ手順を�
 - `finite_final_latents`、`finite_vae_output`、`alpha`：非有限値は生成をエラーにし、出力画像のalpha分布を記録する。RGBAの完全一致を要求するものではない。
 - `peak_allocated_bytes` と `peak_reserved_bytes`：プロセスのPyTorch allocatorで計測した値。GPU全体の使用量とは異なる。
 
+## BF16軌道上の出力NMSE
+
+量子化方式の数値的な忠実度は、BF16の生成軌道上でDiTの直接出力を比較する。BF16と候補モデルへ同じlatent・時刻・テキスト・参照画像条件を渡し、候補の予測はschedulerへ渡さない。prefix KV cacheは各モデルが同じ条件から独立に作るため、候補側のprefix計算に由来する誤差も含む。prefill時のテキスト・参照画像トークンを除外し、全stepの対象画像トークンだけを測る。
+
+`NMSE = sum((candidate - BF16)^2) / sum(BF16^2)`。小さいほどBF16に近い。FP32で差と二乗を計算し、和はFP64で蓄積する。分母がゼロまたは非有限値が出た場合はエラーにする。step別・case別の値と分子・分母を保存し、suiteの主スコアは全case・step・対象要素にわたる分子と分母の総和の比とする。case別NMSEの単純平均ではなく、2048pxケースの要素数やBF16出力エネルギーも重みに影響する。通常版とTurboは別々に集計し、異なるschedule同士の値をそのまま量子化方式の優劣に使わない。
+
+既存の評価用embedding・参照画像を使って実行する（先に `evaluate` のBF16生成を完了する）。初期対応はCFG=1、各case 1 seed、全step。校正入力と評価入力は別である。
+
+```bash
+python rocm_tools/qwen_image21_suite.py nmse --variant base --model MODEL --root RUN
+python rocm_tools/qwen_image21_suite.py nmse --variant base --model MODEL --root RUN \
+  --case composition --nmse-self
+```
+
+Turboは `--variant turbo` と対応モデルを指定する。任意のEXL3 checkpointは `--checkpoint PATH`、評価ケースの選択は `--case text` 等で指定できる。出力先は既定で `RUN/VARIANT/nmse/exl3/`、自己比較は `bf16-self/`。既存の実験と混ぜないよう、再実行時は新しい `--nmse-output PATH` を指定する。集計は `summary.json`、各caseの設定・source・実装hash・step別NMSEは `CASE/report.json` に保存する。`--nmse-self` は同じBF16モデルのforwardを独立したcacheで再実行し、計測経路の誤差下限を確認する。
+
+単一生成CLIでも `generate --encoding ENCODING --nmse-exl3 CHECKPOINT` または `--nmse-self` を使用できる。NMSEは診断専用で、速度ベンチマーク・校正との同時計測、EXL3をteacherにする実行、CFG>1、複数repeatは拒否する。比較時はBF16と候補DiTを同時にGPUへ載せるため、通常のEXL3推論よりVRAMを使う。時間とVRAMはNMSE計測処理込みであり、通常推論の性能値として扱わない。
+
+実機のBF16自己比較は通常版・TurboともcompositionケースでNMSE **0**。今回NMSEを測った7ケースすべてで、計測を挟んだBF16画像の画素hashは既存のBF16基準と一致した。
+
+追加したNMSEの計算・target tokenの切り出し・独立cache・自己比較・非有限値拒否を含め、GPU/CPUの計12テストが成功した。NMSE reportを通常の品質・性能測定へ再利用することも拒否する。
+
+2026年10月19日のEXL3 4bit実測では、1024平方のcompositionケース（seed 1703）のNMSEは通常版 **0.0006186758313913627**、Turbo **0.0005219796840151518**。Turboは2048平方のphoto、文字、composition、単一編集、RGBA、2枚参照の全6ケースも計測し、全要素・stepの総和による集計は **0.0013028038331149188**。通常版の今回のNMSE計測はcompositionの1ケースのみで、6ケース集計とは区別する。画像の品質確認済みケース数とNMSEの計測済みケース数も別である。[数値とケース別条件](../benchmarks/2026-10-19/qwen-image21-nmse.json)、[元reportの保存先とチェックサム](../benchmarks/2026-10-19/qwen-image21-nmse-reports/index.json)を参照。
+
+現在の変換CLIは `--bits 1` ～ `--bits 8` の整数を指定できるが、公式両モデルで検証済みなのは4bitのみ。固定suiteの変換も4bitを使う。これは量子化対象Linearのbit数であり、非量子化層とスケールを含むDiT実効bpwは約4.235。小数bpwを指定した層別自動配分はこの画像生成CLIにはない。
+
 ## VAE分割とRGBAの見た目
 
 現在は公式VAEの既定値である256pxタイル・192px strideを両方式に使用する。分割復元は非分割復元の近似であり、境界付近の薄い筋がBF16画像にも見られる。512pxの同一latentを用いたVAE単体の比較でも境界に差が出た。これをEXL3の量子化誤差として扱わず、両方式でVAE設定をそろえる。メモリと画質の兼ね合いを変える大きなタイルや非分割復元は、この比較の計測条件には含めていない。
@@ -143,5 +169,5 @@ RGBAの透明部分にはRGB値が残る。RGBだけを表示すると背景色�
 GPU拡張と固定したDiffusersが利用できる環境で実行する。
 
 ```bash
-python -m pytest -q tests/test_diffusion_exl3_linear.py tests/test_diffusion_exl3_checkpoint.py tests/test_qwen_image21_suite.py
+python -m pytest -q tests/test_diffusion_exl3_linear.py tests/test_diffusion_exl3_checkpoint.py tests/test_qwen_image21_suite.py tests/test_qwen_image21_nmse.py
 ```
