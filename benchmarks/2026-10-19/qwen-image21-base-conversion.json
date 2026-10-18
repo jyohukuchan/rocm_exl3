@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repo_id": "Qwen/Qwen-Image-2.1",
+    "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+  },
+  "bits": 4,
+  "source_state_numel": 7115124736,
+  "source_state_bytes": 14230249472,
+  "quantized_state_bytes": 3494903808,
+  "unquantized_state_bytes": 271605760,
+  "effective_bits_per_source_element": 4.2349330000558405,
+  "state_size_ratio": 0.26468331250349003,
+  "calibration": [
+    "901d78df4fb98ff0448865ce2e433e7bab2159afc30233e4e5f53757d01de04d",
+    "fe09faaf3f38dbf8fc4f59d9d78b80524b4343bdbd956592e41c22f697eba867",
+    "b75fe9fdc3908b81a98294204bc13cdf74bd097f03de66f54981a9d862896c7a"
+  ],
+  "layer_count": 224,
+  "safetensors_bytes": 3766566208,
+  "all_saved_checksums_verified": true,
+  "scope": "Completed base DiT conversion. Actual EXL3 generation and quality/performance evaluation are still pending."
+}
