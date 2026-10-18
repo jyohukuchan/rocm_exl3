@@ -21,6 +21,15 @@ DRIVER = Path(__file__).with_name("qwen_image21.py")
 CASES = Path(__file__).with_name("qwen_image21_cases.json")
 
 
+def checkpoint_path(root, variant, bits=4):
+    return root / f"{variant}-exl3-{bits}bit"
+
+
+def precision_label(precision, bits=4):
+    # Keep existing 4bit evidence paths stable.
+    return precision if precision != "exl3" or bits == 4 else f"exl3-{bits}bit"
+
+
 def expected_settings(case, refs, variant, model):
     sigmas = read_json(model / "model_index.json").get("sample_sigmas")
     return {
@@ -86,7 +95,7 @@ def execute(arguments, log):
 def run_generation(args, case, refs, output, *, precision="bf16", encoding=None,
                    capture=None, repeats=1, warmup=0, offload="model"):
     report_file = output / "report.json"
-    checkpoint = args.root / f"{args.variant}-exl3-4bit"
+    checkpoint = checkpoint_path(args.root, args.variant, args.bits)
     expected_offload = "none" if encoding else offload
     if report_file.exists():
         if matching_report(read_json(report_file), case, refs, args.variant, args.model, precision,
@@ -142,10 +151,11 @@ def main():
     ap.add_argument("--variant", choices=("base", "turbo"), required=True)
     ap.add_argument("--model", type=Path, required=True)
     ap.add_argument("--root", type=Path, required=True)
+    ap.add_argument("--bits", type=int, choices=range(1, 9), default=4, help="EXL3 bits per quantized Linear weight")
     ap.add_argument("--precision", choices=("bf16", "exl3", "both"), default="both")
     ap.add_argument("--case", action="append", help="Optional evaluation case selection")
     ap.add_argument("--offload", choices=("model", "text-encoder"), default="model")
-    ap.add_argument("--checkpoint", type=Path, help="NMSE candidate; defaults to the suite 4bit checkpoint")
+    ap.add_argument("--checkpoint", type=Path, help="NMSE candidate; defaults to the checkpoint selected by --bits")
     ap.add_argument("--nmse-self", action="store_true", help="NMSE BF16 repeat-forward control")
     ap.add_argument("--nmse-output", type=Path, help="Fresh directory for NMSE reports and summary")
     args = ap.parse_args()
@@ -162,19 +172,19 @@ def main():
             run_generation(args, case, refs, args.root / f"{args.variant}-{case['id']}",
                            capture=capture, offload=args.offload)
     elif args.phase == "convert":
-        target = args.root / f"{args.variant}-exl3-4bit"
+        target = checkpoint_path(args.root, args.variant, args.bits)
         calibration = [args.root / "calibration" / f"{args.variant}-{c['id'].split('-')[-1]}" for c in cases["calibration"]]
         if (target / "quantization.json").exists():
             manifest = read_json(target / "quantization.json")
-            if (manifest.get("source") != source(args.variant) or manifest.get("bits") != 4
+            if (manifest.get("source") != source(args.variant) or manifest.get("bits") != args.bits
                     or manifest.get("complete") is not True
                     or manifest.get("calibration") != [hashlib.sha256((p / "calibration.json").read_bytes()).hexdigest() for p in calibration]):
                 raise ValueError("Completed conversion differs from this suite")
             print(f"reuse {target}", flush=True)
         else:
             execute(["convert", "--variant", args.variant, "--model", args.model,
-                     "--calibration", *calibration, "--bits", 4, "--output", target],
-                    args.root / f"{args.variant}-convert.log")
+                     "--calibration", *calibration, "--bits", args.bits, "--output", target],
+                    args.root / f"{args.variant}-convert-{args.bits}bit.log")
     else:
         selected = [c for c in cases["evaluation"] if not args.case or c["id"] in args.case]
         if args.case and set(args.case) != {c["id"] for c in selected}:
@@ -182,7 +192,7 @@ def main():
         if args.phase == "benchmark":
             selected = [c for c in cases["evaluation"] if c["id"] == "composition"]
         nmse_reports = {}
-        nmse_directory = args.nmse_output or args.root / args.variant / "nmse" / ("bf16-self" if args.nmse_self else "exl3")
+        nmse_directory = args.nmse_output or args.root / args.variant / "nmse" / ("bf16-self" if args.nmse_self else precision_label("exl3", args.bits))
         if args.phase == "nmse" and nmse_directory.exists():
             raise ValueError("NMSE output already exists; use a fresh --nmse-output to avoid mixing experiments")
         for case in selected:
@@ -196,7 +206,7 @@ def main():
                              "--encoding", encoding, "--output", directory, "--purpose", "diagnostic",
                              "--width", case["width"], "--height", case["height"], "--seed", case["seed"]]
                 arguments.extend(["--nmse-self"] if args.nmse_self else
-                                 ["--nmse-exl3", args.checkpoint or args.root / f"{args.variant}-exl3-4bit"])
+                                 ["--nmse-exl3", args.checkpoint or checkpoint_path(args.root, args.variant, args.bits)])
                 if refs:
                     arguments.extend(["--images", *refs])
                 execute(arguments, directory.with_suffix(".log"))
@@ -204,8 +214,8 @@ def main():
                 nmse_reports[case["id"]] = report["nmse"]
                 continue
             for precision in precisions:
-                directory = (args.root / args.variant / precision / case["id"] if args.phase == "evaluate" else
-                             args.root / args.variant / "benchmark" / precision)
+                directory = (args.root / args.variant / precision_label(precision, args.bits) / case["id"] if args.phase == "evaluate" else
+                             args.root / args.variant / "benchmark" / precision_label(precision, args.bits))
                 run_generation(args, case, refs, directory, precision=precision, encoding=encoding,
                                repeats=3 if args.phase == "benchmark" else 1,
                                warmup=1 if args.phase == "benchmark" else 0,

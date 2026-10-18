@@ -84,3 +84,14 @@ def test_manual_review_cannot_approve_different_images():
     review["cases"]["text"]["exl3_pixels_sha256"] = "exl3"
     attach_manual_review(report, review)
     assert report["quality_screen_passed"] is True and not report["manual_review_required"]
+
+
+def test_bit_specific_paths_keep_reference_and_existing_4bit_evidence(tmp_path):
+    from rocm_tools.qwen_image21_suite import checkpoint_path, precision_label
+
+    assert checkpoint_path(tmp_path, "base", 3) == tmp_path / "base-exl3-3bit"
+    assert checkpoint_path(tmp_path, "turbo", 5) == tmp_path / "turbo-exl3-5bit"
+    assert precision_label("exl3", 4) == "exl3"
+    assert precision_label("exl3", 3) == "exl3-3bit"
+    assert precision_label("exl3", 5) == "exl3-5bit"
+    assert precision_label("bf16", 3) == precision_label("bf16", 5) == "bf16"

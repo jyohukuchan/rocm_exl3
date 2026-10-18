@@ -120,6 +120,20 @@ Turboにも対応するモデルパスと `--variant turbo` で同じ手順を�
 
 目視後は `--reviews RUN/base-exl3-review.json` で判定を添付できる。reviewの各caseには `verdict`、`observation`、`bf16_pixels_sha256`、`exl3_pixels_sha256` を記載する。画像hashが違う判定は拒否し、未確認ケースが残ればpendingを維持する。全件確認後の `quality_screen_passed` は明示的な目視判定を反映する値で、自動の画質判定ではない。
 
+## bit数を指定した変換・評価
+
+suiteと比較CLIは `--bits 3` / `--bits 5` 等を受け付ける。各モデルで既存の専用BF16校正を共用し、校正入力・層別seed・高精度保持箇所を変えずにbit数を比較できる。
+
+```bash
+python rocm_tools/qwen_image21_suite.py convert --variant base --bits 3 --model MODEL --root RUN
+python rocm_tools/qwen_image21_suite.py nmse --variant base --bits 3 --model MODEL --root RUN \
+  --case text --case composition --case multi_ref
+python rocm_tools/qwen_image21_suite.py evaluate --variant base --bits 3 --model MODEL --root RUN \
+  --precision exl3 --case text --case composition --case multi_ref
+```
+
+5bitは `--bits 5`、Turboは対応するMODELと `--variant turbo` を指定する。checkpointは `RUN/base-exl3-3bit/` 等、画像は `RUN/base/exl3-3bit/` 等、NMSEは `RUN/base/nmse/exl3-3bit/` 等へ保存される。BF16参照とembeddingは共有し、既存4bitの `exl3/` ディレクトリは維持する。`benchmark --bits N` と `qwen_image21_compare.py --bits N` も同じ配置に対応するが、比較CLIによる従来の全件集計には全6画像ケースと専用benchmarkが必要。NMSEの部分ケース集計はその実行の `summary.json` を使用する。
+
 ## 計測値の読み方
 
 `report.json` はsampling設定、実step数、cache mode、各Linearの形状、GPU、依存version、生成時間とVRAMを保存する。
@@ -156,7 +170,7 @@ Turboは `--variant turbo` と対応モデルを指定する。任意のEXL3 che
 
 2026年10月19日のEXL3 4bit実測では、1024平方のcompositionケース（seed 1703）のNMSEは通常版 **0.0006186758313913627**、Turbo **0.0005219796840151518**。Turboは2048平方のphoto、文字、composition、単一編集、RGBA、2枚参照の全6ケースも計測し、全要素・stepの総和による集計は **0.0013028038331149188**。通常版の今回のNMSE計測はcompositionの1ケースのみで、6ケース集計とは区別する。画像の品質確認済みケース数とNMSEの計測済みケース数も別である。[数値とケース別条件](../benchmarks/2026-10-19/qwen-image21-nmse.json)、[元reportの保存先とチェックサム](../benchmarks/2026-10-19/qwen-image21-nmse-reports/index.json)を参照。
 
-現在の変換CLIは `--bits 1` ～ `--bits 8` の整数を指定できるが、公式両モデルで検証済みなのは4bitのみ。固定suiteの変換も4bitを使う。これは量子化対象Linearのbit数であり、非量子化層とスケールを含むDiT実効bpwは約4.235。小数bpwを指定した層別自動配分はこの画像生成CLIにはない。
+現在の変換CLIは `--bits 1` ～ `--bits 8` の整数を指定できるが、公式両モデルで検証済みなのは4bitのみ。固定suiteも `--bits` を受け付け、既定値は4。これは量子化対象Linearのbit数であり、非量子化層とスケールを含むDiT実効bpwは約4.235。小数bpwを指定した層別自動配分はこの画像生成CLIにはない。
 
 ## VAE分割とRGBAの見た目
 

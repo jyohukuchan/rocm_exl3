@@ -17,7 +17,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from rocm_tools.qwen_image21 import read_json
-from rocm_tools.qwen_image21_suite import CASES, matching_report
+from rocm_tools.qwen_image21_suite import CASES, matching_report, checkpoint_path, precision_label
 
 
 def image_pixels(path, measurement):
@@ -76,7 +76,7 @@ def attach_manual_review(report, review):
 
 def compare(args):
     cases = read_json(CASES)["evaluation"]
-    checkpoint = args.root / f"{args.variant}-exl3-4bit"
+    checkpoint = checkpoint_path(args.root, args.variant, args.bits)
     manifest = read_json(checkpoint / "quantization.json")
     report = {"variant": args.variant, "source": manifest["source"], "cases": {},
               "manual_review_required": True,
@@ -91,7 +91,7 @@ def compare(args):
         refs = [args.root / args.variant / "bf16" / ref / "run-0.png" for ref in case.get("reference_cases", [])]
         pair = {}
         for precision in ("bf16", "exl3"):
-            directory = args.root / args.variant / precision / case["id"]
+            directory = args.root / args.variant / precision_label(precision, args.bits) / case["id"]
             result = read_json(directory / "report.json")
             if not matching_report(result, case, refs, args.variant, args.model, precision,
                                    checkpoint=checkpoint, offload="none"):
@@ -121,7 +121,7 @@ def compare(args):
     benchmark_case = next(c for c in cases if c["id"] == "composition")
     pair = {}
     for precision in ("bf16", "exl3"):
-        result = read_json(args.root / args.variant / "benchmark" / precision / "report.json")
+        result = read_json(args.root / args.variant / "benchmark" / precision_label(precision, args.bits) / "report.json")
         if not matching_report(result, benchmark_case, [], args.variant, args.model, precision,
                                repeats=3, warmup=1, checkpoint=checkpoint, offload="text-encoder"):
             raise ValueError(f"Benchmark does not match current implementation/settings: {precision}")
@@ -152,6 +152,7 @@ def compare(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--variant", choices=("base", "turbo"), required=True)
+    ap.add_argument("--bits", type=int, choices=range(1, 9), default=4)
     ap.add_argument("--model", type=Path, required=True)
     ap.add_argument("--root", type=Path, required=True)
     ap.add_argument("--output", type=Path, required=True)
