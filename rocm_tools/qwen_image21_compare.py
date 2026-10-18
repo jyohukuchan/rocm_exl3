@@ -45,8 +45,15 @@ def paired_reports(left, right):
         raise ValueError("BF16 and EXL3 hardware differs")
     if left["text_encoding"] != right["text_encoding"]:
         raise ValueError("BF16 and EXL3 prompt encodings differ")
-    if left["implementation"] != right["implementation"]:
-        raise ValueError("BF16 and EXL3 were run with different implementations")
+    # Quality baselines can predate bookkeeping-only CLI changes. Match the
+    # model sources and dependencies; benchmarks additionally require the
+    # current identical CLI through matching_report(repeats=3).
+    for key in ("runtime_source_sha256", "dependency_pins"):
+        if left["implementation"].get(key) != right["implementation"].get(key):
+            raise ValueError("BF16 and EXL3 model implementations differ")
+    if (left.get("allocator_configuration") is None
+            or left["allocator_configuration"] != right.get("allocator_configuration")):
+        raise ValueError("BF16 and EXL3 allocator settings differ or lack provenance")
 
 
 def compare(args):
@@ -83,6 +90,7 @@ def compare(args):
             raise ValueError(f"Not all EXL3 layers were executed in {case['id']}")
         report["cases"][case["id"]] = {
             "review_criterion": case["review"], "manual_review": "pending",
+            "cli_sha256": {p: pair[p]["implementation"]["cli_sha256"] for p in ("bf16", "exl3")},
             "rgb_mae_white_background_255": float(np.abs(left[0] - right[0]).mean() * 255),
             "alpha_mae_255": float(np.abs(left[1] - right[1]).mean() * 255),
             "bf16_alpha_extrema": [float(left[1].min()), float(left[1].max())],

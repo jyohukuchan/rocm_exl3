@@ -40,7 +40,8 @@ def test_compare_rejects_different_offload_or_prompt_cache():
     left = {"settings": {"seed": 17, "offload": "none", "reconstruction_workspace_bytes": None},
             "source": {"revision": "same"}, "versions": {"torch": "same"},
             "gpu": "R9700", "arch": "gfx1201", "text_encoding": {"sha": "same"},
-            "implementation": {"runtime": "same"}}
+            "implementation": {"runtime_source_sha256": {"model": "same"}},
+            "allocator_configuration": {"EXL3_EXPANDABLE_SEGMENTS": "0"}}
     right = copy.deepcopy(left)
     right["settings"]["reconstruction_workspace_bytes"] = 256 * 1024**2
     paired_reports(left, right)
@@ -51,3 +52,18 @@ def test_compare_rejects_different_offload_or_prompt_cache():
     right["text_encoding"]["sha"] = "other"
     with pytest.raises(ValueError, match="encodings"):
         paired_reports(left, right)
+    right["text_encoding"]["sha"] = "same"
+    right["allocator_configuration"]["EXL3_EXPANDABLE_SEGMENTS"] = "1"
+    with pytest.raises(ValueError, match="allocator"):
+        paired_reports(left, right)
+
+
+def test_inference_cli_keeps_explicit_allocator_config(monkeypatch):
+    from rocm_tools.qwen_image21 import configure_inference_allocator
+
+    monkeypatch.delenv("EXL3_EXPANDABLE_SEGMENTS", raising=False)
+    monkeypatch.delenv("PYTORCH_ALLOC_CONF", raising=False)
+    monkeypatch.setenv("PYTORCH_CUDA_ALLOC_CONF", "max_split_size_mb:64")
+    assert configure_inference_allocator() == {
+        "EXL3_EXPANDABLE_SEGMENTS": "0", "PYTORCH_ALLOC_CONF": None,
+        "PYTORCH_CUDA_ALLOC_CONF": "max_split_size_mb:64"}

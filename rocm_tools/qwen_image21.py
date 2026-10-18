@@ -10,6 +10,7 @@ import hashlib
 import importlib.metadata
 import inspect
 import json
+import os
 from pathlib import Path
 import subprocess
 import time
@@ -38,6 +39,16 @@ def source(variant):
 def versions():
     return {name: importlib.metadata.version(name) for name in
             ("torch", "diffusers", "transformers", "accelerate", "huggingface-hub", "safetensors")}
+
+
+def configure_inference_allocator():
+    # EXL3 normally enables expandable segments on import. Keep the same
+    # allocator for pure Diffusers BF16 and EXL3 in matched comparisons.
+    os.environ.setdefault("EXL3_EXPANDABLE_SEGMENTS", "0")
+    if os.environ["EXL3_EXPANDABLE_SEGMENTS"] != "0":
+        import exllamav3  # Explicit opt-in applies the initializer to both paths.
+    return {name: os.environ.get(name) for name in (
+        "PYTORCH_CUDA_ALLOC_CONF", "PYTORCH_ALLOC_CONF", "EXL3_EXPANDABLE_SEGMENTS")}
 
 
 def implementation_identity():
@@ -113,6 +124,7 @@ def encode(args):
     from safetensors.torch import save_file
     from transformers import Qwen3VLForConditionalGeneration
 
+    allocator = configure_inference_allocator()
     verify_source(args)
     torch.cuda.set_device(args.device)
     args.output.mkdir(parents=True, exist_ok=True)
@@ -146,6 +158,7 @@ def encode(args):
     write_json(args.output / "encoding.json", {
         "source": source(args.variant), "versions": versions(), "prompts": prompts,
         "implementation": implementation_identity(),
+        "allocator_configuration": allocator,
         "embeddings_sha256": hashlib.sha256((args.output / "embeddings.safetensors").read_bytes()).hexdigest(),
         "original_images": image_identity(original_images), "encoded_images": image_identity(images),
         "output_resolution": args.output_resolution, "load_seconds": load_seconds,
@@ -161,6 +174,7 @@ def generate(args):
     from diffusers import QwenImage21Pipeline, QwenImage21Transformer2DModel, AutoencoderKLQwenImage21
     from safetensors.torch import load_file
 
+    allocator = configure_inference_allocator()
     verify_source(args)
     torch.cuda.set_device(args.device)
     initial_free, initial_total = torch.cuda.mem_get_info()
@@ -356,6 +370,7 @@ def generate(args):
     write_json(args.output / "report.json", {
         "source": source(args.variant), "versions": versions(),
         "implementation": implementation_identity(),
+        "allocator_configuration": allocator,
         "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "gpu": torch.cuda.get_device_name(), "arch": torch.cuda.get_device_properties(args.device).gcnArchName,
         "precision": "exl3" if quantization else "bf16", "quantization": quantization,

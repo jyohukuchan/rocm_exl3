@@ -10,7 +10,7 @@
 - checkpointは層単位のEXL3 safetensorsと高精度保持層に分けて保存する。変換は層単位で再開でき、完了したcheckpointだけを読み込める。読み込みでは元の高精度DiTを構築・ロードせず、meta parameterに高精度保持層を割り当てる。導出される非永続bufferは通常通り初期化する。
 - CLIはBF16生成、text encodingの分離・再利用、校正採取、変換、EXL3読み込みに対応する。Turboのsampling sigmasは元のpipeline設定から保持する。
 
-R9700環境でGPUとCPUの計8件のテストが成功した。対象はFP16/BF16の分割復元、FP16範囲を超えるBF16入力、state保存・復元、実量子化とholdout入力、step別校正、小さなQwenImage21Transformerの7層変換・checkpoint再読み込み・forward、実行再開時の設定検証、比較条件の一致検証。同じcheckpointの再読み込み後の出力一致も確認した。**小さなモデルのテストは、公式7B重みの画質を証明するものではない。**
+R9700環境でGPUとCPUの計9件のテストが成功した。対象はFP16/BF16の分割復元、FP16範囲を超えるBF16入力、state保存・復元、実量子化とholdout入力、step別校正、小さなQwenImage21Transformerの7層変換・checkpoint再読み込み・forward、実行再開時の設定検証、比較条件とアロケータ設定の検証。同じcheckpointの再読み込み後の出力一致も確認した。**小さなモデルのテストは、公式7B重みの画質を証明するものではない。**
 
 公式通常版のBF16では1024平方・40stepの最初の生成が完走した。校正用プロンプトの青いティーポットと2個のオレンジを目視確認し、224個のLinearからstep 0・20・39で入力を採取した。形状は4096×4096、4096×12288、12288×4096。サンプルの最大絶対値は137。この実行は校正処理を含むため速度比較には使用しない。
 
@@ -93,6 +93,8 @@ python rocm_tools/qwen_image21_compare.py --variant base --model MODEL --root RU
 Turboにも対応するモデルパスと `--variant turbo` で同じ手順を実行する。`evaluate` はプロンプトembeddingを共有したBF16/EXL3の両方式で6ケースを生成する。`--precision bf16` や `--case text` で段階的に実行できるが、最終比較には全ケースが必要。参照元のphotoとcompositionをBF16で生成してから編集ケースへ進む。
 
 `benchmark` はcompositionを対象に、両方式をtext-encoder offloadでwarmup 1回＋計測3回実行する。開始時にGPUに別の大きな割当があれば停止する。校正・変換・他のGPUジョブが完了してから実行する。品質用の生成と、独立して測る性能ベンチマークは区別される。
+
+生成CLIでは `EXL3_EXPANDABLE_SEGMENTS=0` を既定にし、EXL3のimportだけでアロケータ設定が変わることを防ぐ。明示したPyTorch allocator設定は保持し、EXL3の自動設定へ明示的にopt-inする場合はBF16側にも同じinitializerを適用する。設定はreportに保存する。既存の通常版BF16基準6件は純粋なDiffusers経路で既定のPyTorch allocatorを使っており、その等価設定を[監査記録](../benchmarks/2026-10-19/qwen-image21-allocator-audit.json)付きで事後追記した。画像・時間の値は変更していない。独立した性能比較は両方式とも同じ現行CLIで新規に測る。
 
 比較CLIは出力PNGと記録したpixel hash、最終latent/VAEのfinite検証、224層の実EXL3呼び出しを照合し、重み容量・時間・VRAM・画像差分を集計する。白背景へ合成したRGB差とalpha差は診断値であり、画質の自動合格条件ではない。出力JSONのmanual reviewはpendingのままなので、固定ケースのcriteriaに沿って画像を見て判断する。
 
