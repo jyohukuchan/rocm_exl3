@@ -31,5 +31,12 @@
       "case": "text",
       "pixel_sha256": "3caca7975a375316c8fddc28872b3b11c3bc8d415cdef6127db3afe9d38b16ff"
     }
-  ]
+  ],
+  "runtime_probe": {
+    "method": "Fresh pinned container process: torch.cuda.memory._snapshot allocator_settings before and after configure_inference_allocator plus exllamav3 import",
+    "all_allocator_settings_equal": true,
+    "before_expandable_segments": false,
+    "after_expandable_segments": false,
+    "torch": "2.12.0+rocm7.2"
+  }
 }
