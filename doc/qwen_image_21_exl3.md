@@ -106,6 +106,12 @@ Turboにも対応するモデルパスと `--variant turbo` で同じ手順を�
 - `finite_final_latents`、`finite_vae_output`、`alpha`：非有限値は生成をエラーにし、出力画像のalpha分布を記録する。RGBAの完全一致を要求するものではない。
 - `peak_allocated_bytes` と `peak_reserved_bytes`：プロセスのPyTorch allocatorで計測した値。GPU全体の使用量とは異なる。
 
+## VAE分割とRGBAの見た目
+
+現在は公式VAEの既定値である256pxタイル・192px strideを両方式に使用する。分割復元は非分割復元の近似であり、境界付近の薄い筋がBF16画像にも見られる。512pxの同一latentを用いたVAE単体の比較でも境界に差が出た。これをEXL3の量子化誤差として扱わず、両方式でVAE設定をそろえる。メモリと画質の兼ね合いを変える大きなタイルや非分割復元は、この比較の計測条件には含めていない。
+
+RGBAの透明部分にはRGB値が残る。RGBだけを表示すると背景色や境界差が強く見えるため、見た目はalphaを合成した画像とalphaマップで確認する。比較CLIのRGB差も白背景への合成後に計算する。
+
 ## テスト
 
 GPU拡張と固定したDiffusersが利用できる環境で実行する。

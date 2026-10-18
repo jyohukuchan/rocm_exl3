@@ -1,0 +1,109 @@
+{
+  "variant": "base",
+  "precision": "bf16",
+  "scope": "BF16 reference review only; all six base cases inspected. EXL3 comparison and isolated timing benchmarks remain pending.",
+  "cases": {
+    "photo": {
+      "criterion": "A coherent red toy sailboat, white sail and blue fabric; no new severe structural defects relative to BF16.",
+      "observation": "2048x2048 completed. Red wooden toy sailboat, white triangular sail and blue fabric visible. Small tile-boundary marks are present in this BF16 reference.",
+      "pixel_sha256": "435a67266f503c36e74a84cc1bfa91e1936387a1e30dde204340380f96659315",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+      },
+      "seed": 1701,
+      "image_size": [
+        2048,
+        2048
+      ],
+      "actual_steps": 40,
+      "finite_final_latents": true,
+      "finite_vae_output": true
+    },
+    "text": {
+      "criterion": "Compare HELLO legibility, unintended text and poster layout against BF16.",
+      "observation": "HELLO is readable, dark blue on cream with yellow stars; no extra text.",
+      "pixel_sha256": "3caca7975a375316c8fddc28872b3b11c3bc8d415cdef6127db3afe9d38b16ff",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+      },
+      "seed": 1702,
+      "image_size": [
+        1024,
+        1024
+      ],
+      "actual_steps": 40,
+      "finite_final_latents": true,
+      "finite_vae_output": true
+    },
+    "composition": {
+      "criterion": "Compare object counts, colors and left/right arrangement against BF16.",
+      "observation": "Red sphere left, blue cube right, yellow pyramid between them.",
+      "pixel_sha256": "4d6fc5a131d76b36eb80870797e9961d1c2e12aa1d2ecd77f0537b45afac8de0",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+      },
+      "seed": 1703,
+      "image_size": [
+        1024,
+        1024
+      ],
+      "actual_steps": 40,
+      "finite_final_latents": true,
+      "finite_vae_output": true
+    },
+    "rgba": {
+      "criterion": "Nontrivial alpha channel, visible fox, usable cutout edges; compare subject and transparency with BF16.",
+      "observation": "Origami fox visible; alpha 0..255, approximately 68% of pixels <=5/255. Composited image and alpha map inspected; transparent RGB payload is not a visible background.",
+      "pixel_sha256": "818b43b768aba628d4295f60d812f37b1e39300c8de75f7aa4d13aedb193d806",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+      },
+      "seed": 1705,
+      "image_size": [
+        1024,
+        1024
+      ],
+      "actual_steps": 40,
+      "finite_final_latents": true,
+      "finite_vae_output": true
+    },
+    "edit": {
+      "criterion": "Requested hull color changes while boat identity, sail and scene are preserved relative to BF16.",
+      "observation": "Hull is green; white sail, wooden mast and blue fabric/camera composition are preserved.",
+      "pixel_sha256": "ebd4ce66bba8e820dc09c3d041773c115911d42a56aeca1c2eb139a1a555f748",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+      },
+      "seed": 1704,
+      "image_size": [
+        1024,
+        1024
+      ],
+      "actual_steps": 40,
+      "finite_final_latents": true,
+      "finite_vae_output": true
+    },
+    "multi_ref": {
+      "criterion": "The scene combines recognizable content from both references, compared with BF16.",
+      "observation": "Red sailboat, red sphere and blue cube from both references are recognizable in one scene; the yellow pyramid is also retained.",
+      "pixel_sha256": "b38d698df8fe54703435ae2e47c19dca8bfe961c415b92cf257401e8453e2fe6",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+      },
+      "seed": 1706,
+      "image_size": [
+        1024,
+        1024
+      ],
+      "actual_steps": 40,
+      "finite_final_latents": true,
+      "finite_vae_output": true
+    }
+  }
+}
