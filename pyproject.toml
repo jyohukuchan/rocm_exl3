@@ -39,6 +39,11 @@ Issues = "https://github.com/jyohukuchan/rocm_exl3_forme/issues"
 Upstream = "https://github.com/turboderp-org/exllamav3"
 
 [project.optional-dependencies]
+diffusion = [
+    "diffusers @ git+https://github.com/huggingface/diffusers.git@b800f828f3951c4d206e154411bcbfa693cd322e",
+    "transformers==5.17.0",
+    "accelerate==1.15.0",
+]
 eval = [
     "transformers>=4.50.0",
     "datasets",

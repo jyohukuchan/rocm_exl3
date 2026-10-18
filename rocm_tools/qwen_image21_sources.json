@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "models": {
+    "base": {
+      "repo_id": "Qwen/Qwen-Image-2.1",
+      "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+    },
+    "turbo": {
+      "repo_id": "Qwen/Qwen-Image-2.1-Turbo",
+      "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+    }
+  },
+  "diffusers": {
+    "repository": "https://github.com/huggingface/diffusers.git",
+    "revision": "b800f828f3951c4d206e154411bcbfa693cd322e",
+    "version": "0.41.0.dev0"
+  },
+  "runtime_versions": {
+    "torch": "2.12.0+rocm7.2",
+    "transformers": "5.17.0",
+    "accelerate": "1.15.0",
+    "huggingface-hub": "1.31.0",
+    "safetensors": "0.8.0"
+  }
+}

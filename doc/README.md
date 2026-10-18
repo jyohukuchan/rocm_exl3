@@ -5,6 +5,7 @@ Start with [the V620 build and reproduction guide](reproduce_v620.md), [changes 
 ## Development goals
 
 - [Qwen-Image-2.1 and 2.1-Turbo EXL3 support goals](qwen_image_21_exl3_goal.md)
+- [Qwen-Image-2.1 EXL3 implementation and CLI](qwen_image_21_exl3.md)
 
 ## Validated behavior and investigations
 

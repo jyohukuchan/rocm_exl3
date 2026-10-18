@@ -1,0 +1,2347 @@
+{
+  "source": {
+    "repo_id": "Qwen/Qwen-Image-2.1",
+    "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+  },
+  "versions": {
+    "torch": "2.12.0+rocm7.2",
+    "diffusers": "0.41.0.dev0",
+    "transformers": "5.17.0",
+    "accelerate": "1.15.0",
+    "huggingface-hub": "1.31.0",
+    "safetensors": "0.8.0"
+  },
+  "source_commit": "92c84020e27caf02b8891a5b6710c4e898d933c6",
+  "gpu": "AMD Radeon AI PRO R9700",
+  "arch": "gfx1201",
+  "precision": "bf16",
+  "quantization": null,
+  "text_encoding": null,
+  "model_load_seconds": 1.5342792400624603,
+  "settings": {
+    "prompt": "A blue ceramic teapot and two oranges on a wooden kitchen table, soft morning window light, realistic product photography.",
+    "image": [],
+    "negative_prompt": null,
+    "true_cfg_scale": 1.0,
+    "width": 1024,
+    "height": 1024,
+    "output_resolution": 1024,
+    "use_kv_cache": true,
+    "num_inference_steps": 40,
+    "seed": 42,
+    "sample_sigmas": null,
+    "vae_tiling": true,
+    "model_cpu_offload": true
+  },
+  "measurements": [
+    {
+      "warmup": false,
+      "pipeline_seconds": 201.8402089769952,
+      "denoising_ms": 93081.7890625,
+      "transformer_ms": [
+        58139.125,
+        876.7540283203125,
+        869.3328857421875,
+        871.3062744140625,
+        873.5330810546875,
+        872.5296630859375,
+        874.8925170898438,
+        876.718994140625,
+        877.1167602539062,
+        878.1686401367188,
+        879.273193359375,
+        882.8790283203125,
+        882.126953125,
+        879.8507080078125,
+        872.8621215820312,
+        872.1691284179688,
+        870.0311279296875,
+        870.8778076171875,
+        870.0545654296875,
+        870.862060546875,
+        1295.1898193359375,
+        873.2686767578125,
+        872.973876953125,
+        873.1066284179688,
+        874.0801391601562,
+        875.3666381835938,
+        874.5166015625,
+        875.4356079101562,
+        875.2981567382812,
+        876.361083984375,
+        877.5584106445312,
+        875.6201171875,
+        875.4358520507812,
+        875.827392578125,
+        876.2122802734375,
+        876.31591796875,
+        932.6879272460938,
+        874.8516235351562,
+        876.216552734375,
+        1210.0706787109375
+      ],
+      "timesteps": [
+        [
+          1.0
+        ],
+        [
+          0.98828125
+        ],
+        [
+          0.97265625
+        ],
+        [
+          0.9609375
+        ],
+        [
+          0.9453125
+        ],
+        [
+          0.93359375
+        ],
+        [
+          0.9140625
+        ],
+        [
+          0.8984375
+        ],
+        [
+          0.8828125
+        ],
+        [
+          0.8671875
+        ],
+        [
+          0.8515625
+        ],
+        [
+          0.8359375
+        ],
+        [
+          0.8203125
+        ],
+        [
+          0.80078125
+        ],
+        [
+          0.78125
+        ],
+        [
+          0.765625
+        ],
+        [
+          0.7421875
+        ],
+        [
+          0.72265625
+        ],
+        [
+          0.69921875
+        ],
+        [
+          0.6796875
+        ],
+        [
+          0.65625
+        ],
+        [
+          0.6328125
+        ],
+        [
+          0.609375
+        ],
+        [
+          0.5859375
+        ],
+        [
+          0.55859375
+        ],
+        [
+          0.53125
+        ],
+        [
+          0.50390625
+        ],
+        [
+          0.4765625
+        ],
+        [
+          0.4453125
+        ],
+        [
+          0.4140625
+        ],
+        [
+          0.3828125
+        ],
+        [
+          0.34765625
+        ],
+        [
+          0.314453125
+        ],
+        [
+          0.275390625
+        ],
+        [
+          0.2392578125
+        ],
+        [
+          0.19921875
+        ],
+        [
+          0.1572265625
+        ],
+        [
+          0.11328125
+        ],
+        [
+          0.06787109375
+        ],
+        [
+          0.02001953125
+        ]
+      ],
+      "cache_modes": [
+        "extract",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached",
+        "cached"
+      ],
+      "actual_steps": 40,
+      "peak_allocated_bytes": 17648840192,
+      "peak_reserved_bytes": 17662214144,
+      "image_mode": "RGBA",
+      "image_size": [
+        1024,
+        1024
+      ]
+    }
+  ],
+  "linear_shapes": {
+    "time_text_embed.timestep_embedder.linear_1": {
+      "in": 256,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[2, 256]:torch.bfloat16": 40
+      }
+    },
+    "time_text_embed.timestep_embedder.linear_2": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[2, 4096]:torch.bfloat16": 40
+      }
+    },
+    "txt_in.in_layer": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 31, 4096]:torch.bfloat16": 40
+      }
+    },
+    "txt_in.out_layer": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 31, 4096]:torch.bfloat16": 40
+      }
+    },
+    "img_in": {
+      "in": 64,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4096, 64]:torch.bfloat16": 40
+      }
+    },
+    "modulation.1": {
+      "in": 4096,
+      "out": 16384,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[2, 4096]:torch.bfloat16": 40
+      }
+    },
+    "transformer_blocks.0.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.0.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.0.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.0.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.0.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.0.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.0.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.1.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.1.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.1.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.1.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.1.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.1.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.1.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.2.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.2.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.2.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.2.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.2.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.2.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.2.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.3.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.3.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.3.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.3.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.3.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.3.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.3.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.4.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.4.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.4.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.4.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.4.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.4.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.4.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.5.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.5.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.5.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.5.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.5.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.5.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.5.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.6.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.6.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.6.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.6.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.6.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.6.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.6.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.7.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.7.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.7.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.7.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.7.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.7.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.7.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.8.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.8.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.8.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.8.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.8.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.8.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.8.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.9.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.9.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.9.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.9.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.9.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.9.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.9.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.10.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.10.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.10.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.10.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.10.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.10.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.10.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.11.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.11.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.11.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.11.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.11.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.11.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.11.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.12.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.12.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.12.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.12.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.12.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.12.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.12.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.13.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.13.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.13.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.13.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.13.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.13.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.13.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.14.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.14.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.14.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.14.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.14.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.14.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.14.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.15.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.15.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.15.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.15.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.15.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.15.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.15.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.16.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.16.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.16.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.16.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.16.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.16.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.16.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.17.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.17.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.17.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.17.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.17.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.17.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.17.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.18.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.18.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.18.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.18.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.18.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.18.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.18.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.19.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.19.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.19.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.19.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.19.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.19.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.19.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.20.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.20.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.20.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.20.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.20.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.20.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.20.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.21.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.21.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.21.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.21.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.21.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.21.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.21.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.22.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.22.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.22.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.22.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.22.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.22.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.22.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.23.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.23.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.23.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.23.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.23.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.23.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.23.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.24.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.24.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.24.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.24.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.24.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.24.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.24.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.25.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.25.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.25.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.25.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.25.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.25.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.25.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.26.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.26.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.26.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.26.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.26.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.26.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.26.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.27.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.27.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.27.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.27.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.27.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.27.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.27.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.28.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.28.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.28.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.28.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.28.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.28.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.28.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.29.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.29.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.29.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.29.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.29.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.29.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.29.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.30.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.30.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.30.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.30.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.30.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.30.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.30.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.31.attn.to_q": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.31.attn.to_k": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.31.attn.to_v": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.31.attn.to_out.0": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.31.img_mlp.proj": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.31.img_mlp.out": {
+      "in": 12288,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 12288]:torch.bfloat16": 1,
+        "[1, 4096, 12288]:torch.bfloat16": 39
+      }
+    },
+    "transformer_blocks.31.img_mlp.gate_layer": {
+      "in": 4096,
+      "out": 12288,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    },
+    "norm_out.linear": {
+      "in": 4096,
+      "out": 4096,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[2, 4096]:torch.bfloat16": 40
+      }
+    },
+    "proj_out": {
+      "in": 4096,
+      "out": 64,
+      "weight_dtype": "torch.bfloat16",
+      "inputs": {
+        "[1, 4127, 4096]:torch.bfloat16": 1,
+        "[1, 4096, 4096]:torch.bfloat16": 39
+      }
+    }
+  },
+  "calibration_instrumented": true,
+  "timing_scope": "Full pipeline including text encoding, model CPU offload transfers and VAE; excludes initial loading and PNG save.",
+  "artifact_note": "Initial BF16 calibration run, not a performance benchmark. PNG and calibration tensors remain in datapool. Implementation was uncommitted during execution.",
+  "implementation_sha256": {
+    "rocm_tools/qwen_image21.py": "18ade5ea60438a6abd3a0324f1b6bc54c2ee93b833d7050f858ba913e89a5e0f",
+    "exllamav3/diffusion/calibration.py": "92f42e704bc54ba9a26aaa0ff315bbbe9788252b597f5b11787e8850017ae6f7"
+  }
+}
