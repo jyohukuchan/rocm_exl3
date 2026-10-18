@@ -4,7 +4,8 @@
 **rocm_exl3_forme** is a personally maintained, experimental EXL3 engine for
 AMD GPUs. Work here covers V620 tensor-parallel inference, MTP, RAM-offloaded
 Engram, Qwen3.8 architecture support, quantization, quality/latency evaluation,
-and native JEV text/vision decisions on V620 and R9700.
+native JEV text/vision decisions on V620 and R9700, and Qwen-Image-2.1 / Turbo
+EXL3 image generation on R9700.
 
 This standalone project derives from
 [ExLlamaV3](https://github.com/turboderp-org/exllamav3) by turboderp and
@@ -43,6 +44,7 @@ AMD/CUDA behavior has not all been revalidated by this project.
 | R9700 inference comparisons (gfx1201 / RDNA4) | 1× R9700 | **Tested through documented comparison adapters/workarounds** (64 KiB LDS build, MLP range-balance adapter, MoE reconstruct adapter). Not general RDNA4 support | [doc/r9700_vs_v620.md](doc/r9700_vs_v620.md) |
 | Qwen3.5-2B → EXL3 4bpw conversion | 1× R9700 | Dense K4 is bit-identical to the original converter, and fast head capture is enabled by default. The 773.0 s / 18.5% result in the historical study included a removed FP16-input Hessian path, so it is not a current-default benchmark | [historical 2026-10-02 conversion study](doc/r9700_conversion_optimization.md) |
 | JEV-27B-VL EXL3 decisions + text/vision generation | 1× V620; 1× R9700 | **Validated** — 4bit trunk, 6bit generation/MTP weights, BF16 vision, FP32 decision LoRA and exact-source decision rows. Both GPUs match the BF16 reference on all 12 screened decisions; calibrated decision, TypeSafe and adaptive-thinking HTTP routes exercised | [doc/jev.md](doc/jev.md) |
+| Qwen-Image-2.1 / Turbo EXL3 4bit DiT | 1× R9700 | **Validated on six fixed cases per model** — 2048px generation, editing, RGBA, two references; DiT storage 26.5% of BF16, 1024px denoising 1.11–1.12× BF16. Lossy details/layout; BF16 text encoder and VAE retained | [Results and CLI](doc/qwen_image_21_exl3.md) |
 | RDNA3 / RDNA3.5 (`gfx1100`…`gfx1151`) | — | **Inherited from the parent fork's gfx1151 validation; not independently rerun on this branch** after the TP / Qwen3.8 / kernel changes below. The parent's claims stand as the parent's, not ours | [doc/fork_changes.md](doc/fork_changes.md) |
 | CUDA path | NVIDIA | Upstream native kernels retained; shared Python changes are not tested on NVIDIA here | — |
 

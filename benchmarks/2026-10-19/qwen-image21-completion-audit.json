@@ -1,0 +1,26 @@
+{
+  "date": "2026-10-19",
+  "status": "complete",
+  "archived_reports_verified": 28,
+  "models": [
+    "base",
+    "turbo"
+  ],
+  "checks": [
+    "Separate source-pinned calibration: 3 inputs and 3 noise stages per model, 224 layers; prompts disjoint from evaluation",
+    "224 4bit layers per checkpoint; retained high precision state included in storage accounting; saved checksum verification recorded",
+    "All 12 paired fixed cases manually reviewed, finite latent/VAE outputs, including 2048px per model",
+    "Every EXL3 layer executed on every denoising step; official 40/8 steps and extract/cached prefix cache",
+    "Isolated 1024px benchmarks: warmup 1 + measured 3, same placement/allocator/runtime, initial GPU usage below 512 MiB",
+    "Fresh-process output replay hashes match cached-encoding quality execution; see replay audit",
+    "Storage <=40%, denoising <=1.3x, lower allocated VRAM: both models",
+    "10 CPU/GPU tests passed; optional diffusion modules added without modifying existing LLM execution/native kernels",
+    "CLI and documentation present; local documentation links checked"
+  ],
+  "limitations": [
+    "Fixed-case semantic screening only; quantization changes details/layout/background",
+    "Official tiled VAE has visible seams also present in BF16",
+    "Reused native binary SHA recorded; original build commit unknown",
+    "No V620/multiGPU/FP8/video/LoRA/server implementation in this goal"
+  ]
+}

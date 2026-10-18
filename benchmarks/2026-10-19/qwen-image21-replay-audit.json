@@ -1,0 +1,30 @@
+{
+  "base": {
+    "bf16": {
+      "fresh_process_vs_cached_quality_pixels_identical": true,
+      "warmup_and_three_runs_identical": true,
+      "pixel_sha256": "4d6fc5a131d76b36eb80870797e9961d1c2e12aa1d2ecd77f0537b45afac8de0",
+      "sampling_steps": 40
+    },
+    "exl3": {
+      "fresh_process_vs_cached_quality_pixels_identical": true,
+      "warmup_and_three_runs_identical": true,
+      "pixel_sha256": "2cabf21110e76b1838e949f10bc691f9ba11bd6ce64112d38d08de28152ccc79",
+      "sampling_steps": 40
+    }
+  },
+  "turbo": {
+    "bf16": {
+      "fresh_process_vs_cached_quality_pixels_identical": true,
+      "warmup_and_three_runs_identical": true,
+      "pixel_sha256": "72ee701b560035d58ac634c475193eb5ac27b7f8c88da7971c17d6ef3461317b",
+      "sampling_steps": 8
+    },
+    "exl3": {
+      "fresh_process_vs_cached_quality_pixels_identical": true,
+      "warmup_and_three_runs_identical": true,
+      "pixel_sha256": "61560e61b641502a573ed679b40551dad6af9656238abb503122aef215e20ae9",
+      "sampling_steps": 8
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "container_image": "sha256:cb979a9dbf69fa98fc19a303826a3c118b6f27cc144d0a1181185a05363628dc",
+  "versions": {
+    "torch": "2.12.0+rocm7.2",
+    "diffusers": "0.41.0.dev0",
+    "transformers": "5.17.0",
+    "accelerate": "1.15.0",
+    "huggingface-hub": "1.31.0",
+    "safetensors": "0.8.0"
+  },
+  "gpu": "AMD Radeon AI PRO R9700",
+  "arch": "gfx1201",
+  "implementation": {
+    "cli_sha256": "2510504c7d1a00176069a1f92fe28d6dd78d3c751acb7e0579f01bbfee8fb173",
+    "dependency_pins": {
+      "schema_version": 1,
+      "models": {
+        "base": {
+          "repo_id": "Qwen/Qwen-Image-2.1",
+          "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+        },
+        "turbo": {
+          "repo_id": "Qwen/Qwen-Image-2.1-Turbo",
+          "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+        }
+      },
+      "diffusers": {
+        "repository": "https://github.com/huggingface/diffusers.git",
+        "revision": "b800f828f3951c4d206e154411bcbfa693cd322e",
+        "version": "0.41.0.dev0"
+      },
+      "runtime_versions": {
+        "torch": "2.12.0+rocm7.2",
+        "transformers": "5.17.0",
+        "accelerate": "1.15.0",
+        "huggingface-hub": "1.31.0",
+        "safetensors": "0.8.0"
+      }
+    },
+    "exl3_diffusion_runtime_sha256": {
+      "linear.py": "29a91eaa3e1590ea6e3a39a12392eff78890184f120151ff641b02513da65ecf",
+      "checkpoint.py": "0bd5ad125553071ab593033f1e282ef74888da375952fbab25e9589ae2a4d16d"
+    },
+    "runtime_source_sha256": {
+      "QwenImage21Pipeline": "e75e4ce38d38e194edaac818bba99b2115b4bb2bfdbd15ce03a2813b0fe8856c",
+      "QwenImage21Transformer2DModel": "7a3393f89b1eb71d79c8669a719a21a616e6c8b188b2c1f5a2faca2cc701f171"
+    }
+  },
+  "native_extension_sha256": "8120e6a1a128c8ac99f6955445802669c601194d0de2fc586d04712e4ed137db",
+  "native_extension_bytes": 33915128,
+  "native_extension_build_commit": "unknown; existing tested binary, not rebuilt for this feature",
+  "rocm_path": "/opt/rocm/core-7.14",
+  "runtime_pythonpath": "/work/qwen-image21/python:/work/lib-r9700-opt:/src",
+  "hipcc_version": "7.14.60850-0000000"
+}

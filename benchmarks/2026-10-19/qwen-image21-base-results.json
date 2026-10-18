@@ -1,0 +1,174 @@
+{
+  "variant": "base",
+  "source": {
+    "repo_id": "Qwen/Qwen-Image-2.1",
+    "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+  },
+  "cases": {
+    "photo": {
+      "review_criterion": "A coherent red toy sailboat, white sail and blue fabric; no new severe structural defects relative to BF16.",
+      "manual_review": "pass",
+      "cli_sha256": {
+        "bf16": "748329a541409acb67e9462d41c90f27767167c7a6c345d4e76635cafea4f6a4",
+        "exl3": "2510504c7d1a00176069a1f92fe28d6dd78d3c751acb7e0579f01bbfee8fb173"
+      },
+      "rgb_mae_white_background_255": 6.879515647888184,
+      "alpha_mae_255": 0.09262321889400482,
+      "bf16_alpha_extrema": [
+        0.7098039388656616,
+        1.0
+      ],
+      "exl3_alpha_extrema": [
+        0.7098039388656616,
+        1.0
+      ],
+      "executed_exl3_layers": 224,
+      "bf16_pixels_sha256": "435a67266f503c36e74a84cc1bfa91e1936387a1e30dde204340380f96659315",
+      "exl3_pixels_sha256": "8c16b8cd769467019b1057187f83be54a6ad9ce391786c0afae31b5e4e089f82",
+      "manual_observation": "赤い木製帆船、白い帆、青い布を維持。横木や船内の形状に小差はあるが、明確な崩壊はない。VAE由来の細い境界跡はBF16にも存在する。"
+    },
+    "text": {
+      "review_criterion": "Compare HELLO legibility, unintended text and poster layout against BF16.",
+      "manual_review": "pass",
+      "cli_sha256": {
+        "bf16": "748329a541409acb67e9462d41c90f27767167c7a6c345d4e76635cafea4f6a4",
+        "exl3": "2510504c7d1a00176069a1f92fe28d6dd78d3c751acb7e0579f01bbfee8fb173"
+      },
+      "rgb_mae_white_background_255": 1.4423575401306152,
+      "alpha_mae_255": 0.004526137840002775,
+      "bf16_alpha_extrema": [
+        0.886274516582489,
+        1.0
+      ],
+      "exl3_alpha_extrema": [
+        0.8901960849761963,
+        1.0
+      ],
+      "executed_exl3_layers": 224,
+      "bf16_pixels_sha256": "3caca7975a375316c8fddc28872b3b11c3bc8d415cdef6127db3afe9d38b16ff",
+      "exl3_pixels_sha256": "b6a39f2dc025b085949da540b20d738592f9d1da011f8799372aeaad18289f16",
+      "manual_observation": "HELLOを正確に読める。星の位置に小差はあるが、余分な文字や判読性の悪化はない。"
+    },
+    "composition": {
+      "review_criterion": "Compare object counts, colors and left/right arrangement against BF16.",
+      "manual_review": "pass",
+      "cli_sha256": {
+        "bf16": "748329a541409acb67e9462d41c90f27767167c7a6c345d4e76635cafea4f6a4",
+        "exl3": "2510504c7d1a00176069a1f92fe28d6dd78d3c751acb7e0579f01bbfee8fb173"
+      },
+      "rgb_mae_white_background_255": 3.6668214797973633,
+      "alpha_mae_255": 0.05104541406035423,
+      "bf16_alpha_extrema": [
+        0.843137264251709,
+        1.0
+      ],
+      "exl3_alpha_extrema": [
+        0.7607843279838562,
+        1.0
+      ],
+      "executed_exl3_layers": 224,
+      "bf16_pixels_sha256": "4d6fc5a131d76b36eb80870797e9961d1c2e12aa1d2ecd77f0537b45afac8de0",
+      "exl3_pixels_sha256": "2cabf21110e76b1838e949f10bc691f9ba11bd6ce64112d38d08de28152ccc79",
+      "manual_observation": "赤い球が左、青い立方体が右、黄色いピラミッドが中央という配置と色を維持する。"
+    },
+    "edit": {
+      "review_criterion": "Requested hull color changes while boat identity, sail and scene are preserved relative to BF16.",
+      "manual_review": "pass",
+      "cli_sha256": {
+        "bf16": "748329a541409acb67e9462d41c90f27767167c7a6c345d4e76635cafea4f6a4",
+        "exl3": "2510504c7d1a00176069a1f92fe28d6dd78d3c751acb7e0579f01bbfee8fb173"
+      },
+      "rgb_mae_white_background_255": 1.3248753547668457,
+      "alpha_mae_255": 0.04836749657988548,
+      "bf16_alpha_extrema": [
+        0.8274509906768799,
+        1.0
+      ],
+      "exl3_alpha_extrema": [
+        0.8274509906768799,
+        1.0
+      ],
+      "executed_exl3_layers": 224,
+      "bf16_pixels_sha256": "ebd4ce66bba8e820dc09c3d041773c115911d42a56aeca1c2eb139a1a555f748",
+      "exl3_pixels_sha256": "7b486540c167a4323a9000a896cad1c837451f91630bc9d61db630c50a8f7d30",
+      "manual_observation": "船体が緑になり、白い帆・青い布・カメラ構図を保持。BF16の編集結果と非常に近い。"
+    },
+    "rgba": {
+      "review_criterion": "Nontrivial alpha channel, visible fox, usable cutout edges; compare subject and transparency with BF16.",
+      "manual_review": "pass",
+      "cli_sha256": {
+        "bf16": "748329a541409acb67e9462d41c90f27767167c7a6c345d4e76635cafea4f6a4",
+        "exl3": "2510504c7d1a00176069a1f92fe28d6dd78d3c751acb7e0579f01bbfee8fb173"
+      },
+      "rgb_mae_white_background_255": 4.917203903198242,
+      "alpha_mae_255": 3.387657403945923,
+      "bf16_alpha_extrema": [
+        0.0,
+        1.0
+      ],
+      "exl3_alpha_extrema": [
+        0.0,
+        1.0
+      ],
+      "executed_exl3_layers": 224,
+      "bf16_pixels_sha256": "818b43b768aba628d4295f60d812f37b1e39300c8de75f7aa4d13aedb193d806",
+      "exl3_pixels_sha256": "8f5aae701540efafcb451fc3c9bf3638daeff6c6afc076c834baf93977bd0392",
+      "manual_observation": "オレンジ色の折り紙の狐と透明背景を維持。耳・脚・折り目の形状は変わるが、輪郭とalphaは使用可能。alphaが5/255以下の面積はBF16約67.86%、EXL3約67.91%。画素一致ではない。"
+    },
+    "multi_ref": {
+      "review_criterion": "The scene combines recognizable content from both references, compared with BF16.",
+      "manual_review": "pass",
+      "cli_sha256": {
+        "bf16": "748329a541409acb67e9462d41c90f27767167c7a6c345d4e76635cafea4f6a4",
+        "exl3": "2510504c7d1a00176069a1f92fe28d6dd78d3c751acb7e0579f01bbfee8fb173"
+      },
+      "rgb_mae_white_background_255": 12.49223518371582,
+      "alpha_mae_255": 0.052263256162405014,
+      "bf16_alpha_extrema": [
+        0.8941176533699036,
+        1.0
+      ],
+      "exl3_alpha_extrema": [
+        0.9058823585510254,
+        1.0
+      ],
+      "executed_exl3_layers": 224,
+      "bf16_pixels_sha256": "b38d698df8fe54703435ae2e47c19dca8bfe961c415b92cf257401e8453e2fe6",
+      "exl3_pixels_sha256": "055b8ea9bceb42c11a2c53a3abe1c9387a498712a80adef4465261bd43fe86b9",
+      "manual_observation": "参照元の赤い帆船、赤い球、青い立方体を識別でき、色と主要な特徴を維持。大きさ・配置に差がある。BF16にあった黄色いピラミッドはないが、今回の指示対象には含まれない。"
+    }
+  },
+  "manual_review_required": false,
+  "storage": {
+    "source_state_bytes": 14230249472,
+    "quantized_state_bytes": 3494903808,
+    "unquantized_state_bytes": 271605760,
+    "state_size_ratio": 0.26468331250349003,
+    "effective_bits_per_source_element": 4.2349330000558405,
+    "safetensors_bytes": 3766566208,
+    "source_safetensors_bytes": 14230284408,
+    "file_size_ratio": 0.2646866429375443,
+    "target_met": true
+  },
+  "benchmark": {
+    "bf16": {
+      "pipeline_seconds_median": 35.912519010016695,
+      "denoising_ms_median": 33497.21484375,
+      "peak_allocated_bytes_max": 16280265216,
+      "peak_reserved_bytes_max": 17483956224
+    },
+    "exl3": {
+      "pipeline_seconds_median": 39.497101365122944,
+      "denoising_ms_median": 37063.54296875,
+      "peak_allocated_bytes_max": 5816209920,
+      "peak_reserved_bytes_max": 7258243072
+    },
+    "denoising_time_ratio": 1.1064664074800061,
+    "pipeline_time_ratio": 1.0998142835401337,
+    "peak_allocated_ratio": 0.3572552315845516,
+    "denoising_target_met": true
+  },
+  "quality_screen_passed": true,
+  "reviewer": "Codex visual inspection",
+  "review_file_sha256": "4ed3c359959ed237dd259a32b5ff64735bea39a230030fa81b6f0848e3183f26"
+}
