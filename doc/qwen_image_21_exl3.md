@@ -48,6 +48,10 @@ python -m pip install --no-build-isolation '.[diffusion]'
 
 測定環境はPyTorch 2.12.0+rocm7.2、HIP compiler 7.14.60850、Diffusers commit `b800f828f3951c4d206e154411bcbfa693cd322e`。コンテナID、依存、Python実装hash、native拡張SHAは[環境記録](../benchmarks/2026-10-19/qwen-image21-environment.json)、全Python package versionは[一覧](../benchmarks/2026-10-19/qwen-image21-python-packages.json)に保存した。native拡張は既存の検証済みR9700用バイナリを再利用し、今回の機能でnativeコードを変更していない。そのバイナリのビルド元commitは不明なので、環境をゼロから完全に再構築した検証とは区別する。
 
+## 公開EXL3 checkpoint
+
+[通常版](https://huggingface.co/jyohukuchan/Qwen-Image-2.1-EXL3)と[Turbo](https://huggingface.co/jyohukuchan/Qwen-Image-2.1-Turbo-EXL3)を別リポジトリで公開し、それぞれ3・4・5bitを収録している。モデルカードにライセンス、推論方法、NMSE、比較画像を記載。公開用の通知メタデータを加えているが、評価済みcheckpointのテンソルpayloadは変更していない。[公開手順・検証記録](qwen_image21_hf/README.md)を参照。
+
 ## 重みの取得
 
 リポジトリルートで実行する。既定の保存先は `~/datapool/ai_models/safetensors/`。指定revisionの取得が完了すると `exl3_source.json` が作られ、後続コマンドはこれを確認する。

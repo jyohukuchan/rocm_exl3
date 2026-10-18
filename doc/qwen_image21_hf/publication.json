@@ -1,0 +1,55 @@
+{
+  "release_date": "2026-10-19",
+  "license": "Qwen Research License Agreement (2026-09-20)",
+  "engine_revision": "37847ec9949aaf30fcf72ad6679da78968857d7a",
+  "checkpoints_per_repository": [
+    3,
+    4,
+    5
+  ],
+  "publication_preserves_all_tensor_payload_bytes": true,
+  "runtime_validation": {
+    "base": {
+      "pixel_hash_matches_evaluated_checkpoint": true,
+      "pixel_sha256": "5503edae41c0ab7cabf214a443086799a299208a748376de490385f536d3c41a",
+      "full_pipeline_with_fresh_text_encoding": true,
+      "no_original_dense_dit_directory": true,
+      "bits": 5,
+      "steps": 40
+    },
+    "turbo": {
+      "pixel_hash_matches_evaluated_checkpoint": true,
+      "pixel_sha256": "b2fb118fdc661beb6b5140ae20753ac4ba84a8294961d73f725195eae9980119",
+      "full_pipeline_with_fresh_text_encoding": true,
+      "no_original_dense_dit_directory": true,
+      "bits": 5,
+      "steps": 8
+    }
+  },
+  "repositories": {
+    "base": {
+      "repo_id": "jyohukuchan/Qwen-Image-2.1-EXL3",
+      "url": "https://huggingface.co/jyohukuchan/Qwen-Image-2.1-EXL3",
+      "revision": "e8fedff7514b1ca107c140860ab70aad441a3275",
+      "release_tag": "exl3-v1",
+      "public": true,
+      "verified_files": 697,
+      "remote_file_hashes_match": true,
+      "bytes": 11302896780,
+      "anonymous_weight_metadata_verified": true,
+      "gated": false
+    },
+    "turbo": {
+      "repo_id": "jyohukuchan/Qwen-Image-2.1-Turbo-EXL3",
+      "url": "https://huggingface.co/jyohukuchan/Qwen-Image-2.1-Turbo-EXL3",
+      "revision": "f362145b8e8ebc88d6639c445eb9f31beab7c0b4",
+      "release_tag": "exl3-v1",
+      "public": true,
+      "verified_files": 697,
+      "remote_file_hashes_match": true,
+      "bytes": 11302908363,
+      "anonymous_weight_metadata_verified": true,
+      "gated": false
+    }
+  }
+}
