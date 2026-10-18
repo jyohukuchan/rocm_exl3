@@ -41,9 +41,10 @@ mcpServers:
 
 The existing local compose supplies `host.docker.internal:host-gateway`.
 SearXNG must enable JSON output. Recreate only the LibreChat API container
-after adding the mount, then reload the browser and enable **web-search**
-under **MCP Servers** in the composer tools menu. This is an MCP entry, not
+after adding the mount, then reload the browser. This is an MCP entry, not
 LibreChat's built-in Web Search toggle. Other MCP entries remain available.
+Without model-spec defaults, enable **web-search** under **MCP Servers** in the
+composer tools menu. The local deployment now selects it automatically as below.
 
 ```bash
 docker compose -f /home/homelab1/coding-local/librechat/compose.local.yaml up -d --no-deps api
@@ -76,3 +77,43 @@ the Japan Meteorological Agency, and rejection of an empty query. A subsequent
 authenticated LibreChat chat called `web_search_mcp_web-search` once and answered
 with the official forecast URL. That call took 268 ms inside the adapter;
 this is one smoke result, not a latency guarantee. No Firecrawl tool was called.
+
+## Automatic selection in new chats
+
+The local `qwen38-local` model spec now includes the four configured MCP servers
+at the **model-spec level**, alongside `preset` (not inside it):
+
+```yaml
+modelSpecs:
+  list:
+    - name: qwen38-local
+      default: true
+      mcpServers:
+        - web-search
+        - firecrawl
+        - huggingface
+        - openai-docs
+      preset:
+        endpoint: Local EXL3
+        model: qwen38-local
+        # Preserve the existing context, sampling and reasoning settings.
+        promptPrefix: |-
+          必要に応じてMCPツールを自分で選んで使ってください。
+          一般検索は軽量web_search、指定URLの本文確認はFirecrawl scrape、
+          モデル情報はHugging Face、OpenAI公式仕様はOpenAI Docsを優先してください。
+          URL案内など検索結果だけで依頼を満たせる場合は、追加の本文取得を行わないでください。
+          外部情報が不要な依頼ではツールを使わず回答してください。
+          外部情報には出典URLを付け、取得できない情報を取得したふりをしないでください。
+```
+
+This makes tools available to the model; the model decides whether to call them.
+Reload LibreChat and start a **new chat** to apply the defaults. Existing chats
+can retain their own saved MCP selections. The model's tool choice is not a
+deterministic routing rule or a guarantee that every task selects the best tool.
+
+Browser verification used a fresh login and new chats, without touching the MCP
+picker. Each submitted request contained all four configured servers. The model
+answered `17×19` without tools, chose lightweight search for a request to find the
+official weather forecast page, and chose Firecrawl scraping for an explicitly
+provided URL. Browser scripts and responses are saved locally under
+`/home/homelab1/datapool/rocm-exl3-rdna2/runs/librechat-auto-mcp-20261018/`.
