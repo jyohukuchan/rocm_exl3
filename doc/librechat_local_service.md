@@ -58,3 +58,15 @@ docker compose -f /home/homelab1/coding-local/librechat/compose.local.yaml stop
 `/home/homelab1/datapool/rocm-exl3-rdna2/runs/librechat-start-20261018/`
 に保存した。推論サービスは既存のenabled設定、LibreChatは既存の
 `restart: unless-stopped` を維持している。
+
+## 軽量Web検索（2026-10-18追加）
+
+画面を再読み込みし、入力欄のツールメニュー → MCP Servers → `web-search`
+を有効にすると、既存SearXNGのBing経由で通常検索できる。
+見出し・URL・短い抜粋のみ取得し、本文取得やrerankは行わない。
+本文が必要な場合は別途Firecrawlを使う。
+これは標準Web検索ボタンとは別のMCP機能。
+
+実際のLibreChatチャットで検索1回と出典URL付き回答を確認済み。
+設定、再起動、エンジン選択の理由は
+[軽量検索のREADME](../rocm_tools/web_search_mcp/README.md)を参照。
