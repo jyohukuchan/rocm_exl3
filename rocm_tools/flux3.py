@@ -262,6 +262,9 @@ def generate(args):
 
     configure(args.device)
     verify_source(args.model)
+    initial_free, initial_total = torch.cuda.mem_get_info()
+    if args.purpose == "benchmark" and initial_total - initial_free > 512 * 1024**2:
+        raise RuntimeError("Benchmark GPU is already in use")
     if (args.output / "report.json").exists():
         raise FileExistsError("Completed output already exists; use a new directory")
     images = load_images(args.images)
@@ -408,6 +411,7 @@ def generate(args):
                                    "steps": 16, "versions": versions()})
     write_json(args.output / "report.json", {
         "source": source(), "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+        "initial_gpu_free_total_bytes": [initial_free, initial_total],
         "versions": versions(), "implementation": implementation(), "gpu": torch.cuda.get_device_name(),
         "arch": torch.cuda.get_device_properties(args.device).gcnArchName,
         "precision": "exl3" if quantization else "bf16", "quantization": quantization,
@@ -474,6 +478,8 @@ def main():
             nmse.add_argument("--nmse-self", action="store_true")
             parser.add_argument("--purpose", choices=("diagnostic", "quality", "benchmark"), default="diagnostic")
     args = ap.parse_args()
+    if args.command in ("encode", "generate") and args.boxes and not args.prompt:
+        ap.error("--boxes needs --prompt and --upsampler; expanded captions must include their box table")
     if args.command == "generate":
         if args.width <= 0 or args.height <= 0 or args.width % 16 or args.height % 16:
             ap.error("width and height must be positive multiples of 16")

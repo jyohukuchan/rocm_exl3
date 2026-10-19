@@ -46,12 +46,17 @@ def run_case(args, case, *, precision="bf16", purpose="quality", capture=False, 
         if (report["source"] != read(CLI.with_name("flux3_sources.json"))["model"]
                 or report["caption"] != case["caption"]
                 or (settings["width"], settings["height"], settings["seed"]) != (case["width"], case["height"], case["seed"])
-                or report["measurement_purpose"] != expected_purpose):
+                or report["measurement_purpose"] != expected_purpose
+                or settings["encoding_cache"] != bool(nmse or args.cached)):
             raise ValueError(f"Existing report has different inputs or purpose: {completed}")
         if precision.startswith("exl3-"):
             quant = report["nmse"]["candidate_quantization"] if nmse else report["quantization"]
             if quant["bits"] != int(precision.split("-")[1][:-3]):
                 raise ValueError(f"Existing report uses another bit width: {completed}")
+            if quant != read(args.root / precision / "quantization.json"):
+                raise ValueError(f"Existing report uses another checkpoint: {completed}")
+        if purpose == "benchmark" and [r["warmup"] for r in report["measurements"]] != [True, False, False, False]:
+            raise ValueError(f"Existing benchmark does not have one warmup and three measurements: {completed}")
         print("REUSE", completed, flush=True)
         return report
     command = [sys.executable, CLI, "generate", "--model", args.model, "--output", directory,

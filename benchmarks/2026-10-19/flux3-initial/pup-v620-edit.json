@@ -1,0 +1,29 @@
+{
+  "source": {
+    "repo_id": "black-forest-labs/flux-3-image-klein-pup",
+    "revision": "3f3edb52b2c55de0d49feab28598b68f7f8e4830"
+  },
+  "request": "Change only the blue teapot to glossy green. Preserve the two oranges, wooden table, lighting and camera angle.",
+  "kernel_policy": "transformers-torch-reference-gfx10",
+  "boxes": null,
+  "seconds": 186.38132419786416,
+  "caption": "Create a photograph preserving the first image exactly as the canvas, changing only the blue ceramic teapot to a glossy green ceramic teapot. Keep its original rounded body, domed fitted lid with short knob, curved spout pointing toward frame-left, arched handle on frame-right, pale rim accents, base, proportions, and placement unchanged, but recolor every blue ceramic surface a rich glossy green with the same highlights and reflections following the existing window light. Preserve both oranges exactly as photographed, including their natural dimpled peel, small stem marks, size, position, and contact shadows: one orange remains at frame-left and the other at frame-right. Keep the warm wooden tabletop unchanged, including its visible grain, seams, scratches, and warm brown color. Retain the beige kitchen wall, the white-framed window at frame-left, the soft greenery visible outside, the window sill, and the same warm natural daylight and camera angle. Do not alter any other object, background detail, shadow, or surface; only the teapot’s blue color becomes glossy green.",
+  "images": [
+    {
+      "size": [
+        1024,
+        1024
+      ],
+      "mode": "RGB",
+      "pixel_sha256": "427143bc7c69e013fc39825933b1e8b469b5b31c8b570ffabd539808da9d8140"
+    }
+  ],
+  "versions": {
+    "torch": "2.12.0+rocm7.2",
+    "diffusers": "0.41.0.dev0",
+    "transformers": "5.17.0",
+    "accelerate": "1.15.0",
+    "huggingface-hub": "1.31.0",
+    "safetensors": "0.8.0"
+  }
+}

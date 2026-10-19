@@ -1,0 +1,20 @@
+{
+  "source": {
+    "repo_id": "black-forest-labs/flux-3-image-klein-pup",
+    "revision": "3f3edb52b2c55de0d49feab28598b68f7f8e4830"
+  },
+  "request": "A red sphere on the left, a blue cube on the right, and a small yellow pyramid between them on a pale gray studio surface.",
+  "kernel_policy": "transformers-torch-reference-gfx10",
+  "boxes": null,
+  "seconds": 112.74120659497567,
+  "caption": "Studio photograph of three geometric solids arranged in a single horizontal row on a pale gray seamless studio surface, viewed straight-on from a low, eye-level angle. On the left sits a large matte red sphere with a smooth surface and a broad highlight along its upper-left curve. In the center, between the larger objects, stands a small yellow pyramid with four triangular faces, its pointed apex rising above a compact square base. On the right sits a large blue cube with crisp edges and flat faces, its front and top planes clearly defined. The sphere, pyramid, and cube are evenly spaced across the middle of the composition, with the yellow pyramid noticeably smaller than both neighboring forms. Soft diffused studio light falls from the upper left, creating restrained highlights on the sphere and cube and short, pale shadows beneath and behind each object. The pale gray background curves upward without a visible horizon line, while the matte surface shows a few fine tonal variations near the foreground.",
+  "images": [],
+  "versions": {
+    "torch": "2.12.0+rocm7.2",
+    "diffusers": "0.41.0.dev0",
+    "transformers": "5.17.0",
+    "accelerate": "1.15.0",
+    "huggingface-hub": "1.31.0",
+    "safetensors": "0.8.0"
+  }
+}

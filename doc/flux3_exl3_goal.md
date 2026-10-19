@@ -28,5 +28,18 @@ Qwen Imageと同様に、このプロジェクトから量子化・保存・再�
 
 ## 現在の証拠
 
-実装・実測が揃った時点で結果へのリンクを追記する。
-小規模テストの成功だけではこの目標の完了とはしない。
+小規模FLUXとQwenの関連テストが成功した。
+[checkpointテスト](../benchmarks/2026-10-19/flux3-initial/checkpoint-tests.txt)、
+[16ステップ生成・NMSEテスト](../benchmarks/2026-10-19/flux3-initial/flow-tests.txt)。
+
+R9700で3件の実BF16校正生成を確認し、text-only 228層とreferenceあり258層の入力を採取した。
+[校正入力ファイルのSHA256とreport一覧](../benchmarks/2026-10-19/flux3-initial/calibration-audit.json)。
+画像では青いティーポットと2個のオレンジ、そのティーポットだけを緑へ変える編集を目視確認した。
+
+V620のPUPでFLAのBF16 dot命令がLLVMコンパイルに失敗したため、該当4関数を
+TransformersのPyTorch referenceへ切り替えた。
+[テキスト入力](../benchmarks/2026-10-19/flux3-initial/pup-v620-text.json)と
+[画像参照入力](../benchmarks/2026-10-19/flux3-initial/pup-v620-edit.json)が完走した。
+
+実モデルのEXL3変換・評価、NMSE、速度・VRAM比較とV620のEXL3生成は未完了。
+この目標は継続中で、小規模テストやBF16生成だけでは完了とはしない。
