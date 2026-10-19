@@ -6,12 +6,62 @@ distilledモデル。[固定revision](../rocm_tools/flux3_sources.json)を使用
 text encoderはQwen3-VL-4Bの8 hidden layersを結合し、80トークン単位で右paddingする。
 DiTとtext encoderはBF16、VAEはFP32。出力はRGB。
 
-**実モデルのEXL3検証は進行中。** 現在、小規模FLUXグラフの24層EXL3変換・
-保存・再読み込み・16ステップ生成・NMSE測定に加え、R9700とV620で公式モデルを
-量子化した4bit checkpointの1024px生成を確認した。
-V620では単一参照編集、公式PUPからEXL3生成までの経路も確認した。
-3・5bit、NMSEと制御した速度比較、残りの品質ケースは検証中。
-完了条件は[作業目標](flux3_exl3_goal.md)を参照。
+2026-10-19、通常のBF16モデルと同じパイプラインでEXL3推論を実装・実機確認した。
+258個のblock Linearを3・4・5bit化し、同じcheckpointをR9700とV620で読み込める。
+[完了条件と監査](flux3_exl3_goal.md)、[比較データ](../benchmarks/2026-10-19/flux3/comparison.json)、
+[32件の生report・全重みchecksum監査](../benchmarks/2026-10-19/flux3/reports/index.json)を参照。
+
+## 実測結果
+
+R9700単体、1024×1024、batch 1、16ステップ、固定composition入力。
+DiTはGPU常駐、text encoderだけをモジュール単位でCPU offload。
+warmup 1回＋計測3回の中央値で、初期ロード・PUP・PNG保存を除き、
+text encoding・denoising・FP32 VAEを含む。復元workspaceは256 MiB。
+
+| 精度 | 実効DiT bpw | safetensors GB | denoising秒 | 生成全体秒 | ピークallocated GiB | NMSE ↓ |
+|---|---:|---:|---:|---:|---:|---:|
+| BF16 | — | — | 10.028 | 11.622 | 13.744 | — |
+| EXL3 3bit | 3.6476 | 2.530 | 10.753 | 12.348 | 5.775 | 0.0065190011 |
+| EXL3 4bit | 4.5983 | 3.189 | 10.751 | 12.345 | 6.444 | 0.0016975493 |
+| EXL3 5bit | 5.5491 | 3.849 | 10.784 | 12.383 | 7.012 | 0.000467956625 |
+
+4bitのdenoising増加は約7.2%、生成全体は約6.2%。ピークallocatedは約53.1%減。
+allocatedはPyTorchの割り当て量で、GPU全体の使用量とは区別する。
+実効bpwは高精度保持層・scalesを含む。保存容量はDiTのsafetensorsのみで、
+text encoder・VAE・PUPは含まない。3・4・5bitはLinearのbit数。
+
+NMSEはtext・composition・multi_ref各1 seed、計3ケースの全target要素・全16ステップの
+総和比。BF16自己比較は **0**。bit数間で全ステップのlatent・BF16予測とconditioningの
+SHA256が一致した。通常benchmarkの各精度の計測3回は画素hashも一致した。
+
+## 画像と対応範囲
+
+R9700のBF16と4bitでは、写真1024px、HELLOの文字、3物体の構図、船体色の単一参照編集、
+2枚参照、写真2048pxの6ケースを完走・目視確認した。
+3bit・5bitはtext・composition・multi_refの3ケース、いずれも1024pxで確認した。
+全件の最終latentとVAE出力はfinite。テキストのみでは228層、画像参照ありでは258層の
+EXL3 Linearが全ステップで実行された。保持した高精度stateと校正manifestは全bitで一致した。
+
+3bitでもHELLO、星の数、球・立方体・角錐、船と白い帆と青い布は維持された。
+反射、位置、形状、布の折り目等には差がある。これは固定ケースでの初期確認であり、
+すべての入力での画質やBF16との画素一致を保証するものではない。
+[4bit目視記録](../benchmarks/2026-10-19/flux3/4bit-visual-review.json)、
+[3・5bit目視記録](../benchmarks/2026-10-19/flux3/multibit-visual-review.json)。
+
+![BF16と3・4・5bit](../benchmarks/2026-10-19/flux3/multibit.png)
+
+V620単体でも3・4・5bitの1024pxテキスト生成、4bitの単一参照編集・2枚参照、
+公式PUPからEXL3生成までを確認した。4bitの1回の動作診断は、構図125.64秒・6.40 GiB、
+単一参照315.59秒・6.41 GiB、2枚参照461.95秒・7.68 GiBのピークallocatedだった。
+これらはwarmupやGPU個体を揃えた速度比較ではない。
+V620で2048pxと3・5bitの画像参照、複数GPUの画像推論は今回の確認範囲に含めない。
+[初期実機記録](../benchmarks/2026-10-19/flux3-initial/)を参照。
+
+公式PUPはV620でテキストと参照画像、R9700で参照画像からの一連の生成を確認した。
+R9700のPUP付き編集では、展開98.64秒、展開後の画像生成41.92秒、PUPのピークallocated
+18.11 GiBだった。単発のcold診断値で、上表の速度にはPUPを含めない。
+[caption・元要求・実行記録](../benchmarks/2026-10-19/flux3/pup-r9700-full-edit.json.gz)、
+[PUP画像確認](../benchmarks/2026-10-19/flux3/pup-validation.json)。
 
 ## 環境と取得
 
@@ -19,6 +69,12 @@ ROCm版PyTorchと、このGPU向けのネイティブ拡張を先に用意する
 今回の実行環境はQwen Imageと共通で、Diffusersはcommit
 `b800f828f3951c4d206e154411bcbfa693cd322e`、Transformers 5.17.0。
 R9700は`PYTORCH_ROCM_ARCH=gfx1201`、V620は`gfx1030`を指定して拡張をビルドする。
+今回の検証では既存の拡張を再利用し、nativeコードは変更していない。
+その拡張のビルド元commitは不明のため、クリーンビルドの再現確認とは区別する。
+[環境と拡張SHA256（R9700）](../benchmarks/2026-10-19/flux3/r9700-environment.json)、
+[V620](../benchmarks/2026-10-19/flux3/v620-environment.json)、
+[R9700テスト5件](../benchmarks/2026-10-19/flux3/r9700-tests.txt)、
+[V620テスト3件](../benchmarks/2026-10-19/flux3/v620-tests.txt)。
 
 ```bash
 EXL3_BACKEND=rocm PYTORCH_ROCM_ARCH=gfx1201 MAX_JOBS=8 \
@@ -92,6 +148,8 @@ python rocm_tools/flux3_suite.py evaluate --model MODEL --root RUN \
 block外の入力投影・時刻埋め込み・modulation・出力投影・normは高精度で保持する。
 途中の変換は同一source・bit数・校正manifestでのみ再開できる。
 
+`quantization.json`、transformer config、層ごとのEXL3 safetensorsからなる
+このエンジン用のDiT checkpointを保存する。
 単独のEXL3生成は`generate`へ`--exl3 RUN/exl3-4bit`を追加する。
 重みは列方向に復元して入力と同じBF16/FP16で行列演算する。
 復元用workspaceは既定256 MiBで、dense DiT全体をGPUへ展開しない。
@@ -126,3 +184,19 @@ text encoding・参照画像のVAE encoding・denoising・VAE decodeを含む。
 速度計測は`RUN/benchmark/精度/ケース/`へ保存する。checkpoint本体の
 `RUN/exl3-4bit`等とは別のディレクトリで扱う。
 各画像と生データはケース別の`report.json`に保存する。
+
+## 今回のローカル配置
+
+大きなデータは`~/datapool/`に保存した。
+
+- BF16コンポーネント: `~/datapool/ai_models/safetensors/FLUX.3-Image-Klein`
+- 公式PUP: `~/datapool/ai_models/safetensors/FLUX.3-Image-Klein-PUP`
+- EXL3: `~/datapool/rocm-exl3-rdna2/flux3/r9700/exl3-{3,4,5}bit`
+- 全実測・元画像: `~/datapool/rocm-exl3-rdna2/flux3/`
+
+既存コンテナでは`/models/safetensors`と`/work/flux3`へ対応する。
+R9700は`PYTHONPATH=/work/qwen-image21/python:/work/lib-r9700-opt:/src`、
+V620は`/work/qwen-image21/python:/work/lib:/src`を使用した。
+前者のパス名にQwenが残っているのは、共用した固定Diffusersのローカル配置による。
+
+V620の既存LLMサーバーと検証用コンテナは停止済み。

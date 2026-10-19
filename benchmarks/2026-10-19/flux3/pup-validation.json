@@ -1,0 +1,13 @@
+{
+  "source": {
+    "repo_id": "black-forest-labs/flux-3-image-klein-pup",
+    "revision": "3f3edb52b2c55de0d49feab28598b68f7f8e4830"
+  },
+  "policy": "transformers-default",
+  "report_sha256": "4d7ec068882025b4bc88f1252b215c711a12486f0cc3db9328bc602b51e2e296",
+  "pixel_sha256": "1f0adc166dadaba36dfa8a90bbdb8b167d3535fe2386821f5ce97e6b4ba9916d",
+  "upsampling_seconds": 98.63555138092488,
+  "upsampler_peak_allocated_bytes": 19447883776,
+  "visual_review": "Hull is green; original white sail, mast, rigging and blue fabric remain recognizable, close to the BF16 reference scene.",
+  "scope": "One cold diagnostic PUP -> reference-conditioned EXL3 generation; not a speed benchmark."
+}

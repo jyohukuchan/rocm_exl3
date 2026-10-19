@@ -1,0 +1,16 @@
+START quality-bf16
+DONE quality-bf16
+START quality-4bit
+DONE quality-4bit
+START quality-35bit
+DONE quality-35bit
+START nmse-all
+DONE nmse-all
+START nmse-self
+DONE nmse-self
+START benchmark-bf16
+DONE benchmark-bf16
+START benchmark-exl3
+DONE benchmark-exl3
+START pup-r9700-full-edit
+DONE pup-r9700-full-edit

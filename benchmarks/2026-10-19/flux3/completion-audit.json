@@ -1,0 +1,64 @@
+{
+  "status": "verified",
+  "scope": "Pinned distilled FLUX.3 Image Klein, single GPU, BF16 and EXL3 DiT inference.",
+  "sources_manifest_sha256": "717c97f7b731d09061f5e0397c4d6858932ce5ec089c33c832ce858e0d0cc90b",
+  "evidence": {
+    "completed_reports": 32,
+    "completed_image_runs_in_those_reports": 44,
+    "checked_checkpoint_safetensors": 777,
+    "checkpoint_bits": [
+      3,
+      4,
+      5
+    ],
+    "same_calibration_and_retained_weights": true,
+    "same_teacher_tensors_across_bits": true,
+    "bf16_self_nmse": 0.0,
+    "official_16_step_shift_6_93_schedule": true,
+    "rgb_source_and_fp32_vae": true,
+    "r9700_4bit_quality_cases": [
+      "photo",
+      "text",
+      "composition",
+      "edit",
+      "multi_ref",
+      "photo_2048"
+    ],
+    "r9700_3bit_5bit_quality_cases": [
+      "text",
+      "composition",
+      "multi_ref"
+    ],
+    "v620_bits_text_to_image": [
+      3,
+      4,
+      5
+    ],
+    "v620_4bit_references": [
+      1,
+      2
+    ],
+    "pup_text_and_reference_paths_verified": true,
+    "pup_full_pipeline_on_both_architectures": true,
+    "r9700_tests_passed": 5,
+    "v620_tests_passed": 3
+  },
+  "post_validation": {
+    "containers": [
+      "/rocm-exl3-v620-pair exited",
+      "/rocm-exl3-v620-image21 exited",
+      "/rocm-exl3-v620-flux3 exited"
+    ],
+    "llm_service": [
+      "ActiveState=inactive",
+      "SubState=dead"
+    ]
+  },
+  "limits": [
+    "Fixed inputs, one seed per quality case; no universal quality guarantee.",
+    "V620 2048px, V620 3/5bit image references, multi-GPU image inference and CUDA not validated.",
+    "Existing native binaries reused; original build commits unknown; not a clean-build reproduction."
+  ],
+  "git_delivery": "Final results commit/push is verified after writing this audit.",
+  "final_code_revision_before_results": "e95cf76b2adce441678b10bd2f393ef0ff79f73a"
+}

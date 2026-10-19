@@ -1,0 +1,27 @@
+{
+  "gpu": "AMD Radeon AI PRO R9700",
+  "arch": "gfx1201",
+  "uuid": "61386539-6464-6566-6132-643630663535",
+  "total_memory_bytes": 34208743424,
+  "native_extension": "/work/lib-r9700-opt/exllamav3_ext.cpython-312-x86_64-linux-gnu.so",
+  "native_extension_sha256": "8120e6a1a128c8ac99f6955445802669c601194d0de2fc586d04712e4ed137db",
+  "native_extension_build_commit": "unknown; existing tested binary reused",
+  "versions": {
+    "torch": "2.12.0+rocm7.2",
+    "diffusers": "0.41.0.dev0",
+    "transformers": "5.17.0",
+    "accelerate": "1.15.0",
+    "huggingface-hub": "1.31.0",
+    "safetensors": "0.8.0"
+  },
+  "environment": {
+    "PYTHONPATH": "/work/qwen-image21/python:/work/lib-r9700-opt:/src",
+    "ROCM_PATH": "/opt/rocm/core-7.14",
+    "LD_PRELOAD": "/opt/rocm/core-7.14/lib/libhsa-runtime64.so.1",
+    "LD_LIBRARY_PATH": "/opt/rocm/core-7.14/lib:/opt/venv/lib/python3.12/site-packages/torch/lib",
+    "HSA_ENABLE_SDMA": null,
+    "OMP_NUM_THREADS": "4",
+    "MKL_NUM_THREADS": "4",
+    "ROCR_VISIBLE_DEVICES": "GPU-a8e9ddefa2d60f55"
+  }
+}

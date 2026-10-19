@@ -1,0 +1,131 @@
+{
+  "source": {
+    "repo_id": "black-forest-labs/flux-3-image-klein",
+    "revision": "337337621b8526e120f2275d250242f4a6bedd75"
+  },
+  "gpu": "AMD Radeon AI PRO R9700",
+  "arch": "gfx1201",
+  "benchmark_settings": {
+    "width": 1024,
+    "height": 1024,
+    "seed": 1703,
+    "steps": 16,
+    "vae_dtype": "float32",
+    "vae_tiling": true,
+    "text_encoder_offload": "module",
+    "vae_tile_sample_min_size": 1024,
+    "vae_tile_overlap_factor": 0.25,
+    "attention_query_chunk": 0,
+    "encoding_cache": false,
+    "workspace_mib": null
+  },
+  "benchmark": {
+    "bf16": {
+      "pipeline_seconds": 11.62201067712158,
+      "denoising_seconds": 10.0280166015625,
+      "peak_allocated_bytes": 14758024704,
+      "peak_reserved_bytes": 16810770432,
+      "pixel_hashes": [
+        "295e0937abea0ccdd79f9d11fa68cd0d7eab199de15d099a0f97ae436a23f2d1"
+      ],
+      "repeated_image_hashes_equal": true,
+      "pipeline_relative_to_bf16": 1.0,
+      "denoising_relative_to_bf16": 1.0
+    },
+    "exl3-3bit": {
+      "pipeline_seconds": 12.348276412812993,
+      "denoising_seconds": 10.7534970703125,
+      "peak_allocated_bytes": 6200503808,
+      "peak_reserved_bytes": 8497659904,
+      "pixel_hashes": [
+        "31ba0b14ae6347c0a563c4cc5bb7c8540fd6ce4cf7e821f636ef2406a798dff2"
+      ],
+      "repeated_image_hashes_equal": true,
+      "pipeline_relative_to_bf16": 1.0624905410834888,
+      "denoising_relative_to_bf16": 1.0723453597630623
+    },
+    "exl3-4bit": {
+      "pipeline_seconds": 12.345409876201302,
+      "denoising_seconds": 10.7509853515625,
+      "peak_allocated_bytes": 6919695872,
+      "peak_reserved_bytes": 9055502336,
+      "pixel_hashes": [
+        "f1ce332f0eb308cd60e1524e0b2635ef901f10d9d6d842306026c5466325f33e"
+      ],
+      "repeated_image_hashes_equal": true,
+      "pipeline_relative_to_bf16": 1.0622438938645757,
+      "denoising_relative_to_bf16": 1.0720948896202815
+    },
+    "exl3-5bit": {
+      "pipeline_seconds": 12.383370911004022,
+      "denoising_seconds": 10.7838662109375,
+      "peak_allocated_bytes": 7529180672,
+      "peak_reserved_bytes": 9779019776,
+      "pixel_hashes": [
+        "14753870fe607cf12ef7a91c5b68834617e8e1ffb91c1bdbc0988e0287a263eb"
+      ],
+      "repeated_image_hashes_equal": true,
+      "pipeline_relative_to_bf16": 1.0655101991414628,
+      "denoising_relative_to_bf16": 1.0753737891954853
+    }
+  },
+  "nmse": {
+    "exl3-3bit": {
+      "nmse": 0.006519001098241348,
+      "squared_error_sum": 225372.65865020474,
+      "reference_squared_sum": 34571655.26648005,
+      "cases": {
+        "text": 0.005760760674549982,
+        "composition": 0.0051555370009721945,
+        "multi_ref": 0.008580676656547062
+      }
+    },
+    "exl3-4bit": {
+      "nmse": 0.0016975492963023382,
+      "squared_error_sum": 58687.08906962023,
+      "reference_squared_sum": 34571655.26648005,
+      "cases": {
+        "text": 0.001456610609855461,
+        "composition": 0.0013799851086696232,
+        "multi_ref": 0.002235887388252373
+      }
+    },
+    "exl3-5bit": {
+      "nmse": 0.00046795662468317623,
+      "squared_error_sum": 16178.035108212358,
+      "reference_squared_sum": 34571655.26648005,
+      "cases": {
+        "text": 0.00040283643573068065,
+        "composition": 0.0003947359945352809,
+        "multi_ref": 0.0006007285664014425
+      }
+    }
+  },
+  "nmse_cases": [
+    "text",
+    "composition",
+    "multi_ref"
+  ],
+  "bf16_self_nmse": 0.0,
+  "teacher_latents_predictions_and_conditioning_identical_across_bits": true,
+  "models": {
+    "exl3-3bit": {
+      "bits": 3,
+      "effective_bits_per_source_element": 3.6475741421766803,
+      "quantized_state_bytes": 1983289344,
+      "unquantized_state_bytes": 546614272
+    },
+    "exl3-4bit": {
+      "bits": 4,
+      "effective_bits_per_source_element": 4.598319899675836,
+      "quantized_state_bytes": 2642712576,
+      "unquantized_state_bytes": 546614272
+    },
+    "exl3-5bit": {
+      "bits": 5,
+      "effective_bits_per_source_element": 5.549065657174992,
+      "quantized_state_bytes": 3302135808,
+      "unquantized_state_bytes": 546614272
+    }
+  }
+}

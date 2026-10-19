@@ -5,7 +5,8 @@
 AMD GPUs. Work here covers V620 tensor-parallel inference, MTP, RAM-offloaded
 Engram, Qwen3.8 architecture support, quantization, quality/latency evaluation,
 native JEV text/vision decisions on V620 and R9700, and Qwen-Image-2.1 / Turbo
-EXL3 image generation on R9700.
+and FLUX.3 Image Klein EXL3 image generation. Tested GPU and input coverage is
+listed per model below.
 
 This standalone project derives from
 [ExLlamaV3](https://github.com/turboderp-org/exllamav3) by turboderp and
@@ -46,6 +47,7 @@ AMD/CUDA behavior has not all been revalidated by this project.
 | JEV-27B-VL EXL3 decisions + text/vision generation | 1× V620; 1× R9700 | **Validated** — 4bit trunk, 6bit generation/MTP weights, BF16 vision, FP32 decision LoRA and exact-source decision rows. Both GPUs match the BF16 reference on all 12 screened decisions; calibrated decision, TypeSafe and adaptive-thinking HTTP routes exercised | [doc/jev.md](doc/jev.md) |
 | Qwen-Image-2.1 / Turbo EXL3 4bit DiT | 1× R9700 | **Validated on six fixed cases per model** — 2048px generation, editing, RGBA, two references; DiT storage 26.5% of BF16, 1024px denoising 1.11–1.12× BF16. Lossy details/layout; BF16 text encoder and VAE retained | [Results and CLI](doc/qwen_image_21_exl3.md) |
 | Qwen-Image-2.1 / Turbo EXL3 3bit and 5bit DiT | 1× R9700 | **Measured** — both models converted; matched BF16-trajectory NMSE and image checks on three fixed 1024px cases per model/bit width. 3bit can lose reference details; see observations | [Bit-width comparison](doc/qwen_image_21_exl3.md) |
+| FLUX.3 Image Klein EXL3 3bit / 4bit / 5bit DiT | 1× R9700; 1× V620 | **Validated on fixed cases** — 16-step flow map, text-to-image, editing and two references; R9700 BF16/4bit also tested at 2048px. Matched NMSE for all three bit widths; 1024px generation 1.06–1.07× BF16, allocated VRAM 5.78–7.01 GiB vs 13.74 GiB. Official PUP supported, with a Torch fallback on V620 | [Results, scope and CLI](doc/flux3_exl3.md) |
 | RDNA3 / RDNA3.5 (`gfx1100`…`gfx1151`) | — | **Inherited from the parent fork's gfx1151 validation; not independently rerun on this branch** after the TP / Qwen3.8 / kernel changes below. The parent's claims stand as the parent's, not ours | [doc/fork_changes.md](doc/fork_changes.md) |
 | CUDA path | NVIDIA | Upstream native kernels retained; shared Python changes are not tested on NVIDIA here | — |
 

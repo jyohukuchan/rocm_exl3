@@ -26,34 +26,25 @@ Qwen Imageと同様に、このプロジェクトから量子化・保存・再�
   関連テストが通る。実モデル検証と小規模テストを区別する。
 - 実行手順、対応範囲、実測値、制約を文書化し、commit・pushする。
 
-## 現在の証拠
+## 完了監査（2026-10-19）
 
-小規模FLUXとQwenの関連テストが成功した。
-[checkpointテスト](../benchmarks/2026-10-19/flux3-initial/checkpoint-tests.txt)、
-[16ステップ生成・NMSEテスト](../benchmarks/2026-10-19/flux3-initial/flow-tests.txt)。
+指定したdistilled checkpointのEXL3対応と実機検証を完了した。
+実行方法・測定条件・数値は[結果とCLI](flux3_exl3.md)に記載した。
 
-R9700で3件の実BF16校正生成を確認し、text-only 228層とreferenceあり258層の入力を採取した。
-[校正入力ファイルのSHA256とreport一覧](../benchmarks/2026-10-19/flux3-initial/calibration-audit.json)。
-画像では青いティーポットと2個のオレンジ、そのティーポットだけを緑へ変える編集を目視確認した。
+| 完了条件 | 確認した証拠 |
+|---|---|
+| source・環境固定 | [モデル・PUP・Diffusers pins](../rocm_tools/flux3_sources.json)、[R9700環境とnative SHA](../benchmarks/2026-10-19/flux3/r9700-environment.json)、[V620環境](../benchmarks/2026-10-19/flux3/v620-environment.json) |
+| 校正・3/4/5bit変換 | 各258層、同一校正manifestと同一の高精度保持state。777個のsafetensorsをchecksum検査した。[全モデル・report監査](../benchmarks/2026-10-19/flux3/reports/index.json)、[校正入力hash](../benchmarks/2026-10-19/flux3-initial/calibration-audit.json) |
+| 実ファイルの別プロセス読み込み | 精度ごとの生成・NMSE・benchmarkを独立したCLIプロセスで実行。全層checksumと構成を読み込み時に検証し、期待するEXL3実行回数を確認した。生reportは上記indexの各archiveに保存 |
+| 公式のsampling recipe | 全44画像実行で16ステップ、shift 6.93の現在時刻とtarget時刻列を確認。8 hidden layers・80単位paddingのtext encoder、FP32 VAEを共用 |
+| PUPと展開済みcaption | V620の[テキストPUP](../benchmarks/2026-10-19/flux3-initial/pup-v620-text.json)、[参照画像PUP](../benchmarks/2026-10-19/flux3-initial/pup-v620-edit.json)、[PUPから生成まで](../benchmarks/2026-10-19/flux3-initial/v620-4bit-pup-full.json.gz)。R9700の[公式PUP経由の編集](../benchmarks/2026-10-19/flux3/pup-validation.json)も完走・目視確認。固定captionの経路は全比較に使用 |
+| R9700品質確認 | BF16と4bitを各6ケース（2048px含む）、3bitと5bitを各3ケースの1024pxで確認。[4bitの目視記録](../benchmarks/2026-10-19/flux3/4bit-visual-review.json)、[3・5bitの目視記録](../benchmarks/2026-10-19/flux3/multibit-visual-review.json) |
+| NMSE | 3bit 0.006519001098、4bit 0.001697549296、5bit 0.000467956625。各bitで3ケース、全target要素・全ステップの総和比。teacherのlatent・予測・conditioning hashが一致し、BF16自己比較は0。[比較JSON](../benchmarks/2026-10-19/flux3/comparison.json) |
+| 速度・VRAM | 同条件でwarmup 1＋計測3の中央値。BF16と3/4/5bit、計4reportを照合し、全精度で計測中の画像hashが一致。[比較表](../benchmarks/2026-10-19/flux3/comparison.md) |
+| V620 | 3/4/5bitの生成、4bitの単一参照・2枚参照を実行。PUPの未対応FLA BF16命令をTorch referenceへ切替。query分割でAttention一時領域を抑えた。[初期実機記録](../benchmarks/2026-10-19/flux3-initial/) |
+| 小規模・回帰テスト | [R9700 5件](../benchmarks/2026-10-19/flux3/r9700-tests.txt)、[V620 3件](../benchmarks/2026-10-19/flux3/v620-tests.txt)が成功。Fluxの条件分岐校正・変換・再読み込み・16ステップ生成・NMSE、query分割の比較、既存Qwenのcheckpointとcaptureを含む |
+| リソースと公開範囲 | V620のLLMサービスと検証用コンテナは停止済み。コード・結果・手順をcommit/pushし、モデル重みの新規Hub公開は行っていない |
 
-V620のPUPでFLAのBF16 dot命令がLLVMコンパイルに失敗したため、該当4関数を
-TransformersのPyTorch referenceへ切り替えた。
-[テキスト入力](../benchmarks/2026-10-19/flux3-initial/pup-v620-text.json)と
-[画像参照入力](../benchmarks/2026-10-19/flux3-initial/pup-v620-edit.json)が完走した。
-
-4bitの258層変換・別プロセスでの読み込み・R9700での1024px生成も成功した。
-[4bit初期確認](../benchmarks/2026-10-19/flux3-initial/4bit-smoke.json)。
-V620の4bitではテキスト生成、船体を緑へ変更する単一参照編集、
-短い要求からPUPを経由する生成までを確認した。
-[V620初期確認](../benchmarks/2026-10-19/flux3-initial/v620-4bit-initial.json)。
-query分割Attentionは[通常経路との出力比較テスト](../benchmarks/2026-10-19/flux3-initial/attention-tests.txt)が成功した。
-
-3・4・5bitの実モデル変換が揃い、保持した高精度stateのSHA256と校正manifestが一致した。
-[モデルサイズ](../benchmarks/2026-10-19/flux3-initial/model-sizes.json)。
-V620では[3bit生成](../benchmarks/2026-10-19/flux3-initial/v620-3bit-composition.json.gz)、
-[5bit生成](../benchmarks/2026-10-19/flux3-initial/v620-5bit-composition.json.gz)、
-[4bitの2枚参照](../benchmarks/2026-10-19/flux3-initial/v620-multi-ref-4bit.json.gz)も完走した。
-[小規模FLUXのV620テスト](../benchmarks/2026-10-19/flux3-initial/flux-v620-tests.txt)は3件成功した。
-
-R9700の全品質ケース、NMSE、速度・VRAM比較と最終レビューは未完了。
-この目標は継続中で、小規模テストやBF16生成だけでは完了とはしない。
+これは固定ケースによる機能・精度確認であり、全入力の画質保証ではない。
+V620の2048px、3/5bitの参照画像、複数GPUの画像推論、CUDAは今回の実機確認に含めない。
+既存のnative拡張を再利用したため、クリーンビルドの再現確認とも区別する。

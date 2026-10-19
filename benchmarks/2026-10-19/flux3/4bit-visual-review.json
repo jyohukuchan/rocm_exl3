@@ -1,0 +1,32 @@
+{
+  "photo": {
+    "bf16_pixel_sha256": "c0e1da30d398f22109c9e6a748d9baf832e2e39fb5451aa18a6e3fdc710ecf15",
+    "exl3_pixel_sha256": "352eae832265f594e79438b08b660d1540ba01cad19cd6a5d480cf89905d33fb",
+    "review": "Red hull, white sail, mast and blue fabric retained; small changes in cloth folds and reflections."
+  },
+  "text": {
+    "bf16_pixel_sha256": "8f9aa92a1c31b7d11ced97d4e9bdd652d21b620fd7e9e0d296da37c9036a6b05",
+    "exl3_pixel_sha256": "b077c91887bd8fec4e2c30530539c8b71c368f43e2061cec118a1e4b1b9e175e",
+    "review": "HELLO remains correctly legible with three yellow stars above and three below."
+  },
+  "composition": {
+    "bf16_pixel_sha256": "295e0937abea0ccdd79f9d11fa68cd0d7eab199de15d099a0f97ae436a23f2d1",
+    "exl3_pixel_sha256": "f1ce332f0eb308cd60e1524e0b2635ef901f10d9d6d842306026c5466325f33e",
+    "review": "Red sphere left, blue cube right, yellow pyramid between them; small shape, position and highlight changes."
+  },
+  "edit": {
+    "bf16_pixel_sha256": "57af51b3e0089fe7381d7cf0515bcf6c3be0a4bb6ad9d1f81541247388ab8a44",
+    "exl3_pixel_sha256": "1a297e836ab9960e58a878074b5205514dbe0d2c6ade174b04ebd563f14bbc7b",
+    "review": "Green hull while preserving white sail and blue fabric, close to the BF16 edit."
+  },
+  "multi_ref": {
+    "bf16_pixel_sha256": "acc35824ae60f9fed2b4164012ec3f3355044219f9e48e12dc09cbe5e3cc39bf",
+    "exl3_pixel_sha256": "000e9f329e2b9118186f061da80aa31c607f6e23b76aeed1f95edc9f09208b9f",
+    "review": "Boat, red sphere, blue cube and yellow pyramid remain recognizable on blue fabric; object scale and cloth details differ slightly."
+  },
+  "photo_2048": {
+    "bf16_pixel_sha256": "a8202166af8a91664e1e318e21727fdb731ba1fdeec0db1d313f86d6fe12299b",
+    "exl3_pixel_sha256": "6bb8308ac94021326f53af123438fef334e25e295895c220110a85f67f090037",
+    "review": "Complete red boat and white sail with a blue fabric scene; small texture and reflection differences, no new severe structural defect observed."
+  }
+}

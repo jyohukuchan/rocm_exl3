@@ -1,0 +1,32 @@
+{
+  "3bit/text": {
+    "pixel_sha256": "36ba0603c761d4c67734c7c6e43708b86ddfdcc2bbf75a30fb63a6299b48d841",
+    "bf16_pixel_sha256": "8f9aa92a1c31b7d11ced97d4e9bdd652d21b620fd7e9e0d296da37c9036a6b05",
+    "review": "HELLO legible, six stars retained; minor text spacing, paper texture and star position differences."
+  },
+  "3bit/composition": {
+    "pixel_sha256": "31ba0b14ae6347c0a563c4cc5bb7c8540fd6ce4cf7e821f636ef2406a798dff2",
+    "bf16_pixel_sha256": "295e0937abea0ccdd79f9d11fa68cd0d7eab199de15d099a0f97ae436a23f2d1",
+    "review": "All three colored objects and left/right arrangement retained; small changes in shape, reflections and positions."
+  },
+  "3bit/multi_ref": {
+    "pixel_sha256": "8676f34c6f437968ce848b64ddd4dab3706d78c95508fa9c02076b347fe6155c",
+    "bf16_pixel_sha256": "acc35824ae60f9fed2b4164012ec3f3355044219f9e48e12dc09cbe5e3cc39bf",
+    "review": "Red boat with white sail, sphere, cube and pyramid retained on blue cloth; cloth folds, object scale and small geometry differ from BF16."
+  },
+  "5bit/text": {
+    "pixel_sha256": "c62a2aff44d16f128af83fd41e8489f9064754d90f6316944ffab50a493c5193",
+    "bf16_pixel_sha256": "8f9aa92a1c31b7d11ced97d4e9bdd652d21b620fd7e9e0d296da37c9036a6b05",
+    "review": "HELLO legible, six stars retained; minor text spacing, paper texture and star position differences."
+  },
+  "5bit/composition": {
+    "pixel_sha256": "14753870fe607cf12ef7a91c5b68834617e8e1ffb91c1bdbc0988e0287a263eb",
+    "bf16_pixel_sha256": "295e0937abea0ccdd79f9d11fa68cd0d7eab199de15d099a0f97ae436a23f2d1",
+    "review": "All three colored objects and left/right arrangement retained; small changes in shape, reflections and positions."
+  },
+  "5bit/multi_ref": {
+    "pixel_sha256": "0940405fd336d998796991a8cf8ceb9a560e7cef0d879a9de623666a58a36025",
+    "bf16_pixel_sha256": "acc35824ae60f9fed2b4164012ec3f3355044219f9e48e12dc09cbe5e3cc39bf",
+    "review": "Red boat with white sail, sphere, cube and pyramid retained on blue cloth; cloth folds, object scale and small geometry differ from BF16."
+  }
+}
