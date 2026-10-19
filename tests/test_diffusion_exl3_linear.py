@@ -10,12 +10,13 @@ from exllamav3.diffusion import EXL3DiffusionLinear
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires EXL3 GPU extension")
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("bits", [3, 4, 5])
 @torch.inference_mode()
-def test_sliced_linear_roundtrip_and_dtype(dtype):
+def test_sliced_linear_roundtrip_and_dtype(dtype, bits):
     from exllamav3.ext import exllamav3_ext as ext
 
     torch.manual_seed(123)
-    k, n, bits = 256, 384, 4
+    k, n = 256, 384
     t = torch.randint(0, 65536, (k // 16, n // 16, 16 * bits), device="cuda", dtype=torch.int32).short()
     su = (torch.rand(k, device="cuda") + 0.5).half()
     sv = (torch.rand(n, device="cuda") + 0.5).half()

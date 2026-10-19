@@ -1,0 +1,18 @@
+{
+  "base-5bit": {
+    "pixel_sha256": "82e68babd545695a9010d85d422d655a76167c01f7411b8b33062d95952aa3aa",
+    "review": "Red sphere left, blue cube right, yellow pyramid between them; composition preserved relative to the R9700 5bit image. Small surface/edge differences and visible tile seams. No new severe structural defect observed. Pixel hashes differ; not a numerical equivalence claim."
+  },
+  "turbo-5bit": {
+    "pixel_sha256": "3c305202734e47e1284462b03ab868e4ef66ee9aed44fe9921d9924fa1bbb491",
+    "review": "Red sphere left, blue cube right, yellow pyramid between them; composition preserved relative to the R9700 5bit image. Small surface/edge differences and visible tile seams. No new severe structural defect observed. Pixel hashes differ; not a numerical equivalence claim."
+  },
+  "turbo-3bit": {
+    "pixel_sha256": "34dd21002a5e5c613ccdbfaa554301523e5803994a5a9eebd789bb1367f6094e",
+    "review": "Red sphere left, blue cube right, yellow pyramid between them, closely matching the R9700 3bit composition. Small surface differences and visible tile seams; no new severe structural defect observed. Not a pixel-equivalence claim."
+  },
+  "turbo-4bit-multi-ref": {
+    "pixel_sha256": "05b63630aa3b6455d21a7d50e0e8f0b537c7c0ecb245f84dcc5799892efae858",
+    "review": "White-sailed red toy boat in the foreground, red sphere at left, blue cube at right; close to the R9700 4bit output. Gray background differs from the blue fabric in BF16, as already observed on R9700. Small surface and tile-seam differences; no new severe structural defect observed."
+  }
+}
