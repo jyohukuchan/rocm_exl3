@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "model": {
+    "repo_id": "black-forest-labs/flux-3-image-klein",
+    "revision": "337337621b8526e120f2275d250242f4a6bedd75"
+  },
+  "upsampler": {
+    "repo_id": "black-forest-labs/flux-3-image-klein-pup",
+    "revision": "3f3edb52b2c55de0d49feab28598b68f7f8e4830"
+  },
+  "diffusers": {
+    "repository": "https://github.com/huggingface/diffusers.git",
+    "revision": "b800f828f3951c4d206e154411bcbfa693cd322e"
+  },
+  "sampling": {"steps": 16, "shift": 6.93, "guidance": null},
+  "text_encoder": {"layers": [4, 8, 12, 16, 20, 24, 28, 32], "pad_multiple": 80, "max_tokens": 8192}
+}

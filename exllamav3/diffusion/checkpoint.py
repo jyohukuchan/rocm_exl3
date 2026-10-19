@@ -9,6 +9,7 @@ from safetensors.torch import load_file, save_file
 
 from .linear import EXL3DiffusionLinear
 from .quantize import quantize_linear
+from .architectures import block_linears, transformer_class, transformer_name
 
 
 def _json(path, data):
@@ -39,20 +40,23 @@ def convert_transformer(model_path, destination, calibration_dirs, *, bits=4, de
     Individual layer files can be resumed only with identical source/calibration
     identity. Calibration from another checkpoint is rejected.
     """
-    from diffusers import QwenImage21Transformer2DModel
-
     model_path, destination = Path(model_path), Path(destination)
+    config = json.loads((model_path / "transformer/config.json").read_text())
+    family = transformer_name(config)
     source = json.loads((model_path / "exl3_source.json").read_text())
     calibration_dirs = [Path(p) for p in calibration_dirs]
     captures = [json.loads((p / "calibration.json").read_text()) for p in calibration_dirs]
     if not captures or any(c["provenance"]["source"] != source for c in captures):
         raise ValueError("Calibration must use this exact source model revision")
-    names = sorted(captures[0]["layers"])
-    if not names or any(sorted(c["layers"]) != names for c in captures):
+    names = sorted(set().union(*(c["layers"] for c in captures)))
+    if not names or (family == "QwenImage21Transformer2DModel" and
+                     any(sorted(c["layers"]) != names for c in captures)):
         raise ValueError("Calibration layer inventories disagree or are empty")
     identity = {"schema_version": 1, "source": source, "bits": bits,
                 "calibration": [_hash(p / "calibration.json") for p in calibration_dirs],
                 "transformer_config_sha256": _hash(model_path / "transformer/config.json")}
+    if family != "QwenImage21Transformer2DModel":
+        identity["transformer_type"] = family
     destination.mkdir(parents=True, exist_ok=True)
     job_path = destination / "conversion_job.json"
     if job_path.exists() and json.loads(job_path.read_text()) != identity:
@@ -60,12 +64,10 @@ def convert_transformer(model_path, destination, calibration_dirs, *, bits=4, de
     if (destination / "quantization.json").exists():
         raise FileExistsError("A completed checkpoint already exists")
     _json(job_path, identity)
-    model = QwenImage21Transformer2DModel.from_pretrained(
+    model = transformer_class(config).from_pretrained(
         model_path / "transformer", torch_dtype=torch.bfloat16, local_files_only=True,
     ).eval()
-    expected_targets = sorted(name for name, layer in model.named_modules()
-                              if name.startswith("transformer_blocks.") and isinstance(layer, torch.nn.Linear)
-                              and layer.in_features % 128 == 0 and layer.out_features % 128 == 0)
+    expected_targets = sorted(block_linears(model))
     if names != expected_targets:
         raise ValueError("Calibration does not cover all eligible block Linear layers")
     source_numel = sum(t.numel() for t in model.state_dict().values())
@@ -73,7 +75,7 @@ def convert_transformer(model_path, destination, calibration_dirs, *, bits=4, de
     records = {}
     for index, name in enumerate(names):
         layer = model.get_submodule(name)
-        if not isinstance(layer, torch.nn.Linear) or not name.startswith("transformer_blocks."):
+        if not isinstance(layer, torch.nn.Linear) or name not in expected_targets:
             raise ValueError(f"Unexpected calibration target {name}")
         stem = hashlib.sha256(name.encode()).hexdigest()
         tensor_path, record_path = destination / (stem + ".safetensors"), destination / (stem + ".json")
@@ -86,6 +88,8 @@ def convert_transformer(model_path, destination, calibration_dirs, *, bits=4, de
         else:
             samples = []
             for directory, capture in zip(calibration_dirs, captures):
+                if name not in capture["layers"]:
+                    continue
                 entry = capture["layers"][name]
                 if (entry["in_features"], entry["out_features"]) != (layer.in_features, layer.out_features):
                     raise ValueError(f"Calibration shape mismatch: {name}")
@@ -118,18 +122,19 @@ def convert_transformer(model_path, destination, calibration_dirs, *, bits=4, de
 def load_transformer(directory, *, device="cuda:0", workspace_bytes=256 * 1024**2):
     """Load EXL3 buffers directly without allocating original dense block weights."""
     from accelerate import init_empty_weights
-    from diffusers import QwenImage21Transformer2DModel
-
     directory = Path(directory)
     manifest = json.loads((directory / "quantization.json").read_text())
     if manifest.get("schema_version") != 1 or not manifest.get("complete"):
         raise ValueError("Unsupported or incomplete EXL3 diffusion checkpoint")
     # Keep small derived/nonpersistent buffers real (timestep and rotary
     # frequencies are not in the checkpoint); only parameters are meta.
+    config = json.loads((directory / "transformer_config.json").read_text())
+    if manifest.get("transformer_type", "QwenImage21Transformer2DModel") != transformer_name(config):
+        raise ValueError("Checkpoint transformer family differs from configuration")
     with init_empty_weights(include_buffers=False):
-        model = QwenImage21Transformer2DModel.from_config(
-            json.loads((directory / "transformer_config.json").read_text())
-        )
+        model = transformer_class(config).from_config(config)
+    if sorted(manifest["layers"]) != sorted(block_linears(model)):
+        raise ValueError("Checkpoint does not cover all eligible block Linear layers")
     for name, record in manifest["layers"].items():
         original = model.get_submodule(name)
         if not isinstance(original, torch.nn.Linear) or (original.in_features, original.out_features) != (record["in_features"], record["out_features"]):
