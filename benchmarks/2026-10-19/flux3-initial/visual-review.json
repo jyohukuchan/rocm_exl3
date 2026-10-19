@@ -1,0 +1,29 @@
+{
+  "scope": "Initial visual checks; final matched quantization review pending",
+  "bf16": {
+    "photo": {
+      "pixel_sha256": "c0e1da30d398f22109c9e6a748d9baf832e2e39fb5451aa18a6e3fdc710ecf15",
+      "review": "Complete red wooden boat with white sail on blue fabric; coherent mast, sail and cloth details."
+    },
+    "text": {
+      "pixel_sha256": "8f9aa92a1c31b7d11ced97d4e9bdd652d21b620fd7e9e0d296da37c9036a6b05",
+      "review": "HELLO is correctly legible; six yellow stars, three above and three below."
+    },
+    "composition": {
+      "pixel_sha256": "295e0937abea0ccdd79f9d11fa68cd0d7eab199de15d099a0f97ae436a23f2d1",
+      "review": "Red sphere left, blue cube right and smaller yellow pyramid between them; all three fully visible."
+    },
+    "edit": {
+      "pixel_sha256": "57af51b3e0089fe7381d7cf0515bcf6c3be0a4bb6ad9d1f81541247388ab8a44",
+      "review": "Hull becomes green while white sail, boat geometry and blue fabric are preserved."
+    },
+    "multi_ref": {
+      "pixel_sha256": "acc35824ae60f9fed2b4164012ec3f3355044219f9e48e12dc09cbe5e3cc39bf",
+      "review": "Red boat and white sail, red sphere, blue cube and yellow pyramid share the blue cloth scene."
+    }
+  },
+  "v620_4bit_multi_ref": {
+    "pixel_sha256": "f591eebb257e2fbc5b5b8ab0d68f830f770c2f4d156b62b812dc7797330edc96",
+    "review": "All four subjects recognizable: red boat and white sail left, red sphere behind, blue cube right, yellow pyramid in front, blue cloth retained. No severe structural defect observed."
+  }
+}
