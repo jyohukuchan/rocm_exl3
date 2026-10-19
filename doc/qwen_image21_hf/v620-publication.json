@@ -1,0 +1,32 @@
+{
+  "date": "2026-10-19",
+  "validation_engine_commit": "dba5ab3",
+  "weights_changed": false,
+  "release_tags_moved": false,
+  "repositories": {
+    "base": {
+      "repo_id": "jyohukuchan/Qwen-Image-2.1-EXL3",
+      "revision": "576141b203fc002c5d33598ce0b61aed3a0dfba2",
+      "previous_revision": "e8fedff7514b1ca107c140860ab70aad441a3275",
+      "exl3_v1_unchanged_revision": "e8fedff7514b1ca107c140860ab70aad441a3275",
+      "updated_files": [
+        "README.md",
+        "V620_VALIDATION.json",
+        "FILE_MANIFEST.json"
+      ],
+      "anonymous_readback_verified": true
+    },
+    "turbo": {
+      "repo_id": "jyohukuchan/Qwen-Image-2.1-Turbo-EXL3",
+      "revision": "aca0d4e48284bf5741975a0c7b575d74eec3fdc4",
+      "previous_revision": "f362145b8e8ebc88d6639c445eb9f31beab7c0b4",
+      "exl3_v1_unchanged_revision": "f362145b8e8ebc88d6639c445eb9f31beab7c0b4",
+      "updated_files": [
+        "README.md",
+        "V620_VALIDATION.json",
+        "FILE_MANIFEST.json"
+      ],
+      "anonymous_readback_verified": true
+    }
+  }
+}

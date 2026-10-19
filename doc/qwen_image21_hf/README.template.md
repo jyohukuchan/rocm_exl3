@@ -46,8 +46,21 @@ with its Qwen Image CLI. These are **custom EXL3 diffusion checkpoints**, not a
 standard Diffusers `from_pretrained()` folder, GGUF, NF4, or Nunchaku checkpoint.
 The repository is not configured for Hugging Face hosted inference.
 
-Validated hardware: **one Radeon AI PRO R9700 32GB (gfx1201)**. CUDA, V620,
-other GPUs, and multi-GPU image inference were not validated for this release.
+Validated hardware: **one Radeon AI PRO R9700 32GB (gfx1201)**, plus subsequent
+**single Radeon PRO V620 32GB (gfx1030)** compatibility checks on 2026-10-19.
+V620 checks covered base 5bit text-to-image, Turbo 3bit/5bit text-to-image, and
+Turbo 4bit generation with two reference images, all at 1024x1024 with fresh
+text encoding and the official 40/8-step schedules. All 224 EXL3 layers ran on
+every step; final latents and VAE outputs were finite. The published weights
+were reused without requantization or inference code changes.
+
+See [V620 validation data](https://github.com/jyohukuchan/rocm_exl3_forme/blob/main/benchmarks/2026-10-19/qwen-image21-v620/results.json) and the
+[engine V620 guide](https://github.com/jyohukuchan/rocm_exl3_forme/blob/main/doc/qwen_image21_v620.md)
+for scope, environment, and single-run diagnostic timings. The NMSE and speed
+benchmark tables below remain **R9700 measurements**, not V620 results.
+V620 base 3bit/4bit full pipelines, 2048px, CUDA, other GPUs, and multi-GPU
+image inference have not been validated here. The original `exl3-v1` release
+tag is unchanged; this note was added to the repository's main branch.
 
 ## Inference
 
@@ -65,6 +78,7 @@ cd rocm_exl3_forme
 git checkout @ENGINE_REV@
 
 # Install a compatible ROCm torch first; point ROCM_PATH at your installed SDK.
+# Use gfx1030 for V620, or gfx1201 for R9700.
 EXL3_BACKEND=rocm PYTORCH_ROCM_ARCH=gfx1201 MAX_JOBS=8 \
   python -m pip install --no-build-isolation '.[diffusion]'
 python -m pip install 'huggingface-hub==1.31.0' 'safetensors==0.8.0'

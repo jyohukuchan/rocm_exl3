@@ -6,7 +6,12 @@
 - [Qwen-Image-2.1-Turbo-EXL3](https://huggingface.co/jyohukuchan/Qwen-Image-2.1-Turbo-EXL3)
 
 名称は量子化元と形式を表す。GPUの検証範囲はモデルカード内の環境説明に記載する。
-公開リポジトリのcommit、タグ、検証済みファイル数は [publication.json](publication.json) に記録している。
+初回公開のcommit、`exl3-v1`タグ、検証済みファイル数は [publication.json](publication.json) に記録している。
+
+公開後に[V620単体での動作を確認](../qwen_image21_v620.md)し、両リポジトリのmainへ
+対応範囲と`gfx1030`のビルド指定を追記した。`V620_VALIDATION.json`を追加し、
+`FILE_MANIFEST.json`のREADME・検証記録のチェックサムも更新している。
+重みと`exl3-v1`タグは変更していない。[更新commitと認証なしの読み戻し検証](v620-publication.json)を参照。
 
 ## ライセンスとパッケージ
 
