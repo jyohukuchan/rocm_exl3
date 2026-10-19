@@ -1,0 +1,39 @@
+{
+  "python": "3.12.3",
+  "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
+  "gpu": "AMD Radeon AI PRO R9700",
+  "arch": "gfx1201",
+  "total_vram_bytes": 34208743424,
+  "visible_gpu_count": 1,
+  "torch_hip": "7.2.53211",
+  "cpu_threads": 4,
+  "versions": {
+    "torch": "2.12.0+rocm7.2",
+    "diffusers": "0.41.0.dev0",
+    "transformers": "5.17.0",
+    "accelerate": "1.15.0",
+    "huggingface-hub": "1.31.0",
+    "safetensors": "0.8.0"
+  },
+  "native_extension": {
+    "path": "/work/lib-r9700-opt/exllamav3_ext.cpython-312-x86_64-linux-gnu.so",
+    "sha256": "8120e6a1a128c8ac99f6955445802669c601194d0de2fc586d04712e4ed137db"
+  },
+  "environment": {
+    "PYTORCH_ALLOC_CONF": null,
+    "PYTORCH_CUDA_ALLOC_CONF": null,
+    "HSA_OVERRIDE_GFX_VERSION": null,
+    "HIP_VISIBLE_DEVICES": null,
+    "ROCR_VISIBLE_DEVICES": "GPU-a8e9ddefa2d60f55",
+    "OMP_NUM_THREADS": "4",
+    "MKL_NUM_THREADS": "4",
+    "MIOPEN_FIND_MODE": null,
+    "EXL3_EXPANDABLE_SEGMENTS": "0"
+  },
+  "post_benchmark_free_total_vram_bytes": [
+    34135343104,
+    34208743424
+  ],
+  "container_image": "rocm-exl3-phase2-env:tested",
+  "container_image_id": "sha256:cb979a9dbf69fa98fc19a303826a3c118b6f27cc144d0a1181185a05363628dc"
+}

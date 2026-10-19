@@ -11,6 +11,8 @@ DiTとtext encoderはBF16、VAEはFP32。出力はRGB。
 [完了条件と監査](flux3_exl3_goal.md)、[比較データ](../benchmarks/2026-10-19/flux3/comparison.json)、
 [32件の生report・全重みchecksum監査](../benchmarks/2026-10-19/flux3/reports/index.json)を参照。
 
+ComfyUI BF16との同条件の速度比較は[R9700推論エンジン比較](image_engine_benchmark.md)を参照。
+
 ## 実測結果
 
 R9700単体、1024×1024、batch 1、16ステップ、固定composition入力。

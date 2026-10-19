@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "caption_origin": "Full scene captions authored by an LLM (Codex); supplied through --caption, not raw short requests. The official PUP path is verified separately.",
+  "reference_policy": "Evaluation references always come from the source BF16 generation, shared across bit widths and candidates.",
+  "calibration": [
+    {
+      "id": "calibration-01", "seed": 42, "width": 1024, "height": 1024,
+      "caption": "Studio still-life photograph of a blue glazed ceramic teapot and two ripe oranges on a wooden kitchen table, framed at table height. The round teapot sits left of center with its curved spout pointing left and its loop handle on the right; one orange rests beside the spout and the other near the handle. Warm morning window light enters from the left, revealing the wood grain, tiny pores in the orange peel and soft reflections on the blue glaze. The background is a softly lit cream kitchen wall, and all three objects fit fully inside the square frame."
+    },
+    {
+      "id": "calibration-02", "seed": 123, "width": 1024, "height": 1024,
+      "caption": "Watercolor travel poster on textured ivory paper, with a quiet mountain village beside a blue lake in the lower half and pale green mountains rising behind it. Small red-roofed houses cluster on the left shore, their reflections interrupted by gentle ripples. A large clear heading reading exactly \"SPRING\" spans the top in dark green uppercase lettering, with no other words. Soft washes of pink blossom frame the lower corners, the sky is pale yellow, and the layout balances the heading with the village scene."
+    },
+    {
+      "id": "calibration-03", "seed": 456, "width": 1024, "height": 1024,
+      "reference_cases": ["calibration-01"],
+      "caption": "Studio still-life photograph preserving the reference scene and camera angle: a glossy green ceramic teapot and two ripe oranges on a wooden kitchen table. The same round teapot remains left of center with its spout pointing left and its loop handle on the right, but its blue glaze is now saturated emerald green. The oranges retain their positions beside the spout and handle. Morning light from the left creates the same soft shadows and small glaze reflections, and the cream kitchen wall and wood grain stay unchanged. The entire teapot and both oranges remain within the square frame."
+    }
+  ],
+  "evaluation": [
+    {
+      "id": "photo", "seed": 1701, "width": 1024, "height": 1024,
+      "caption": "Studio photograph of a small red wooden toy sailboat resting on loosely folded blue cotton fabric. The entire boat fits inside the square frame, with the curved red hull centered near the bottom, a slender wooden mast rising above it and a single white triangular cloth sail stretched on its right side. Fine wood grain, seams in the sail and a thin rope from mast to bow are visible. A soft light from the upper left casts a gentle shadow into the folds of blue fabric, with a plain blue backdrop and no additional objects or text."
+    },
+    {
+      "id": "text", "seed": 1702, "width": 1024, "height": 1024,
+      "caption": "Minimalist flat graphic poster printed on warm cream paper. The single word \"HELLO\" appears in very large, clean dark navy blue capital letters across the center, with ample spacing and crisp readable edges. Six small five-pointed yellow stars surround the word, three above and three below, without touching the letters. The composition is centered within the square canvas, the background is unpatterned, and there is no other text, border, logo or decoration."
+    },
+    {
+      "id": "composition", "seed": 1703, "width": 1024, "height": 1024,
+      "caption": "Clean studio rendering of three solid geometric objects arranged on a pale gray tabletop against a light gray background. A glossy red sphere stands on the left, a blue cube stands on the right, and a smaller yellow square-based pyramid sits between them near the foreground. Each object is fully visible and separated from the others, with the sphere and cube at similar apparent heights and the pyramid slightly lower. Soft lighting from the upper left creates smooth color gradients and short shadows on the tabletop. There are exactly three objects and no text or extra props."
+    },
+    {
+      "id": "edit", "seed": 1704, "width": 1024, "height": 1024,
+      "reference_cases": ["photo"],
+      "caption": "Studio photograph of the toy sailboat from the reference, with only its red wooden hull recolored glossy green. Preserve the same curved hull shape, wooden mast, single white triangular cloth sail, thin rope and camera angle. The complete boat remains centered on the same folded blue cotton fabric under soft upper-left lighting. Keep the fabric folds, backdrop, sail texture and cast shadow as in the reference, with no new objects or writing."
+    },
+    {
+      "id": "multi_ref", "seed": 1706, "width": 1024, "height": 1024,
+      "reference_cases": ["photo", "composition"],
+      "caption": "Studio photograph combining the red wooden toy sailboat from the first reference with the geometric objects from the second reference. The complete red-hulled boat and its wooden mast and white triangular sail stand at the left of a blue fabric-covered surface. A glossy red sphere sits to the boat's right, a blue cube is farther right, and a small yellow pyramid rests in front between the sphere and cube. Preserve the boat's distinctive curved hull and white sail and the original object colors. All four subjects fit inside the square frame under soft upper-left lighting, with visible blue cloth folds and no added text."
+    },
+    {
+      "id": "photo_2048", "seed": 1707, "width": 2048, "height": 2048,
+      "caption": "Studio photograph of a small red wooden toy sailboat resting on loosely folded blue cotton fabric. The entire boat fits inside the square frame, with the curved red hull centered near the bottom, a slender wooden mast rising above it and a single white triangular cloth sail stretched on its right side. Fine wood grain, seams in the sail and a thin rope from mast to bow are visible. A soft light from the upper left casts a gentle shadow into the folds of blue fabric, with a plain blue backdrop and no additional objects or text."
+    }
+  ]
+}

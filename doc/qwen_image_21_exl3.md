@@ -6,6 +6,8 @@
 1024×1024生成を確認した**。V620での検証範囲・実行方法・診断時間は
 [V620検証記録](qwen_image21_v620.md)を参照。以下の速度・NMSEはR9700での測定値。
 
+ComfyUI BF16との同条件の速度比較は[R9700推論エンジン比較](image_engine_benchmark.md)を参照。
+
 ## 実機結果
 
 各モデルの224個のblock Linearを4bit化し、block外の投影・modulation・norm等を高精度で保持した。DiT safetensorsはそれぞれ **3,766,566,208 bytes（約3.77 GB、BF16の26.5%）**。スケール・高精度保持層込みの実効精度は **4.235 bit/weight**。text encoderとVAEはBF16のままで、この保存容量には含まない。

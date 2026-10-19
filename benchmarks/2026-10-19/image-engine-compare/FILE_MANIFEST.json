@@ -1,0 +1,125 @@
+{
+  "files": [
+    {
+      "path": "benchmark_comfy_image-23a085ec2884db5b3ed7b0251005a91f2502f6cefbe5b3c0e3b99e4be9a54df6.py.gz",
+      "bytes": 5353,
+      "sha256": "46680b9c075a896dbc2ae0bc7100779ab1055ee38f16f3b7cdd1bdb42a84239f"
+    },
+    {
+      "path": "comfy-failed-default-vae-oom.log.gz",
+      "bytes": 2058,
+      "sha256": "fc824f1ecd964527cf62222f7916b6855e7cd2f5d31e61e72cd8cb758df97666"
+    },
+    {
+      "path": "comparison.json",
+      "bytes": 27374,
+      "sha256": "db3622040a25c2414e9283fc6f70ddef2dd91580bc3c6b46dbd431b400db9ebf"
+    },
+    {
+      "path": "comparison.md",
+      "bytes": 625,
+      "sha256": "a7b8e9bf735667cb4cdab26477ad80c6f5a0815ce8577c949cbc2bae3b9da2bd"
+    },
+    {
+      "path": "comparison.png",
+      "bytes": 758754,
+      "sha256": "d718f186eedd5a521e9b6aa8d5f6361b182485146a6bdffa9c72dc806a9119c7"
+    },
+    {
+      "path": "continuation-final.log.gz",
+      "bytes": 1017,
+      "sha256": "1fdb925c6622d8a73ee4438865138b9bb81c51df97a703f780118caebaa4b6f6"
+    },
+    {
+      "path": "dependency-versions.json",
+      "bytes": 288,
+      "sha256": "d32f88ca7cb2210b96a4a0e7a928304b70b4ec4662f5e32ea170a4a7e28baa4a"
+    },
+    {
+      "path": "environment.json",
+      "bytes": 1218,
+      "sha256": "f05dfbc4cf9f697bca0d85351cb013d0343a9598a5f4878a2c595b9d04313106"
+    },
+    {
+      "path": "flux3-cases.json",
+      "bytes": 6272,
+      "sha256": "6cd829c4a0ec2774a900d4c1733fc256a528e394a197be09c3214e2747c5f274"
+    },
+    {
+      "path": "flux3-sources.json",
+      "bytes": 609,
+      "sha256": "717c97f7b731d09061f5e0397c4d6858932ce5ec089c33c832ce858e0d0cc90b"
+    },
+    {
+      "path": "qwen-cases.json",
+      "bytes": 3490,
+      "sha256": "891ec150d816f4d5f80a60899489aafac37bc2ff6f257be39afbb6cc99cbee5f"
+    },
+    {
+      "path": "qwen-sources.json",
+      "bytes": 650,
+      "sha256": "a0c1ac0f6968eb748fd1bd891f49699626bbd0a1c8601aec238e8a2213ebddec"
+    },
+    {
+      "path": "reports/flux3__comfy__bf16.json.gz",
+      "bytes": 2958,
+      "sha256": "e790d8d716c27e2176d6a45a202524198550ef2cd0683b2de56e6aae58af2f5e"
+    },
+    {
+      "path": "reports/flux3__comfy__resident-diagnosis.json.gz",
+      "bytes": 1623,
+      "sha256": "2e688c62b7fc07a406ff9e6e9ba6e542847386e79e18cd72d31ec67b1fd703bb"
+    },
+    {
+      "path": "reports/flux3__rocm__bf16.json.gz",
+      "bytes": 4211,
+      "sha256": "14cffebc9fafe602985e23428550d5336585c68b036b101723178d30aaa67743"
+    },
+    {
+      "path": "reports/flux3__rocm__exl3-4bit.json.gz",
+      "bytes": 31773,
+      "sha256": "02f2f867e90a8e663ab39a052df981ee16cac23e7c40087f5726b672345e80c8"
+    },
+    {
+      "path": "reports/qwen-base__comfy__bf16.json.gz",
+      "bytes": 3829,
+      "sha256": "29fbc9adc2145586ac3f7e73cb7c97af045cbe194833c4434f28104129724df0"
+    },
+    {
+      "path": "reports/qwen-base__rocm__bf16.json.gz",
+      "bytes": 4589,
+      "sha256": "c2a3d0f32cad20120df7a207e562789d54b514a6c3b5ff6cc26073d3dc7ab7f1"
+    },
+    {
+      "path": "reports/qwen-base__rocm__exl3-4bit.json.gz",
+      "bytes": 28482,
+      "sha256": "d673eb9700444cd8009f8a038d4124e38fa5e60958496c6d3fcdaa1d7621774b"
+    },
+    {
+      "path": "reports/qwen-turbo__comfy__bf16.json.gz",
+      "bytes": 2270,
+      "sha256": "e1b381c72c5171de38e678d737a368e03c430d4da8cc5972039b9b60eebabc9b"
+    },
+    {
+      "path": "reports/qwen-turbo__rocm__bf16.json.gz",
+      "bytes": 3448,
+      "sha256": "ee12a5308088ae2eeb08e5bcd78118549e1a8818435635014cb6637cf78b82f7"
+    },
+    {
+      "path": "reports/qwen-turbo__rocm__exl3-4bit.json.gz",
+      "bytes": 27346,
+      "sha256": "4188c09a3e41599adeec0c45baf582677fea613d694d1a95bd5677ed258529a3"
+    },
+    {
+      "path": "rocm-jobs.log.gz",
+      "bytes": 398,
+      "sha256": "ac9e02089a1e1cb39064b5b20010dc9c91898b52afabca8dce162c3618f1d292"
+    },
+    {
+      "path": "validation.json",
+      "bytes": 1788,
+      "sha256": "dfad99f190c525a8e16c00ee6db883dc6b1021b41e87492d3d709fce30edd438"
+    }
+  ],
+  "manifest_excludes_itself": true
+}

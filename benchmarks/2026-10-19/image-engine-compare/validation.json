@@ -1,0 +1,37 @@
+{
+  "main_conditions": 9,
+  "main_generated_images": 36,
+  "all_sources_and_settings_verified": true,
+  "all_main_images_finite": true,
+  "all_main_png_pixel_hashes_verified": true,
+  "all_main_repeated_measured_pixel_hashes_equal": true,
+  "resident_flux3_diagnosis": {
+    "scope": "Additional resident-DiT diagnosis, separate from full-pipeline benchmark.",
+    "denoising_seconds": 8.08836572265625,
+    "denoising_samples_seconds": [
+      8.0575537109375,
+      8.08836572265625,
+      8.8963935546875
+    ],
+    "conditioning_file_sha256": "f0cfa6d87fb6dff316778d5fc9e78f54d12759399e5eee642e65dc19275f8ba9",
+    "repeated_measured_latent_hashes_equal": true,
+    "note": "Fully resident BF16 DiT, shared cached BF16 conditioning, no encoder/VAE. Separate from full-pipeline results."
+  },
+  "visual_review": {
+    "case": "composition / seed 1703 / 1024 square",
+    "result": "All nine displayed conditions preserve the red sphere, blue cube and yellow pyramid. Reflections, outlines, colors and fine background seams differ; no blank or structurally broken image observed. This is not a perceptual score."
+  },
+  "baseline_engine_revision": "2ccb5be",
+  "comfy_revision": "8f04fd6ecf4a548937971e840af2a985529fab76",
+  "notes": [
+    "Comfy Qwen measured runner is archived by its SHA; the later changes only handle scalar and training-only counter validation before Flux inference. Native Comfy inference code was unchanged.",
+    "Failed untiled/default VAE attempts are excluded from timings and retained as diagnostic evidence."
+  ],
+  "accepted_report_source_hashes_verified": true,
+  "v620_service_state": {
+    "rocm-exl3-api.service": "inactive/dead",
+    "rocm-exl3-v620-pair": "exited",
+    "rocm-exl3-v620-image21": "exited",
+    "rocm-exl3-v620-flux3": "exited"
+  }
+}

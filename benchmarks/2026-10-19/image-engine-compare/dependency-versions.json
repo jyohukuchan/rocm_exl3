@@ -1,0 +1,14 @@
+{
+  "torchsde": "0.2.6",
+  "blake3": "1.0.11",
+  "trampoline": "0.1.2",
+  "sentencepiece": "0.2.2",
+  "comfy-aimdo": "0.5.6",
+  "scipy": "1.18.1",
+  "comfy-kitchen": "0.2.39",
+  "spandrel": "0.4.2",
+  "kornia": "0.8.3",
+  "simpleeval": "1.0.8",
+  "kornia_rs": "0.2.0",
+  "av": "19.0.1"
+}

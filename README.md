@@ -8,6 +8,10 @@ native JEV text/vision decisions on V620 and R9700, and Qwen-Image-2.1 / Turbo
 and FLUX.3 Image Klein EXL3 image generation. Tested GPU and input coverage is
 listed per model below.
 
+[R9700 image-engine comparison](doc/image_engine_benchmark.md) measures native
+ComfyUI BF16 against this project's Diffusers BF16 and EXL3 4bit paths, with
+separate full-pipeline and denoising latency for Qwen-Image-2.1 / Turbo and FLUX.3.
+
 This standalone project derives from
 [ExLlamaV3](https://github.com/turboderp-org/exllamav3) by turboderp and
 [CarouselAether's ROCm port](https://github.com/CarouselAether/rocm_exl3).

@@ -1,0 +1,645 @@
+{
+  "device": "single Radeon AI PRO R9700",
+  "width": 1024,
+  "height": 1024,
+  "batch": 1,
+  "warmup": 1,
+  "measured_repeats": 3,
+  "statistic": "median",
+  "rows": [
+    {
+      "family": "qwen-base",
+      "engine": "ComfyUI",
+      "precision": "bf16",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+      },
+      "steps": 40,
+      "report_sha256": "92484b5605b0dce81008fd593b4b6cda4bd5f88a53f0d8de6e2b4a7799e0076d",
+      "images": [
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/qwen-base/bf16/run-0.png",
+          "file_sha256": "f319c185517072a2ad00ff412b2ad1effc493b1fd0849de00ca5271c0a93ad6d",
+          "pixel_sha256": "ffd6238ad8ddb036f9fb7f8e724446b0aefa3e2430ee179d4e30e7e465a84658"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/qwen-base/bf16/run-1.png",
+          "file_sha256": "f319c185517072a2ad00ff412b2ad1effc493b1fd0849de00ca5271c0a93ad6d",
+          "pixel_sha256": "ffd6238ad8ddb036f9fb7f8e724446b0aefa3e2430ee179d4e30e7e465a84658"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/qwen-base/bf16/run-2.png",
+          "file_sha256": "f319c185517072a2ad00ff412b2ad1effc493b1fd0849de00ca5271c0a93ad6d",
+          "pixel_sha256": "ffd6238ad8ddb036f9fb7f8e724446b0aefa3e2430ee179d4e30e7e465a84658"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/qwen-base/bf16/run-3.png",
+          "file_sha256": "f319c185517072a2ad00ff412b2ad1effc493b1fd0849de00ca5271c0a93ad6d",
+          "pixel_sha256": "ffd6238ad8ddb036f9fb7f8e724446b0aefa3e2430ee179d4e30e7e465a84658"
+        }
+      ],
+      "pipeline_seconds": 50.37272269418463,
+      "pipeline_samples_seconds": [
+        50.37201718217693,
+        50.37272269418463,
+        50.880644720979035
+      ],
+      "pipeline_range_seconds": [
+        50.37201718217693,
+        50.880644720979035
+      ],
+      "denoising_seconds": 31.635109375,
+      "denoising_samples_seconds": [
+        31.635109375,
+        31.632388671875,
+        31.63537890625
+      ],
+      "denoising_range_seconds": [
+        31.632388671875,
+        31.63537890625
+      ],
+      "transformer_seconds_sum": 31.611113708496095,
+      "peak_allocated_gib": 30.25678539276123,
+      "repeated_measured_pixel_hashes_equal": true,
+      "initialization_seconds_including_adapter_validation": 45.61834324290976,
+      "engine_revision": "8f04fd6ecf4a548937971e840af2a985529fab76",
+      "conditioning_shape": [
+        1,
+        40,
+        4096
+      ],
+      "parts_seconds": {
+        "encoding_seconds": 0.4011738491244614,
+        "sampler_seconds_including_transfers": 31.97397194406949,
+        "vae_and_postprocess_seconds": 17.985846180003136
+      },
+      "weight_conversion": {
+        "tensor_count": 297,
+        "elements": 7115124736,
+        "official_converter_roundtrip_equal_all_tensors": true,
+        "qwen_fused_swiglu": true,
+        "flux_fused_qkv": false,
+        "vae_tensor_values_multiset_equal_at_runtime_dtype": true,
+        "vae_verified_tensor_count": 238
+      },
+      "pipeline_relative_to_comfy_bf16": 1.0,
+      "denoising_relative_to_comfy_bf16": 1.0,
+      "pipeline_relative_to_rocm_bf16": 1.4071846958586467,
+      "denoising_relative_to_rocm_bf16": 0.9472330766897812
+    },
+    {
+      "family": "qwen-base",
+      "engine": "rocm_exl3",
+      "precision": "bf16",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+      },
+      "steps": 40,
+      "report_sha256": "1989c34c113e3dcc238e8b70feee838b9bd21e45fb367f9f7c24bc38d413b02e",
+      "images": [
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-base/bf16/run-0.png",
+          "file_sha256": "4946f473b12a70f9ec8368c80c491d2b515e994f03af84b93a97eab5899594b8",
+          "pixel_sha256": "4d6fc5a131d76b36eb80870797e9961d1c2e12aa1d2ecd77f0537b45afac8de0"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-base/bf16/run-1.png",
+          "file_sha256": "4946f473b12a70f9ec8368c80c491d2b515e994f03af84b93a97eab5899594b8",
+          "pixel_sha256": "4d6fc5a131d76b36eb80870797e9961d1c2e12aa1d2ecd77f0537b45afac8de0"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-base/bf16/run-2.png",
+          "file_sha256": "4946f473b12a70f9ec8368c80c491d2b515e994f03af84b93a97eab5899594b8",
+          "pixel_sha256": "4d6fc5a131d76b36eb80870797e9961d1c2e12aa1d2ecd77f0537b45afac8de0"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-base/bf16/run-3.png",
+          "file_sha256": "4946f473b12a70f9ec8368c80c491d2b515e994f03af84b93a97eab5899594b8",
+          "pixel_sha256": "4d6fc5a131d76b36eb80870797e9961d1c2e12aa1d2ecd77f0537b45afac8de0"
+        }
+      ],
+      "pipeline_seconds": 35.79680964583531,
+      "pipeline_samples_seconds": [
+        35.88898848509416,
+        35.77709221793339,
+        35.79680964583531
+      ],
+      "pipeline_range_seconds": [
+        35.77709221793339,
+        35.88898848509416
+      ],
+      "denoising_seconds": 33.39738671875,
+      "denoising_samples_seconds": [
+        33.488171875,
+        33.38108203125,
+        33.39738671875
+      ],
+      "denoising_range_seconds": [
+        33.38108203125,
+        33.488171875
+      ],
+      "transformer_seconds_sum": 33.39401165771484,
+      "peak_allocated_gib": 15.16217851638794,
+      "repeated_measured_pixel_hashes_equal": true,
+      "initialization_seconds_including_adapter_validation": 50.308758069062606,
+      "pipeline_relative_to_comfy_bf16": 0.7106387689853408,
+      "denoising_relative_to_comfy_bf16": 1.0557063774574036,
+      "pipeline_relative_to_rocm_bf16": 1.0,
+      "denoising_relative_to_rocm_bf16": 1.0
+    },
+    {
+      "family": "qwen-base",
+      "engine": "rocm_exl3",
+      "precision": "exl3-4bit",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1",
+        "revision": "d26bb61231c349cf6b7896fa83353113880e1ba3"
+      },
+      "steps": 40,
+      "report_sha256": "b5bff2599ab26685a279b221aab264bd30b50e604c316048efbe9b4b0df235ca",
+      "images": [
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-base/exl3-4bit/run-0.png",
+          "file_sha256": "b5b62bf4cf0e74491c49c3c2c3fe751337475b09990e24ca0c4f7d7358e714ff",
+          "pixel_sha256": "2cabf21110e76b1838e949f10bc691f9ba11bd6ce64112d38d08de28152ccc79"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-base/exl3-4bit/run-1.png",
+          "file_sha256": "b5b62bf4cf0e74491c49c3c2c3fe751337475b09990e24ca0c4f7d7358e714ff",
+          "pixel_sha256": "2cabf21110e76b1838e949f10bc691f9ba11bd6ce64112d38d08de28152ccc79"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-base/exl3-4bit/run-2.png",
+          "file_sha256": "b5b62bf4cf0e74491c49c3c2c3fe751337475b09990e24ca0c4f7d7358e714ff",
+          "pixel_sha256": "2cabf21110e76b1838e949f10bc691f9ba11bd6ce64112d38d08de28152ccc79"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-base/exl3-4bit/run-3.png",
+          "file_sha256": "b5b62bf4cf0e74491c49c3c2c3fe751337475b09990e24ca0c4f7d7358e714ff",
+          "pixel_sha256": "2cabf21110e76b1838e949f10bc691f9ba11bd6ce64112d38d08de28152ccc79"
+        }
+      ],
+      "pipeline_seconds": 39.625854881014675,
+      "pipeline_samples_seconds": [
+        39.625854881014675,
+        39.726532644825056,
+        39.46321658999659
+      ],
+      "pipeline_range_seconds": [
+        39.46321658999659,
+        39.726532644825056
+      ],
+      "denoising_seconds": 37.015984375,
+      "denoising_samples_seconds": [
+        37.166,
+        36.98546875,
+        37.015984375
+      ],
+      "denoising_range_seconds": [
+        36.98546875,
+        37.166
+      ],
+      "transformer_seconds_sum": 37.01268060302734,
+      "peak_allocated_gib": 5.416767597198486,
+      "repeated_measured_pixel_hashes_equal": true,
+      "initialization_seconds_including_adapter_validation": 18.69971471792087,
+      "pipeline_relative_to_comfy_bf16": 0.7866530288939365,
+      "denoising_relative_to_comfy_bf16": 1.1700918728054817,
+      "pipeline_relative_to_rocm_bf16": 1.1069661032103972,
+      "denoising_relative_to_rocm_bf16": 1.1083497246872447
+    },
+    {
+      "family": "qwen-turbo",
+      "engine": "ComfyUI",
+      "precision": "bf16",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1-Turbo",
+        "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+      },
+      "steps": 8,
+      "report_sha256": "a97d0ee7e2ffb470b1ff5ed184a7de19cfe8b128f801d978cc136b2c940463b4",
+      "images": [
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/qwen-turbo/bf16/run-0.png",
+          "file_sha256": "be3c22b41fc87e725fb196900f79eee437e29102c9bd1ec582ef1c1ed727d75d",
+          "pixel_sha256": "aab21f0d2dbe00f8819a42825a57c6cfe8dd1dea52702c6f4501797ca658d4b3"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/qwen-turbo/bf16/run-1.png",
+          "file_sha256": "be3c22b41fc87e725fb196900f79eee437e29102c9bd1ec582ef1c1ed727d75d",
+          "pixel_sha256": "aab21f0d2dbe00f8819a42825a57c6cfe8dd1dea52702c6f4501797ca658d4b3"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/qwen-turbo/bf16/run-2.png",
+          "file_sha256": "be3c22b41fc87e725fb196900f79eee437e29102c9bd1ec582ef1c1ed727d75d",
+          "pixel_sha256": "aab21f0d2dbe00f8819a42825a57c6cfe8dd1dea52702c6f4501797ca658d4b3"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/qwen-turbo/bf16/run-3.png",
+          "file_sha256": "be3c22b41fc87e725fb196900f79eee437e29102c9bd1ec582ef1c1ed727d75d",
+          "pixel_sha256": "aab21f0d2dbe00f8819a42825a57c6cfe8dd1dea52702c6f4501797ca658d4b3"
+        }
+      ],
+      "pipeline_seconds": 25.0619051810354,
+      "pipeline_samples_seconds": [
+        24.98271361598745,
+        25.115647034952417,
+        25.0619051810354
+      ],
+      "pipeline_range_seconds": [
+        24.98271361598745,
+        25.115647034952417
+      ],
+      "denoising_seconds": 6.35737109375,
+      "denoising_samples_seconds": [
+        6.33531787109375,
+        6.7156748046875,
+        6.35737109375
+      ],
+      "denoising_range_seconds": [
+        6.33531787109375,
+        6.7156748046875
+      ],
+      "transformer_seconds_sum": 6.3530599365234375,
+      "peak_allocated_gib": 30.256770133972168,
+      "repeated_measured_pixel_hashes_equal": true,
+      "initialization_seconds_including_adapter_validation": 79.19186420692131,
+      "engine_revision": "8f04fd6ecf4a548937971e840af2a985529fab76",
+      "conditioning_shape": [
+        1,
+        40,
+        4096
+      ],
+      "parts_seconds": {
+        "encoding_seconds": 0.397068046964705,
+        "sampler_seconds_including_transfers": 6.683249035151675,
+        "vae_and_postprocess_seconds": 17.846076370915398
+      },
+      "weight_conversion": {
+        "tensor_count": 297,
+        "elements": 7115124736,
+        "official_converter_roundtrip_equal_all_tensors": true,
+        "qwen_fused_swiglu": true,
+        "flux_fused_qkv": false,
+        "vae_tensor_values_multiset_equal_at_runtime_dtype": true,
+        "vae_verified_tensor_count": 238
+      },
+      "pipeline_relative_to_comfy_bf16": 1.0,
+      "denoising_relative_to_comfy_bf16": 1.0,
+      "pipeline_relative_to_rocm_bf16": 2.7372423763726648,
+      "denoising_relative_to_rocm_bf16": 0.9488014072105256
+    },
+    {
+      "family": "qwen-turbo",
+      "engine": "rocm_exl3",
+      "precision": "bf16",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1-Turbo",
+        "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+      },
+      "steps": 8,
+      "report_sha256": "d59901df71e5d23f1605e67185598781792ed982aaa0db54405a4aa7a0df9c66",
+      "images": [
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-turbo/bf16/run-0.png",
+          "file_sha256": "fe3184896b6beeab2fe36cf64e3a96b776a11e199e0426c00e77355d420dfa57",
+          "pixel_sha256": "72ee701b560035d58ac634c475193eb5ac27b7f8c88da7971c17d6ef3461317b"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-turbo/bf16/run-1.png",
+          "file_sha256": "fe3184896b6beeab2fe36cf64e3a96b776a11e199e0426c00e77355d420dfa57",
+          "pixel_sha256": "72ee701b560035d58ac634c475193eb5ac27b7f8c88da7971c17d6ef3461317b"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-turbo/bf16/run-2.png",
+          "file_sha256": "fe3184896b6beeab2fe36cf64e3a96b776a11e199e0426c00e77355d420dfa57",
+          "pixel_sha256": "72ee701b560035d58ac634c475193eb5ac27b7f8c88da7971c17d6ef3461317b"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-turbo/bf16/run-3.png",
+          "file_sha256": "fe3184896b6beeab2fe36cf64e3a96b776a11e199e0426c00e77355d420dfa57",
+          "pixel_sha256": "72ee701b560035d58ac634c475193eb5ac27b7f8c88da7971c17d6ef3461317b"
+        }
+      ],
+      "pipeline_seconds": 9.15589550905861,
+      "pipeline_samples_seconds": [
+        9.19581823493354,
+        9.049690450076014,
+        9.15589550905861
+      ],
+      "pipeline_range_seconds": [
+        9.049690450076014,
+        9.19581823493354
+      ],
+      "denoising_seconds": 6.70042333984375,
+      "denoising_samples_seconds": [
+        6.7558447265625,
+        6.64367626953125,
+        6.70042333984375
+      ],
+      "denoising_range_seconds": [
+        6.64367626953125,
+        6.7558447265625
+      ],
+      "transformer_seconds_sum": 6.699765686035156,
+      "peak_allocated_gib": 15.16217851638794,
+      "repeated_measured_pixel_hashes_equal": true,
+      "initialization_seconds_including_adapter_validation": 44.239904939895496,
+      "pipeline_relative_to_comfy_bf16": 0.3653311846374301,
+      "denoising_relative_to_comfy_bf16": 1.0539613373255823,
+      "pipeline_relative_to_rocm_bf16": 1.0,
+      "denoising_relative_to_rocm_bf16": 1.0
+    },
+    {
+      "family": "qwen-turbo",
+      "engine": "rocm_exl3",
+      "precision": "exl3-4bit",
+      "source": {
+        "repo_id": "Qwen/Qwen-Image-2.1-Turbo",
+        "revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b"
+      },
+      "steps": 8,
+      "report_sha256": "516714d22130cc13a101af70085781fdf199918b4db43ed9dfc56d0b84e452fe",
+      "images": [
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-turbo/exl3-4bit/run-0.png",
+          "file_sha256": "8c8345ff1a176fd5ee87c7dde7f3584816544b76f3c16022316f25bf2aad3d9d",
+          "pixel_sha256": "61560e61b641502a573ed679b40551dad6af9656238abb503122aef215e20ae9"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-turbo/exl3-4bit/run-1.png",
+          "file_sha256": "8c8345ff1a176fd5ee87c7dde7f3584816544b76f3c16022316f25bf2aad3d9d",
+          "pixel_sha256": "61560e61b641502a573ed679b40551dad6af9656238abb503122aef215e20ae9"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-turbo/exl3-4bit/run-2.png",
+          "file_sha256": "8c8345ff1a176fd5ee87c7dde7f3584816544b76f3c16022316f25bf2aad3d9d",
+          "pixel_sha256": "61560e61b641502a573ed679b40551dad6af9656238abb503122aef215e20ae9"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/qwen-turbo/exl3-4bit/run-3.png",
+          "file_sha256": "8c8345ff1a176fd5ee87c7dde7f3584816544b76f3c16022316f25bf2aad3d9d",
+          "pixel_sha256": "61560e61b641502a573ed679b40551dad6af9656238abb503122aef215e20ae9"
+        }
+      ],
+      "pipeline_seconds": 9.83526582014747,
+      "pipeline_samples_seconds": [
+        10.086363619891927,
+        9.794271625811234,
+        9.83526582014747
+      ],
+      "pipeline_range_seconds": [
+        9.794271625811234,
+        10.086363619891927
+      ],
+      "denoising_seconds": 7.382322265625,
+      "denoising_samples_seconds": [
+        7.3380849609375,
+        7.382322265625,
+        7.39176025390625
+      ],
+      "denoising_range_seconds": [
+        7.3380849609375,
+        7.39176025390625
+      ],
+      "transformer_seconds_sum": 7.381678039550781,
+      "peak_allocated_gib": 5.416767597198486,
+      "repeated_measured_pixel_hashes_equal": true,
+      "initialization_seconds_including_adapter_validation": 17.29725377401337,
+      "pipeline_relative_to_comfy_bf16": 0.392438872827191,
+      "denoising_relative_to_comfy_bf16": 1.1612224859553408,
+      "pipeline_relative_to_rocm_bf16": 1.0742003128385103,
+      "denoising_relative_to_rocm_bf16": 1.1017695287589322
+    },
+    {
+      "family": "flux3",
+      "engine": "ComfyUI",
+      "precision": "bf16",
+      "source": {
+        "repo_id": "black-forest-labs/flux-3-image-klein",
+        "revision": "337337621b8526e120f2275d250242f4a6bedd75"
+      },
+      "steps": 16,
+      "report_sha256": "b0e49c8fa0091f100ce2228e11bed666ce600ea32b8c7708976c9d3815a7420a",
+      "images": [
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/flux3/bf16/run-0.png",
+          "file_sha256": "d0da14e73a05bad42827d6dfbda25f8105de50ac16699f9355a7c312e8333f9c",
+          "pixel_sha256": "9a80b87ff145a821b1c245073afcc31b80a61902991f8a9df29489ddcedddae5"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/flux3/bf16/run-1.png",
+          "file_sha256": "d0da14e73a05bad42827d6dfbda25f8105de50ac16699f9355a7c312e8333f9c",
+          "pixel_sha256": "9a80b87ff145a821b1c245073afcc31b80a61902991f8a9df29489ddcedddae5"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/flux3/bf16/run-2.png",
+          "file_sha256": "d0da14e73a05bad42827d6dfbda25f8105de50ac16699f9355a7c312e8333f9c",
+          "pixel_sha256": "9a80b87ff145a821b1c245073afcc31b80a61902991f8a9df29489ddcedddae5"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/comfy/flux3/bf16/run-3.png",
+          "file_sha256": "d0da14e73a05bad42827d6dfbda25f8105de50ac16699f9355a7c312e8333f9c",
+          "pixel_sha256": "9a80b87ff145a821b1c245073afcc31b80a61902991f8a9df29489ddcedddae5"
+        }
+      ],
+      "pipeline_seconds": 20.763000895036384,
+      "pipeline_samples_seconds": [
+        20.763000895036384,
+        19.259237302001566,
+        21.59793987008743
+      ],
+      "pipeline_range_seconds": [
+        19.259237302001566,
+        21.59793987008743
+      ],
+      "denoising_seconds": 8.1431572265625,
+      "denoising_samples_seconds": [
+        8.0595146484375,
+        8.1431572265625,
+        11.2599150390625
+      ],
+      "denoising_range_seconds": [
+        8.0595146484375,
+        11.2599150390625
+      ],
+      "transformer_seconds_sum": 8.119673126220704,
+      "peak_allocated_gib": 19.38584613800049,
+      "repeated_measured_pixel_hashes_equal": true,
+      "initialization_seconds_including_adapter_validation": 10.91703031794168,
+      "engine_revision": "8f04fd6ecf4a548937971e840af2a985529fab76",
+      "conditioning_shape": [
+        1,
+        160,
+        20480
+      ],
+      "parts_seconds": {
+        "encoding_seconds": 2.164211962139234,
+        "sampler_seconds_including_transfers": 8.722259891917929,
+        "vae_and_postprocess_seconds": 8.37278894893825
+      },
+      "weight_conversion": {
+        "tensor_count": 359,
+        "elements": 5548681984,
+        "official_converter_roundtrip_equal_all_tensors": true,
+        "qwen_fused_swiglu": false,
+        "flux_fused_qkv": false,
+        "vae_tensor_values_multiset_equal_at_runtime_dtype": true,
+        "vae_verified_tensor_count": 250,
+        "vae_training_only_batch_counters_not_compared": {
+          "source": 0,
+          "native": 400000
+        }
+      },
+      "pipeline_relative_to_comfy_bf16": 1.0,
+      "denoising_relative_to_comfy_bf16": 1.0,
+      "pipeline_relative_to_rocm_bf16": 1.7864820196502356,
+      "denoising_relative_to_rocm_bf16": 0.8131528505523937
+    },
+    {
+      "family": "flux3",
+      "engine": "rocm_exl3",
+      "precision": "bf16",
+      "source": {
+        "repo_id": "black-forest-labs/flux-3-image-klein",
+        "revision": "337337621b8526e120f2275d250242f4a6bedd75"
+      },
+      "steps": 16,
+      "report_sha256": "5a938ca2c655e1c586b3a5e4deaf09be4b94a26035ab97d9dc7057980419bad5",
+      "images": [
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/flux3/bf16/run-0.png",
+          "file_sha256": "a7f111c07f1a7520a1d0766328dbbf9a8534e71020b218a8992ab99a53beb460",
+          "pixel_sha256": "295e0937abea0ccdd79f9d11fa68cd0d7eab199de15d099a0f97ae436a23f2d1"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/flux3/bf16/run-1.png",
+          "file_sha256": "a7f111c07f1a7520a1d0766328dbbf9a8534e71020b218a8992ab99a53beb460",
+          "pixel_sha256": "295e0937abea0ccdd79f9d11fa68cd0d7eab199de15d099a0f97ae436a23f2d1"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/flux3/bf16/run-2.png",
+          "file_sha256": "a7f111c07f1a7520a1d0766328dbbf9a8534e71020b218a8992ab99a53beb460",
+          "pixel_sha256": "295e0937abea0ccdd79f9d11fa68cd0d7eab199de15d099a0f97ae436a23f2d1"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/flux3/bf16/run-3.png",
+          "file_sha256": "a7f111c07f1a7520a1d0766328dbbf9a8534e71020b218a8992ab99a53beb460",
+          "pixel_sha256": "295e0937abea0ccdd79f9d11fa68cd0d7eab199de15d099a0f97ae436a23f2d1"
+        }
+      ],
+      "pipeline_seconds": 11.622283721109852,
+      "pipeline_samples_seconds": [
+        11.551104962127283,
+        11.622283721109852,
+        11.637244609883055
+      ],
+      "pipeline_range_seconds": [
+        11.551104962127283,
+        11.637244609883055
+      ],
+      "denoising_seconds": 10.01430078125,
+      "denoising_samples_seconds": [
+        9.955650390625,
+        10.01430078125,
+        10.03421484375
+      ],
+      "denoising_range_seconds": [
+        9.955650390625,
+        10.03421484375
+      ],
+      "transformer_seconds_sum": 10.012370910644531,
+      "peak_allocated_gib": 13.744481563568115,
+      "repeated_measured_pixel_hashes_equal": true,
+      "initialization_seconds_including_adapter_validation": 37.468902308959514,
+      "pipeline_relative_to_comfy_bf16": 0.559759342103977,
+      "denoising_relative_to_comfy_bf16": 1.2297810913663731,
+      "pipeline_relative_to_rocm_bf16": 1.0,
+      "denoising_relative_to_rocm_bf16": 1.0
+    },
+    {
+      "family": "flux3",
+      "engine": "rocm_exl3",
+      "precision": "exl3-4bit",
+      "source": {
+        "repo_id": "black-forest-labs/flux-3-image-klein",
+        "revision": "337337621b8526e120f2275d250242f4a6bedd75"
+      },
+      "steps": 16,
+      "report_sha256": "39638344ee28fc1d49ef141f4b6feb25c08ec78ffbf204cf343faaf3139412fb",
+      "images": [
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/flux3/exl3-4bit/run-0.png",
+          "file_sha256": "e35a2e875f0267f5aefeeb3a33e9ae7de47fc4dbd4bfce425dc3884c4fb1cdb0",
+          "pixel_sha256": "f1ce332f0eb308cd60e1524e0b2635ef901f10d9d6d842306026c5466325f33e"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/flux3/exl3-4bit/run-1.png",
+          "file_sha256": "e35a2e875f0267f5aefeeb3a33e9ae7de47fc4dbd4bfce425dc3884c4fb1cdb0",
+          "pixel_sha256": "f1ce332f0eb308cd60e1524e0b2635ef901f10d9d6d842306026c5466325f33e"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/flux3/exl3-4bit/run-2.png",
+          "file_sha256": "e35a2e875f0267f5aefeeb3a33e9ae7de47fc4dbd4bfce425dc3884c4fb1cdb0",
+          "pixel_sha256": "f1ce332f0eb308cd60e1524e0b2635ef901f10d9d6d842306026c5466325f33e"
+        },
+        {
+          "path": "/home/homelab1/datapool/rocm-exl3-rdna2/image-engine-compare/rocm/flux3/exl3-4bit/run-3.png",
+          "file_sha256": "e35a2e875f0267f5aefeeb3a33e9ae7de47fc4dbd4bfce425dc3884c4fb1cdb0",
+          "pixel_sha256": "f1ce332f0eb308cd60e1524e0b2635ef901f10d9d6d842306026c5466325f33e"
+        }
+      ],
+      "pipeline_seconds": 12.30941720912233,
+      "pipeline_samples_seconds": [
+        12.23116069403477,
+        12.30941720912233,
+        13.415566933108494
+      ],
+      "pipeline_range_seconds": [
+        12.23116069403477,
+        13.415566933108494
+      ],
+      "denoising_seconds": 10.7104228515625,
+      "denoising_samples_seconds": [
+        10.664466796875,
+        10.7104228515625,
+        11.82181640625
+      ],
+      "denoising_range_seconds": [
+        10.664466796875,
+        11.82181640625
+      ],
+      "transformer_seconds_sum": 10.708498596191406,
+      "peak_allocated_gib": 6.444468975067139,
+      "repeated_measured_pixel_hashes_equal": true,
+      "initialization_seconds_including_adapter_validation": 16.196457769954577,
+      "pipeline_relative_to_comfy_bf16": 0.5928534738957232,
+      "denoising_relative_to_comfy_bf16": 1.3152666163224418,
+      "pipeline_relative_to_rocm_bf16": 1.0591220714018899,
+      "denoising_relative_to_rocm_bf16": 1.0695127982989951
+    }
+  ],
+  "scope": "Fixed composition input per model. Fresh encoding every run; excludes initial loading, PNG save and FLUX PUP. Different engine memory/VAE implementations remain native.",
+  "limitations": [
+    "One prompt and seed per model; not a broad workload average.",
+    "Headless ComfyUI native engine APIs, not HTTP/UI/node-cache latency.",
+    "Comfy native VAE automatic tiling vs rocm_exl3 VAE tiling; memory policies differ.",
+    "Denoising interval excludes text encoding and VAE, while Comfy sampler wall time also includes transfers.",
+    "Initial Comfy setup includes verified source weight adaptation; initialization times are not a load-speed ranking.",
+    "Identical source schedules and model values do not imply pixel-identical results across engine arithmetic and RNG implementations."
+  ],
+  "resident_flux3_diagnosis": {
+    "scope": "Additional resident-DiT diagnosis, separate from full-pipeline benchmark.",
+    "denoising_seconds": 8.08836572265625,
+    "denoising_samples_seconds": [
+      8.0575537109375,
+      8.08836572265625,
+      8.8963935546875
+    ],
+    "conditioning_file_sha256": "f0cfa6d87fb6dff316778d5fc9e78f54d12759399e5eee642e65dc19275f8ba9",
+    "repeated_measured_latent_hashes_equal": true,
+    "note": "Fully resident BF16 DiT, shared cached BF16 conditioning, no encoder/VAE. Separate from full-pipeline results."
+  }
+}
