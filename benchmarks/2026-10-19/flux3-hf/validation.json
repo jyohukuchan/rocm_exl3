@@ -1,0 +1,162 @@
+{
+  "date": "2026-10-19",
+  "engine_revision": "0d879e7a7b6aadd3c08508240ade6db87332bafe",
+  "gpu": "AMD Radeon AI PRO R9700",
+  "arch": "gfx1201",
+  "tensor_payload_files_verified_identical": 777,
+  "source_checkpoint_files_unchanged": true,
+  "header_copy_tests": {
+    "passed": 2,
+    "file": "tests/test_qwen_image21_hf_release.py"
+  },
+  "staged_4bit_generation": {
+    "dense_dit_absent": true,
+    "fresh_text_encoding": true,
+    "active_exl3_layers": 228,
+    "calls_per_active_layer": 16,
+    "measurements": [
+      {
+        "warmup": false,
+        "pipeline_seconds": 21.48418064089492,
+        "denoising_seconds": 12.2238017578125,
+        "transformer_ms": [
+          2079.3896484375,
+          925.21142578125,
+          655.8505859375,
+          656.331787109375,
+          656.2046508789062,
+          656.8250122070312,
+          658.1636962890625,
+          658.7036743164062,
+          658.2131958007812,
+          658.8731079101562,
+          658.9650268554688,
+          659.2407836914062,
+          659.964111328125,
+          660.529541015625,
+          660.3883056640625,
+          659.0305786132812
+        ],
+        "timesteps": [
+          [
+            1.0
+          ],
+          [
+            0.9921875
+          ],
+          [
+            0.98046875
+          ],
+          [
+            0.96875
+          ],
+          [
+            0.953125
+          ],
+          [
+            0.9375
+          ],
+          [
+            0.921875
+          ],
+          [
+            0.8984375
+          ],
+          [
+            0.875
+          ],
+          [
+            0.84375
+          ],
+          [
+            0.8046875
+          ],
+          [
+            0.7578125
+          ],
+          [
+            0.69921875
+          ],
+          [
+            0.6171875
+          ],
+          [
+            0.498046875
+          ],
+          [
+            0.31640625
+          ]
+        ],
+        "target_timesteps": [
+          [
+            0.9921875
+          ],
+          [
+            0.98046875
+          ],
+          [
+            0.96875
+          ],
+          [
+            0.953125
+          ],
+          [
+            0.9375
+          ],
+          [
+            0.921875
+          ],
+          [
+            0.8984375
+          ],
+          [
+            0.875
+          ],
+          [
+            0.84375
+          ],
+          [
+            0.8046875
+          ],
+          [
+            0.7578125
+          ],
+          [
+            0.69921875
+          ],
+          [
+            0.6171875
+          ],
+          [
+            0.498046875
+          ],
+          [
+            0.31640625
+          ],
+          [
+            0.0
+          ]
+        ],
+        "actual_steps": 16,
+        "peak_allocated_bytes": 6918647296,
+        "peak_reserved_bytes": 8239710208,
+        "finite_final_latents": true,
+        "finite_vae_output": true,
+        "pixel_sha256": "f1ce332f0eb308cd60e1524e0b2635ef901f10d9d6d842306026c5466325f33e",
+        "image_size": [
+          1024,
+          1024
+        ],
+        "image_mode": "RGB",
+        "rgb_stddev": [
+          64.4665012586179,
+          66.22521079689615,
+          64.18789479571315
+        ]
+      }
+    ],
+    "pixel_hash_matches_evaluated_4bit": true,
+    "report_sha256": "42a7e246953467f9adef059dda45faeb456f88461eb25585a67ffa5b23011cb3"
+  },
+  "scope": "Generation validates the staged package; timing is a cold diagnostic, not a new benchmark."
+}

@@ -200,3 +200,10 @@ V620は`/work/qwen-image21/python:/work/lib:/src`を使用した。
 前者のパス名にQwenが残っているのは、共用した固定Diffusersのローカル配置による。
 
 V620の既存LLMサーバーと検証用コンテナは停止済み。
+
+## 公開モデル
+
+3・4・5bitは[jyohukuchan/FLUX.3-Image-Klein-EXL3](https://huggingface.co/jyohukuchan/FLUX.3-Image-Klein-EXL3)
+で公開。各bitフォルダを`generate --exl3`に指定する。
+FLUX Kommunity License v1.0が適用され、MITライセンスの重みではない。
+[ライセンス確認と公開手順](flux3_hf/publication.md)を参照。

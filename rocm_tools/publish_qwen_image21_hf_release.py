@@ -23,6 +23,10 @@ def main():
     parser.add_argument('--result',type=Path,required=True)
     parser.add_argument('--resume',action='store_true')
     args=parser.parse_args()
+    publish(args)
+
+
+def publish(args):
     root=args.folder.resolve()
     publication=json.loads((root/'PUBLICATION.json').read_text())
     assert publication['repository']==args.repo_id
@@ -49,7 +53,7 @@ def main():
     api.upload_folder(repo_id=args.repo_id,repo_type='model',folder_path=root,
                       allow_patterns=[p for p in expected if '/' not in p],
                       commit_message='Add EXL3 model card, license, provenance and NMSE evaluation')
-    # Stay below a 500-LFS-file commit by publishing one 225-tensor checkpoint at a time.
+    # Stay below a 500-LFS-file commit by publishing one bit width at a time.
     for bits in (3,4,5):
         print(f'Upload {bits}bit checkpoint: {args.repo_id}',flush=True)
         api.upload_folder(repo_id=args.repo_id,repo_type='model',folder_path=root/f'{bits}bit',
