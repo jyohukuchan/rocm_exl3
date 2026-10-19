@@ -14,6 +14,25 @@ from exllamav3.diffusion.checkpoint import convert_transformer, load_transformer
 from exllamav3.diffusion.linear import EXL3DiffusionLinear
 
 
+@pytest.mark.parametrize("masked", [False, True])
+@torch.inference_mode()
+def test_query_sliced_attention_matches_native(masked):
+    from diffusers.models.transformers.transformer_flux3 import Flux3Attention, Flux3PosEmbed
+    from exllamav3.diffusion.flux3_attention import Flux3QuerySlicedAttnProcessor
+
+    torch.manual_seed(42)
+    attention = Flux3Attention(128, heads=2, dim_head=64).eval()
+    hidden = torch.randn(1, 23, 128)
+    rope = Flux3PosEmbed(theta=10000, axes_dim=[16, 16, 16, 16])(torch.randn(23, 4))
+    mask = torch.ones(1, 1, 23, 23, dtype=torch.bool) if masked else None
+    if masked:
+        mask[..., 2::3] = False
+    reference = attention(hidden, attention_mask=mask, image_rotary_emb=rope)
+    attention.set_processor(Flux3QuerySlicedAttnProcessor(query_chunk_size=7))
+    actual = attention(hidden, attention_mask=mask, image_rotary_emb=rope)
+    torch.testing.assert_close(actual, reference, atol=1e-6, rtol=1e-5)
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="requires GPU quantizer")
 @torch.inference_mode()
 def test_flux3_conditional_checkpoint(tmp_path):

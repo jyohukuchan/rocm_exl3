@@ -101,8 +101,10 @@ def configure_upsampler_kernels():
     """FLA's BF16 dot intrinsic cannot compile for the tested gfx1030 GPU."""
     import torch
 
+    if not torch.version.hip:
+        return "transformers-default"
     arch = torch.cuda.get_device_properties(torch.cuda.current_device()).gcnArchName
-    if not torch.version.hip or not arch.startswith("gfx10"):
+    if not arch.startswith("gfx10"):
         return "transformers-default"
     from transformers.models.qwen3_5 import modeling_qwen3_5 as module
 
@@ -121,22 +123,30 @@ def upsample_caption(model, prompt, images, boxes=None):
 
     verify_source(model, "upsampler")
     kernel_policy = configure_upsampler_kernels()
+    torch.cuda.reset_peak_memory_stats()
+    loaded = time.perf_counter()
     encoder = Qwen3_5ForConditionalGeneration.from_pretrained(
         model, dtype=torch.bfloat16, device_map={"": torch.cuda.current_device()},
         attn_implementation="sdpa", local_files_only=True,
     ).eval()
     processor = AutoProcessor.from_pretrained(model, local_files_only=True)
+    torch.cuda.synchronize()
+    load_seconds = time.perf_counter() - loaded
     start = time.perf_counter()
     with torch.inference_mode():
         caption = upsample_prompt(encoder, processor, prompt,
                                   images=prepare_references(images) if images else [], boxes=boxes)
     torch.cuda.synchronize()
     seconds = time.perf_counter() - start
+    peak_allocated = torch.cuda.max_memory_allocated()
+    peak_reserved = torch.cuda.max_memory_reserved()
     del encoder, processor
     gc.collect()
     torch.cuda.empty_cache()
     return caption, {"source": read_json(SOURCES)["upsampler"], "request": prompt, "kernel_policy": kernel_policy,
-                     "boxes": boxes, "seconds": seconds, "caption": caption}
+                     "boxes": boxes, "seconds": seconds, "model_load_seconds": load_seconds,
+                     "peak_allocated_bytes": peak_allocated, "peak_reserved_bytes": peak_reserved,
+                     "caption": caption}
 
 
 def upsample(args):
@@ -259,6 +269,7 @@ def generate(args):
     from exllamav3.diffusion.checkpoint import load_transformer
     from exllamav3.diffusion.linear import EXL3DiffusionLinear
     from exllamav3.diffusion.metrics import PredictionNMSE
+    from exllamav3.diffusion.flux3_attention import configure_flux3_attention
 
     configure(args.device)
     verify_source(args.model)
@@ -291,6 +302,7 @@ def generate(args):
             args.model / "transformer", torch_dtype=torch.bfloat16,
             device_map={"": args.device}, local_files_only=True,
         ).eval()
+    query_chunk_size = configure_flux3_attention(transformer, args.device, args.attention_query_chunk)
     # The reference VAE is FP32, including batch-normalization statistics.
     vae = AutoencoderKLFlux2.from_pretrained(
         args.model / "vae", torch_dtype=torch.float32, device_map={"": args.device}, local_files_only=True,
@@ -313,8 +325,10 @@ def generate(args):
     if args.nmse_exl3:
         candidate, candidate_quantization = load_transformer(args.nmse_exl3, device=args.device,
                                                              workspace_bytes=args.workspace_mib * 1024**2)
-        if candidate_quantization["source"] != source():
+        if (candidate_quantization["source"] != source() or
+                candidate_quantization.get("transformer_type") != "Flux3Transformer2DModel"):
             raise ValueError("NMSE candidate belongs to another source model")
+        configure_flux3_attention(candidate, args.device, query_chunk_size)
         nmse = PredictionNMSE(candidate.forward)
     elif args.nmse_self:
         nmse = PredictionNMSE(transformer.forward)
@@ -409,15 +423,19 @@ def generate(args):
         capture.save(args.capture, {"source": source(), "caption": caption, "images": image_identity(images),
                                    "seed": args.seed, "width": args.width, "height": args.height,
                                    "steps": 16, "versions": versions()})
+    properties = torch.cuda.get_device_properties(args.device)
     write_json(args.output / "report.json", {
         "source": source(), "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
         "initial_gpu_free_total_bytes": [initial_free, initial_total],
         "versions": versions(), "implementation": implementation(), "gpu": torch.cuda.get_device_name(),
-        "arch": torch.cuda.get_device_properties(args.device).gcnArchName,
+        "arch": getattr(properties, "gcnArchName", f"sm_{properties.major}{properties.minor}"),
         "precision": "exl3" if quantization else "bf16", "quantization": quantization,
         "caption": caption, "expansion": expansion, "images": image_identity(images),
         "settings": {"width": args.width, "height": args.height, "seed": args.seed, "steps": 16,
                      "vae_dtype": "float32", "vae_tiling": True, "text_encoder_offload": "module",
+                     "vae_tile_sample_min_size": vae.tile_sample_min_size,
+                     "vae_tile_overlap_factor": vae.tile_overlap_factor,
+                     "attention_query_chunk": query_chunk_size,
                      "encoding_cache": bool(cached), "workspace_mib": args.workspace_mib if quantization else None},
         "model_load_seconds": load_seconds, "measurements": measurements, "linear_layers": stats,
         "candidate_linear_layers": candidate_stats,
@@ -469,6 +487,8 @@ def main():
             parser.add_argument("--height", type=int, default=1024)
             parser.add_argument("--seed", type=int, default=42)
             parser.add_argument("--workspace-mib", type=int, default=256)
+            parser.add_argument("--attention-query-chunk", type=int,
+                                help="Query slice size; default 1024 on gfx10, native elsewhere. 0 selects native SDPA.")
             parser.add_argument("--warmup", type=int, default=0)
             parser.add_argument("--repeats", type=int, default=1)
             parser.add_argument("--capture", type=Path)

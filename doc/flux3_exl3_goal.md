@@ -41,5 +41,12 @@ TransformersのPyTorch referenceへ切り替えた。
 [テキスト入力](../benchmarks/2026-10-19/flux3-initial/pup-v620-text.json)と
 [画像参照入力](../benchmarks/2026-10-19/flux3-initial/pup-v620-edit.json)が完走した。
 
-実モデルのEXL3変換・評価、NMSE、速度・VRAM比較とV620のEXL3生成は未完了。
+4bitの258層変換・別プロセスでの読み込み・R9700での1024px生成も成功した。
+[4bit初期確認](../benchmarks/2026-10-19/flux3-initial/4bit-smoke.json)。
+V620の4bitではテキスト生成、船体を緑へ変更する単一参照編集、
+短い要求からPUPを経由する生成までを確認した。
+[V620初期確認](../benchmarks/2026-10-19/flux3-initial/v620-4bit-initial.json)。
+query分割Attentionは[通常経路との出力比較テスト](../benchmarks/2026-10-19/flux3-initial/attention-tests.txt)が成功した。
+
+3・5bitの実生成・評価、NMSE、速度・VRAM比較、残りの品質ケースは未完了。
 この目標は継続中で、小規模テストやBF16生成だけでは完了とはしない。

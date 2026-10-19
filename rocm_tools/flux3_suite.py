@@ -31,11 +31,11 @@ def run_case(args, case, *, precision="bf16", purpose="quality", capture=False, 
     source_cases = {c["id"]: c for c in read(CASES)["calibration" if capture else "evaluation"]}
     refs = []
     for reference in case.get("reference_cases", []):
-        parent = args.root / ("calibration-runs" if capture else "bf16") / reference
+        parent = (args.root / "calibration-runs" if capture else args.root / "quality" / "bf16") / reference
         if not (parent / "report.json").exists():
             run_case(args, source_cases[reference], capture=capture)
         refs.append(parent / "run-0.png")
-    directory = args.root / ("nmse" if nmse else "benchmark" if purpose == "benchmark" else "calibration-runs" if capture else "") / precision / case["id"]
+    directory = args.root / ("nmse" if nmse else "benchmark" if purpose == "benchmark" else "quality") / precision / case["id"]
     if capture:
         directory = args.root / "calibration-runs" / case["id"]
     completed = directory / "report.json"
@@ -47,7 +47,9 @@ def run_case(args, case, *, precision="bf16", purpose="quality", capture=False, 
                 or report["caption"] != case["caption"]
                 or (settings["width"], settings["height"], settings["seed"]) != (case["width"], case["height"], case["seed"])
                 or report["measurement_purpose"] != expected_purpose
-                or settings["encoding_cache"] != bool(nmse or args.cached)):
+                or settings["encoding_cache"] != bool(nmse or args.cached)
+                or report["arch"] != args.arch
+                or settings.get("attention_query_chunk") != args.attention_query_chunk):
             raise ValueError(f"Existing report has different inputs or purpose: {completed}")
         if precision.startswith("exl3-"):
             quant = report["nmse"]["candidate_quantization"] if nmse else report["quantization"]
@@ -130,6 +132,12 @@ def main():
     parser.add_argument("--cached", action="store_true", help="Cache only text encoding; reference VAE encoding stays in pipeline timing")
     parser.add_argument("--device", default="cuda:0")
     args = parser.parse_args()
+    if args.command not in ("convert", "summarize"):
+        import torch
+
+        properties = torch.cuda.get_device_properties(args.device)
+        args.arch = getattr(properties, "gcnArchName", f"sm_{properties.major}{properties.minor}")
+        args.attention_query_chunk = 1024 if torch.version.hip and args.arch.startswith("gfx10") else 0
     args.root.mkdir(parents=True, exist_ok=True)
     frozen = args.root / "cases.json"
     if frozen.exists() and read(frozen) != read(CASES):

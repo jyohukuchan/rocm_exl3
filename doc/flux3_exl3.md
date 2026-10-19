@@ -7,7 +7,10 @@ text encoderはQwen3-VL-4Bの8 hidden layersを結合し、80トークン単位�
 DiTとtext encoderはBF16、VAEはFP32。出力はRGB。
 
 **実モデルのEXL3検証は進行中。** 現在、小規模FLUXグラフの24層EXL3変換・
-保存・再読み込み・16ステップ生成・NMSE測定、および公式重みの1024px BF16生成を確認した。
+保存・再読み込み・16ステップ生成・NMSE測定に加え、R9700とV620で公式モデルを
+量子化した4bit checkpointの1024px生成を確認した。
+V620では単一参照編集、公式PUPからEXL3生成までの経路も確認した。
+3・5bit、NMSEと制御した速度比較、残りの品質ケースは検証中。
 完了条件は[作業目標](flux3_exl3_goal.md)を参照。
 
 ## 環境と取得
@@ -65,6 +68,12 @@ V620（gfx10）では、PUPが使用するQwen3.5のFLA BF16カーネルでLLVM�
 発生したため、該当する4関数をTransformersのPyTorch reference実装へ切り替える。
 インストール先のTransformersや他のLLMサーバーのコードは変更しない。
 
+V620のDiT Attentionは、queryを既定1024行ずつ計算して一時領域を抑える。
+各queryはすべてのkeyへattendし、近似的なwindow制限は行わない。
+R9700はnative SDPAを使用する。NMSEではteacherとcandidateに同じ設定を適用する。
+単独の`generate --attention-query-chunk 0`でnativeへ、正の値で明示的なquery分割へ
+切り替えられる。通常経路と分割経路の出力比較テストも行っている。
+
 ## 校正・変換・EXL3生成
 
 [固定ケース](../rocm_tools/flux3_cases.json)は校正と評価を分けている。
@@ -108,4 +117,7 @@ benchmarkはcompositionのwarmup 1回＋3回計測。初期ロード、PUP、PNG
 text encoding・参照画像のVAE encoding・denoising・VAE decodeを含む。
 `--cached`はtext encodingだけを別計測にするため、同条件でのみ比較する。
 校正・NMSEの時間は通常の生成速度と区別する。
-集計は`RUN/results.json`、各画像と生データはケース別の`report.json`に保存する。
+集計は`RUN/results.json`、画像品質の出力は`RUN/quality/精度/ケース/`、
+速度計測は`RUN/benchmark/精度/ケース/`へ保存する。checkpoint本体の
+`RUN/exl3-4bit`等とは別のディレクトリで扱う。
+各画像と生データはケース別の`report.json`に保存する。
