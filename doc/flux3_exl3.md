@@ -101,15 +101,20 @@ EXL3の全対象層について、参照画像の有無に応じた実行回数�
 
 ```bash
 python rocm_tools/flux3_suite.py evaluate --model MODEL --root RUN --precision bf16
+python rocm_tools/flux3_suite.py evaluate --model MODEL --root RUN \
+  --precision exl3 --bits 3 5 --cases text composition multi_ref
 python rocm_tools/flux3_suite.py nmse --model MODEL --root RUN --bits 3 4 5
 python rocm_tools/flux3_suite.py nmse-self --model MODEL --root RUN
 python rocm_tools/flux3_suite.py benchmark --model MODEL --root RUN --precision bf16
-python rocm_tools/flux3_suite.py benchmark --model MODEL --root RUN --precision exl3 --bits 4
+python rocm_tools/flux3_suite.py benchmark --model MODEL --root RUN --precision exl3 --bits 3 4 5
+python rocm_tools/flux3_compare.py --root RUN --output RUN/comparison --images
 ```
 
 NMSEはBF16の軌道上の同じlatent・時刻・移動先時刻・text/reference条件で候補を呼び、
 `sum((candidate - BF16)^2) / sum(BF16^2)`を求める。出力はtarget画像トークンのみ。
 差分・二乗はFP32、集計はFP64。候補の出力はschedulerに渡さない。
+各ステップのlatentとBF16予測、conditioning tensorのSHA256も記録する。
+比較ツールはbit数をまたいでこれらが一致することを検証してから集計する。
 既定はtext・composition・multi_refの3ケースで、全要素・全ステップの総和比を報告する。
 知覚品質のスコアではないので、生成画像の確認も併用する。
 

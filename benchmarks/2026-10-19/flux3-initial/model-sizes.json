@@ -1,0 +1,44 @@
+{
+  "3": {
+    "bits": 3,
+    "source_state_numel": 5548681984,
+    "source_state_bytes": 11097385984,
+    "quantized_state_bytes": 1983289344,
+    "unquantized_state_bytes": 546614272,
+    "effective_bits_per_source_element": 3.6475741421766803,
+    "unquantized_sha256": "36d786f4e6b422d8c846080269c5d1255ac143e68c2598fae8e7a96cedb1397e",
+    "calibration": [
+      "35cf3a39ea0e54b4e449f630163e9672d6387c7150e510c9dbdefe1e52d01293",
+      "3060511ca9c7638c527596f30382102e42fd02f1070962f05494b1bf04784f6b",
+      "a5f8e60b6fad51d0686888a4274e985620db963cd988cdc3297bc256ac5998f7"
+    ]
+  },
+  "4": {
+    "bits": 4,
+    "source_state_numel": 5548681984,
+    "source_state_bytes": 11097385984,
+    "quantized_state_bytes": 2642712576,
+    "unquantized_state_bytes": 546614272,
+    "effective_bits_per_source_element": 4.598319899675836,
+    "unquantized_sha256": "36d786f4e6b422d8c846080269c5d1255ac143e68c2598fae8e7a96cedb1397e",
+    "calibration": [
+      "35cf3a39ea0e54b4e449f630163e9672d6387c7150e510c9dbdefe1e52d01293",
+      "3060511ca9c7638c527596f30382102e42fd02f1070962f05494b1bf04784f6b",
+      "a5f8e60b6fad51d0686888a4274e985620db963cd988cdc3297bc256ac5998f7"
+    ]
+  },
+  "5": {
+    "bits": 5,
+    "source_state_numel": 5548681984,
+    "source_state_bytes": 11097385984,
+    "quantized_state_bytes": 3302135808,
+    "unquantized_state_bytes": 546614272,
+    "effective_bits_per_source_element": 5.549065657174992,
+    "unquantized_sha256": "36d786f4e6b422d8c846080269c5d1255ac143e68c2598fae8e7a96cedb1397e",
+    "calibration": [
+      "35cf3a39ea0e54b4e449f630163e9672d6387c7150e510c9dbdefe1e52d01293",
+      "3060511ca9c7638c527596f30382102e42fd02f1070962f05494b1bf04784f6b",
+      "a5f8e60b6fad51d0686888a4274e985620db963cd988cdc3297bc256ac5998f7"
+    ]
+  }
+}

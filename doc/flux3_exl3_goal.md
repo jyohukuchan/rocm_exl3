@@ -48,5 +48,12 @@ V620の4bitではテキスト生成、船体を緑へ変更する単一参照編
 [V620初期確認](../benchmarks/2026-10-19/flux3-initial/v620-4bit-initial.json)。
 query分割Attentionは[通常経路との出力比較テスト](../benchmarks/2026-10-19/flux3-initial/attention-tests.txt)が成功した。
 
-3・5bitの実生成・評価、NMSE、速度・VRAM比較、残りの品質ケースは未完了。
+3・4・5bitの実モデル変換が揃い、保持した高精度stateのSHA256と校正manifestが一致した。
+[モデルサイズ](../benchmarks/2026-10-19/flux3-initial/model-sizes.json)。
+V620では[3bit生成](../benchmarks/2026-10-19/flux3-initial/v620-3bit-composition.json.gz)、
+[5bit生成](../benchmarks/2026-10-19/flux3-initial/v620-5bit-composition.json.gz)、
+[4bitの2枚参照](../benchmarks/2026-10-19/flux3-initial/v620-multi-ref-4bit.json.gz)も完走した。
+[小規模FLUXのV620テスト](../benchmarks/2026-10-19/flux3-initial/flux-v620-tests.txt)は3件成功した。
+
+R9700の全品質ケース、NMSE、速度・VRAM比較と最終レビューは未完了。
 この目標は継続中で、小規模テストやBF16生成だけでは完了とはしない。
