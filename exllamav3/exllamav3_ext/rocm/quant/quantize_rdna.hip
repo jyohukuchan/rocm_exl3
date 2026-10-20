@@ -127,8 +127,13 @@ static QtLaunch qt_launch(int device, int K, int cb, int L)
     const auto* props = at::cuda::getDeviceProperties(device);
     const bool optimized = quantize_tiles_use_optimized(props->major, props->minor, K, cb);
     const int edges = 65536 >> K;
-    const int cost_arrays = optimized && K == 1 ? 1 : (K >= 2 ? 2 : 0);
+    // Q2's two 16,384-entry arrays alone consume 64 KiB. Keep them in the
+    // existing global scratch so the tile state also fits in RDNA's LDS.
+    // Must match the pointer selection in quantize_tiles_kernel_rdna.hip.h.
+    const int cost_arrays = K == 2 ? 0 : (optimized && K == 1 ? 1 : (K >= 2 ? 2 : 0));
     const int shmem = cost_arrays * edges * sizeof(half) + L * sizeof(half) + 64 + 128;
+    TORCH_CHECK(shmem <= props->sharedMemPerBlock,
+                "quantize_tiles: requested LDS exceeds the device limit: ", shmem);
     const auto& instances = optimized ? quantize_tiles_optimized_instances : quantize_tiles_kernel_instances;
     const auto& instances_l160 = optimized ? quantize_tiles_optimized_instances_l160 : quantize_tiles_kernel_instances_l160;
     auto kernel = L == 256 ? instances[K - 1 + 8 * cb] : instances_l160[K - 1];
