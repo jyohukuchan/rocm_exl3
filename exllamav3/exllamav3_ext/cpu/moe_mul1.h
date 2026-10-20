@@ -23,8 +23,9 @@ struct MoeCpuMatrix
     int k;
     int n;
     int bits;
-    // Band-contiguous ("swizzled") trellis layout: tile (kt, nt) stored at group nt/8, then
-    // kt, then member nt%8, so each 8-tile output band reads as one sequential k-stream
+    // 0: canonical, 1: eight-N-tile bands (K8 exempt), 2: N-major.
+    // N-major stores tile (kt, nt) at nt * tiles_k + kt, for AVX2's K walk.
+    // This describes RAM only; streamed GPU weights are restored to canonical.
     int swz = 0;
 };
 
@@ -59,7 +60,7 @@ int64_t exl3_moe_cpu_make_layer
     const std::vector<at::Tensor>& down_bias,
     int64_t activation,
     double act_limit,
-    int64_t swizzled        // caller repacked trellis tensors band-contiguous (K8 exempt)
+    int64_t swizzled        // tile order: 0 canonical, 1 bands (K8 exempt), 2 N-major
 );
 
 void exl3_moe_cpu_free_layer(int64_t handle);

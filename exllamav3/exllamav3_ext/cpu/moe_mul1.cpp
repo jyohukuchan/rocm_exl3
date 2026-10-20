@@ -400,8 +400,8 @@ void prepare_rows
 
         // int8 quantization, one scale per row
         int32_t* splat = p.splat32 + static_cast<size_t>(r) * k;
-        // dup is only read by the AVX2/BW maddubs kernels; skip the stores on the VNNI/VBMI tiers
-        int32_t* splat_dup = (p.splat_dup && (g_isa == Isa::Avx2 || g_isa == Isa::Bw))
+        // Explicit N-major also uses AVX2 on VNNI/VBMI machines.
+        int32_t* splat_dup = (p.splat_dup && (g_isa == Isa::Avx2 || g_isa == Isa::Bw || mat.swz == 2))
             ? p.splat_dup + static_cast<size_t>(r) * k : nullptr;
         float q;
         int32_t s;
@@ -1322,14 +1322,19 @@ void avx2_tiles(const MoeCpuMatrix& mat, const PreparedIn& in, float* tout, int 
             acc[i][1] = _mm256_setzero_si256();
         }
 
-        const uint16_t* packed = mat.trellis + static_cast<size_t>(tile_n) * packed_size;
-        const size_t row_stride = static_cast<size_t>(tiles_n) * packed_size;
+        const uint16_t* packed = mat.trellis + static_cast<size_t>(tile_n) * packed_size *
+                                 (mat.swz == 2 ? tiles_k : 1);
+        const size_t row_stride = static_cast<size_t>(mat.swz == 2 ? 1 : tiles_n) * packed_size;
         for (int tile_k = 0; tile_k < tiles_k; ++tile_k, packed += row_stride)
         {
-            const uint16_t* pf = packed + row_stride * pf_dist;
-            #pragma unroll
-            for (int l = 0; l < pf_lines; ++l)
-                _mm_prefetch(reinterpret_cast<const char*>(pf) + l * 64, _MM_HINT_T0);
+            // N-major is already a contiguous stream for the hardware prefetcher.
+            if (mat.swz != 2)
+            {
+                const uint16_t* pf = packed + row_stride * pf_dist;
+                #pragma unroll
+                for (int l = 0; l < pf_lines; ++l)
+                    _mm_prefetch(reinterpret_cast<const char*>(pf) + l * 64, _MM_HINT_T0);
+            }
 
             const int32_t* splat_k = splat_dup + tile_k * 16;
             // One 256-bit (8xu32) register per bits: covers packed_size = 16*bits u16 = bits*8
@@ -1368,7 +1373,10 @@ void scalar_tiles(const MoeCpuMatrix& mat, const PreparedIn& in, float* tout, in
         float acc[MAX_M][16] = {};
         for (int tile_k = 0; tile_k < tiles_k; ++tile_k)
         {
-            const uint16_t* packed = mat.trellis + (static_cast<size_t>(tile_k) * tiles_n + tile_n) * packed_size;
+            const size_t tile_index = mat.swz == 2 ? static_cast<size_t>(tile_n) * tiles_k + tile_k :
+                mat.swz == 1 ? (static_cast<size_t>(tile_n / 8) * tiles_k + tile_k) * 8 + tile_n % 8 :
+                              static_cast<size_t>(tile_k) * tiles_n + tile_n;
+            const uint16_t* packed = mat.trellis + tile_index * packed_size;
             float tile[256];
 
             for (int t = 0; t < 256; ++t)
@@ -1464,7 +1472,10 @@ const Isa g_isa = []{ return detect_isa(); }();
 void run_tiles(const MoeCpuMatrix& mat, const PreparedIn& in, float* tout, int m, int tn0, int tn1)
 {
     if (tn0 >= tn1) return;
-    switch (g_isa) {
+    // N-major is consumed by the AVX2 loop, including when explicitly selected
+    // on an AVX-512 machine. Its band kernels keep their existing layout.
+    const Isa isa = mat.swz == 2 && g_isa != Isa::Scalar ? Isa::Avx2 : g_isa;
+    switch (isa) {
         case Isa::Vbmi:
         {
             switch (mat.bits * 4 + m - 1)
@@ -2200,7 +2211,7 @@ static MoeCpuMatrix make_matrix
     const at::Tensor& suh,
     const at::Tensor& svh,
     const at::Tensor* bias,
-    bool swizzled
+    int swizzled
 )
 {
     TORCH_CHECK(trellis.device().is_cpu() && trellis.is_contiguous(), "trellis must be contiguous CPU");
@@ -2216,7 +2227,7 @@ static MoeCpuMatrix make_matrix
     // K8 tensors are exempt from swizzling (routed to the dword kernel, which would gain
     // nothing) -- the child loader applies the same bits != 8 rule when repacking, so the two
     // sides agree per tensor
-    m.swz = swizzled && m.bits != 8 ? 1 : 0;
+    m.swz = swizzled == 1 && m.bits == 8 ? 0 : swizzled;
     TORCH_CHECK(m.bits >= 1 && m.bits <= 8, "CPU MoE requires K in [1, 8]");
     TORCH_CHECK(m.k % 128 == 0 && m.n % 128 == 0, "dims must be divisible by 128");
     TORCH_CHECK(m.k <= 8192, "k too large for i32 accumulation");
@@ -2243,7 +2254,10 @@ int64_t exl3_moe_cpu_make_layer
 )
 {
     auto* layer = new MoeCpuLayer;
-    const bool swz = swizzled != 0;
+    TORCH_CHECK(swizzled >= 0 && swizzled <= 2, "CPU MoE tile order must be 0, 1 or 2");
+    TORCH_CHECK(swizzled != 1 || g_isa >= Isa::Bw,
+                "CPU MoE band tile order requires an AVX-512BW tier");
+    const int swz = static_cast<int>(swizzled);
     const size_t E = up_trellis.size();
     const bool gated = !gate_trellis.empty();
     TORCH_CHECK(down_trellis.size() == E && (!gated || gate_trellis.size() == E), "expert count mismatch");

@@ -23,7 +23,7 @@ void moe_unswizzle_kernel
     const int tiles_k,
     const int tiles_n,
     const int tile_b,
-    const bool swizzled
+    const int swizzled
 )
 {
     const int groups = tiles_n / 8;
@@ -33,11 +33,20 @@ void moe_unswizzle_kernel
     const size_t base = (size_t) blockIdx.y * expert_stride_b + proj_off_b;
     const size_t run_b = (size_t) 8 * tile_b;
     const size_t dst_off = base + ((size_t) kt * tiles_n + (size_t) g * 8) * tile_b;
-    const size_t src_off = swizzled ? base + ((size_t) g * tiles_k + kt) * run_b : dst_off;
+    const size_t src_off = swizzled == 1 ? base + ((size_t) g * tiles_k + kt) * run_b : dst_off;
     const uint4* s = reinterpret_cast<const uint4*>(src + src_off);
     uint4* d = reinterpret_cast<uint4*>(dst + dst_off);
     for (int i = threadIdx.x; i < (int) (run_b / 16); i += NUM_THREADS)
-        d[i] = s[i];
+    {
+        if (swizzled == 2)
+        {
+            const int vectors_per_tile = tile_b / 16;
+            const int nt = g * 8 + i / vectors_per_tile;
+            const size_t offset = base + ((size_t) nt * tiles_k + kt) * tile_b;
+            d[i] = reinterpret_cast<const uint4*>(src + offset)[i % vectors_per_tile];
+        }
+        else d[i] = s[i];
+    }
 }
 
 void moe_unswizzle_trellis
@@ -50,7 +59,7 @@ void moe_unswizzle_trellis
     int64_t tiles_k,
     int64_t tiles_n,
     int64_t bits,
-    bool swizzled
+    int64_t swizzled
 )
 {
     const at::cuda::OptionalCUDAGuard device_guard(src.device());
@@ -58,6 +67,8 @@ void moe_unswizzle_trellis
     TORCH_CHECK(src.is_cuda() && dst.is_cuda() && src.device() == dst.device(), "moe_unswizzle: tensors must share a CUDA device");
     TORCH_CHECK(src.is_contiguous() && dst.is_contiguous(), "moe_unswizzle: tensors must be contiguous");
     TORCH_CHECK(tiles_n % 8 == 0, "moe_unswizzle: tiles_n must be a multiple of 8");
+    TORCH_CHECK(tiles_k > 0 && tiles_n > 0, "moe_unswizzle: tile dimensions must be positive");
+    TORCH_CHECK(swizzled >= 0 && swizzled <= 2, "moe_unswizzle: tile order must be 0, 1 or 2");
     TORCH_CHECK(bits >= 1 && bits <= 8, "moe_unswizzle: bits out of range");
     const int tile_b = (int) bits * 32;
     const int64_t proj_b = tiles_k * tiles_n * tile_b;

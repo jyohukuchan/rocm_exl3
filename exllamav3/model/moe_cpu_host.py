@@ -8,6 +8,7 @@ import torch
 from ..ext import exllamav3_ext as ext
 from ..util.misc import Cleanupper, install_parent_death_signal
 from ..util.shm import check_shm_capacity
+from .moe_cpu_layout import select_tile_order, projection_tile_order, copy_trellis
 from .model_tp_cuda import (
     cuda_host_register,
     cuda_host_unregister,
@@ -87,11 +88,10 @@ class MoeCpuTuning:
         # common default), the kernel does SYNCHRONOUS compaction on first touch of a hinted
         # region once easily-compactable free memory runs low, which can stall loading badly
         self.arena_hugepage = os.environ.get("EXL3_MOE_ARENA_HUGEPAGE", "1") != "0"
-        # Band-contiguous ("swizzled") expert trellis layout: repacked at arena rehome so each
-        # 8-tile output band streams sequentially from DRAM. Applied on every AVX-512 kernel
-        # tier (bw, vnni, vbmi); the AVX2 and scalar tiers read the native layout.
-        # EXL3_MOE_CPU_SWIZZLE=0 restores the native layout.
+        # AVX-512 uses eight-tile bands; AVX2 walks N-major contiguous K streams.
+        # EXL3_MOE_CPU_SWIZZLE=0 restores canonical order on every tier.
         self.swizzle = os.environ.get("EXL3_MOE_CPU_SWIZZLE", "1") != "0"
+        self.tile_order = os.environ.get("EXL3_MOE_CPU_TILE_ORDER", "auto")
 
         # --- GPU-streaming prefill ---
         self.stream_t_explicit = "EXL3_MOE_STREAM_T" in os.environ
@@ -244,15 +244,13 @@ class _HugeArena:
             print(f" -- arena: MADV_COLLAPSE issued on {len(self.chunks)} chunks "
                   f"in {time.perf_counter() - t0:.1f} s", flush = True)
 
-    def rehome(self, tensor, band_swizzle = False):
+    def rehome(self, tensor, tile_order = 0):
         """Copy `tensor` into the arena and return a same-dtype/shape view over the copy. The
         arena outlives every tensor it hands out (held for the process lifetime), so the
         returned view stays valid.
 
-        band_swizzle: repack a [k/16, n/16, 16K] trellis tensor band-contiguous during the
-        copy -- physical order becomes (group n/128, k-tile, member, tile), one strided copy_.
-        The returned view keeps the original logical shape; only the byte order differs
-        (consumed by the swz-aware kernels in moe_mul1.cpp)."""
+        tile_order: 0 canonical, 1 eight-tile bands, 2 N-major. The view keeps
+        its logical shape; moe_mul1.cpp tracks the physical order separately."""
         import torch
         if tensor is None or tensor.numel() == 0:
             return tensor
@@ -264,10 +262,8 @@ class _HugeArena:
         self.cur_off += aligned
         buf = memoryview(self.cur)[off : off + nbytes]
         dst = torch.frombuffer(buf, dtype = torch.uint8)
-        if band_swizzle:
-            tk, tn, ps = tensor.shape
-            dst.view(tensor.dtype).view(tn // 8, tk, 8, ps) \
-               .copy_(tensor.view(tk, tn // 8, 8, ps).permute(1, 0, 2, 3))
+        if tile_order:
+            copy_trellis(dst.view(tensor.dtype).view(tensor.shape), tensor, tile_order)
         else:
             dst.copy_(tensor.contiguous().view(torch.uint8).reshape(-1))
         return dst.view(tensor.dtype).view(tensor.shape)
@@ -318,12 +314,10 @@ def _moe_cpu_child_main(conn, model_dir, threads, stage_threads, pinned = False,
                 out.append((trellis, suh, svh, bias))
             return out
 
-        # Swizzle the trellis copies band-contiguous when an AVX-512 kernel tier will consume
-        # them (has_avx512_bw is true for the bw, vnni and vbmi tiers alike)
-        swz = TUNING.swizzle and cext.exl3_moe_cpu_has_avx512_bw()
+        swz = select_tile_order(cext, TUNING.tile_order, TUNING.swizzle)
 
         def rehome_trellis(t):
-            return arena.rehome(t, band_swizzle = swz and t.shape[2] // 16 != 8)
+            return arena.rehome(t, tile_order = projection_tile_order(swz, t.shape[2] // 16))
 
         def nbytes(t):
             return t.numel() * t.element_size()
@@ -375,7 +369,7 @@ def _moe_cpu_child_main(conn, model_dir, threads, stage_threads, pinned = False,
                     [t[0] for t in d], [t[1] for t in d], [t[2] for t in d],
                     biases(g), biases(u), biases(d),
                     spec["activation"], spec["act_limit"],
-                    1 if swz else 0,
+                    swz,
                 )
                 layer_views.append((g, u, d))
                 # Reclaim this layer's now-discarded loader tensors immediately (rehome_experts
@@ -407,12 +401,7 @@ def _moe_cpu_child_main(conn, model_dir, threads, stage_threads, pinned = False,
                 v_tr, v_suh, v_svh, v_bias = plist[ei]
                 new = stc.get_tensor(key + ".trellis", cpu)
                 assert new.shape == v_tr.shape, f"install shape mismatch: {key}"
-                if swz and v_tr.shape[2] // 16 != 8:
-                    tk, tn, ps = new.shape
-                    v_tr.view(tn // 8, tk, 8, ps) \
-                        .copy_(new.view(tk, tn // 8, 8, ps).permute(1, 0, 2, 3))
-                else:
-                    v_tr.copy_(new)
+                copy_trellis(v_tr, new, swz)
                 v_suh.copy_(stc.get_tensor(key + ".suh", cpu, float2half = True))
                 v_svh.copy_(stc.get_tensor(key + ".svh", cpu, float2half = True))
                 if v_bias is not None:
@@ -1039,10 +1028,9 @@ class MoeCpuHost:
         d = self._dev_bufs.get(key)
         mx = self._max_proj_numel()
         if d is None:
-            # Experts arrive band-swizzled when an AVX-512 CPU tier owns them (same rule as the
-            # child's arena rehome, K8 excepted per matrix); the GPU restores the native tile
-            # order into a parallel ring after each DMA
-            swz = TUNING.swizzle and ext.exl3_moe_cpu_has_avx512_bw()
+            # Match the child's RAM order: AVX-512 bands or AVX2 N-major.
+            # The GPU restores canonical tiles into a parallel ring after DMA.
+            swz = select_tile_order(ext, TUNING.tile_order, TUNING.swizzle)
             d = dict(
                 vram_slots = [torch.empty(self.wslot_size // 2, dtype = torch.int16, device = device)
                               for _ in range(self.num_wslots)],
@@ -1401,14 +1389,14 @@ class MoeCpuHost:
             with torch.cuda.stream(copy_stream):
                 if st["swz"]:
                     # Restore the native tile order on the copy stream, one launch per projection
-                    # over the whole batch (K8 matrices were never swizzled: plain copy)
+                    # over the whole batch (K8 is exempt only from band order).
                     for name, off in (("g", 0), ("u", gb), ("d", gb + ub)):
                         if not pd.get(name):
                             continue
                         k, n, K = pd[name]
                         ext.moe_unswizzle_trellis(
                             st["vram_slots"][ws], st["native_slots"][ws], len(batch), exp_b, off,
-                            k // 16, n // 16, K, K != 8)
+                            k // 16, n // 16, K, projection_tile_order(st["swz"], K))
                 st["wready_ev"][ws].record(copy_stream)
             st["wslot_used"][ws] = True
 

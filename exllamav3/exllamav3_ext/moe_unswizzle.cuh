@@ -12,5 +12,5 @@ void moe_unswizzle_trellis
     int64_t tiles_k,
     int64_t tiles_n,
     int64_t bits,
-    bool swizzled               // false: plain copy (e.g. K8 matrices are never swizzled)
+    int64_t swizzled            // 0 canonical copy, 1 eight-tile bands, 2 N-major
 );
