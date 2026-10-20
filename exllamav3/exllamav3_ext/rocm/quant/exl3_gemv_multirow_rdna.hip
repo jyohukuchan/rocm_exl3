@@ -165,7 +165,8 @@ __device__ __forceinline__ void exl3_gemv_dot_tile_direct_mr
     const int kb_begin,
     const int kb_end,
     const int rows_valid,     // m <= M, >= 1; padded rows read row m - 1
-    float* out
+    float* out,
+    const bool word_tile
 )
 {
     constexpr int tile_elements = 16 * bits;
@@ -181,7 +182,8 @@ __device__ __forceinline__ void exl3_gemv_dot_tile_direct_mr
             (B + (k_tile * n_tiles + tile_n) * tile_elements);
 
         FragB frag0, frag1;
-        dq_dispatch<bits, cb>(b_ptr, lane << 3, frag0, frag1);
+        if (word_tile) dq_dispatch_word_tile<bits, cb>(b_ptr, lane, frag0, frag1);
+        else dq_dispatch<bits, cb>(b_ptr, lane << 3, frag0, frag1);
 
         #pragma unroll
         for (int r = 0; r < M; ++r)
@@ -235,6 +237,59 @@ __device__ __forceinline__ void exl3_gemv_dot_tile_splitk_mr
     const int lane,
     const int rows_valid,     // m <= M, >= 1; forwarded to the direct core
     float* sh_red,
+    float* out,
+    const bool word_tile,
+    const int logical_warps
+)
+{
+    const int num_k_tiles = size_k / 16;
+    const int chunk = (num_k_tiles + logical_warps - 1) / logical_warps;
+    for (int logical = warp_id; logical < logical_warps; logical += WARPS_PER_BLOCK)
+    {
+        const int kb0 = logical * chunk;
+        const int kb1 = kb0 + chunk < num_k_tiles ? kb0 + chunk : num_k_tiles;
+
+        float acc[M];
+        #pragma unroll
+        for (int r = 0; r < M; ++r) acc[r] = 0.0f;
+        if (kb0 < kb1)
+            exl3_gemv_dot_tile_direct_mr<bits, cb, M>(A, lda, B, n_tiles, tile_n, lane, kb0, kb1,
+                                                       rows_valid, acc, word_tile);
+
+        if (lane < 16)
+        {
+            #pragma unroll
+            for (int r = 0; r < M; ++r) sh_red[(logical * M + r) * 16 + lane] = acc[r];
+        }
+    }
+    __syncthreads();
+
+    if (warp_id == 0 && lane < 16)
+    {
+        #pragma unroll
+        for (int r = 0; r < M; ++r)
+        {
+            float total = 0.0f;
+            for (int w = 0; w < logical_warps; ++w)
+                total += sh_red[(w * M + r) * 16 + lane];
+            out[r] = total;
+        }
+    }
+}
+
+template <int bits, int cb, int WARPS_PER_BLOCK, int M>
+__device__ __forceinline__ void exl3_gemv_dot_tile_splitk_legacy_mr
+(
+    const half* __restrict__ A,
+    const int lda,
+    const uint16_t* __restrict__ B,
+    const int size_k,
+    const int n_tiles,
+    const int tile_n,
+    const int warp_id,
+    const int lane,
+    const int rows_valid,     // m <= M, >= 1; forwarded to the direct core
+    float* sh_red,
     float* out
 )
 {
@@ -248,7 +303,7 @@ __device__ __forceinline__ void exl3_gemv_dot_tile_splitk_mr
     for (int r = 0; r < M; ++r) acc[r] = 0.0f;
     if (kb0 < kb1)
         exl3_gemv_dot_tile_direct_mr<bits, cb, M>(A, lda, B, n_tiles, tile_n, lane, kb0, kb1,
-                                                   rows_valid, acc);
+                                                   rows_valid, acc, false);
 
     if (lane < 16)
     {
@@ -424,7 +479,7 @@ void exl3_gemv_mr_had_in_multi
 // =============================================================================
 // Grid (n_tiles, bszm); one block per (slot, N-tile). Both forms share the body.
 
-template <int bits, bool c_fp32, int cb, int WARPS_PER_BLOCK, int M>
+template <int bits, bool c_fp32, int cb, int WARPS_PER_BLOCK, int M, bool Experimental>
 __device__ __forceinline__ void exl3_gemv_mr_body
 (
     const half* __restrict__ A,     // this slab's rotated rows
@@ -440,17 +495,25 @@ __device__ __forceinline__ void exl3_gemv_mr_body
     const half* __restrict__ svh,
     int* seg_counter,
     const int warp_id,
-    const int lane
+    const int lane,
+    const bool word_tile,
+    const int logical_warps
 )
 {
     extern __shared__ char shared_mem[];
     float* sh_red = (float*) shared_mem;
 
     float acc[M];
-    exl3_gemv_dot_tile_splitk_mr<bits, cb, WARPS_PER_BLOCK, M>
-    (
-        A, lda, B, size_k, n_tiles_j, tile_n, warp_id, lane, rows_valid, sh_red, acc
-    );
+    if constexpr (Experimental)
+        exl3_gemv_dot_tile_splitk_mr<bits, cb, WARPS_PER_BLOCK, M>
+        (
+            A, lda, B, size_k, n_tiles_j, tile_n, warp_id, lane, rows_valid, sh_red, acc, word_tile, logical_warps
+        );
+    else
+        exl3_gemv_dot_tile_splitk_legacy_mr<bits, cb, WARPS_PER_BLOCK, M>
+        (
+            A, lda, B, size_k, n_tiles_j, tile_n, warp_id, lane, rows_valid, sh_red, acc
+        );
     if (warp_id != 0) return;
     exl3_gemv_fused_epilogue_mr<c_fp32, M>
     (
@@ -458,7 +521,7 @@ __device__ __forceinline__ void exl3_gemv_mr_body
     );
 }
 
-template <int bits, bool c_fp32, int cb, int WARPS_PER_BLOCK, int M>
+template <int bits, bool c_fp32, int cb, int WARPS_PER_BLOCK, int M, bool Experimental>
 static __global__
 __launch_bounds__(WARPS_PER_BLOCK * 32)
 __attribute__((amdgpu_flat_work_group_size(WARPS_PER_BLOCK * 32, WARPS_PER_BLOCK * 32)))
@@ -467,22 +530,24 @@ void exl3_gemv_mr_dot_single
     Exl3GemvMrParams* __restrict__ pb,
     const int size_k,
     const int size_n,
-    const int size_m
+    const int size_m,
+    const bool word_tile,
+    const int logical_warps
 )
 {
     const int warp_id = threadIdx.x / 32;
     const int lane = threadIdx.x % 32;
     const int tile_n = blockIdx.x;
     const int n_tiles = size_n / 16;
-    exl3_gemv_mr_body<bits, c_fp32, cb, WARPS_PER_BLOCK, M>
+    exl3_gemv_mr_body<bits, c_fp32, cb, WARPS_PER_BLOCK, M, Experimental>
     (
         pb->A_had, size_k, pb->B, size_k, n_tiles, tile_n,
         pb->C, 0, size_n, size_m, pb->svh,
-        pb->seg_counters + tile_n / 8, warp_id, lane
+        pb->seg_counters + tile_n / 8, warp_id, lane, word_tile, logical_warps
     );
 }
 
-template <int bits, bool c_fp32, int cb, int WARPS_PER_BLOCK, int M>
+template <int bits, bool c_fp32, int cb, int WARPS_PER_BLOCK, int M, bool Experimental>
 static __global__
 __launch_bounds__(WARPS_PER_BLOCK * 32)
 __attribute__((amdgpu_flat_work_group_size(WARPS_PER_BLOCK * 32, WARPS_PER_BLOCK * 32)))
@@ -499,7 +564,9 @@ void exl3_gemv_mr_dot_multi
     const int min_index,
     const int max_index,
     const int* __restrict__ size_n_list,  // per-matrix widths; size_n is the max
-    void* const* __restrict__ c_list      // per-matrix output bases (m rows, stride n_j)
+    void* const* __restrict__ c_list,     // per-matrix output bases (m rows, stride n_j)
+    const bool word_tile,
+    const int logical_warps
 )
 {
     const int warp_id = threadIdx.x / 32;
@@ -519,12 +586,12 @@ void exl3_gemv_mr_dot_multi
     const int64_t row_off = c_list ? 0 : (int64_t) j * size_m * size_n;
     const int ldc = c_list ? n_j : size_n;
     const int n_segs = size_n / 128;
-    exl3_gemv_mr_body<bits, c_fp32, cb, WARPS_PER_BLOCK, M>
+    exl3_gemv_mr_body<bits, c_fp32, cb, WARPS_PER_BLOCK, M, Experimental>
     (
         A_had + (int64_t) j * size_m * size_k, size_k,
         (const uint16_t*) B_list[mat_index], size_k, n_tiles_j, tile_n,
         Cb, row_off, ldc, size_m, (const half*) svh_list[mat_index],
-        pb->seg_counters + j * n_segs + tile_n / 8, warp_id, lane
+        pb->seg_counters + j * n_segs + tile_n / 8, warp_id, lane, word_tile, logical_warps
     );
 }
 
@@ -548,13 +615,37 @@ static inline int exl3_gemv_mr_warps(int size_k, int n_tiles, int bszm)
     return exl3_gemv_splitk_warps(size_k / 16, n_tiles, bszm);
 }
 
-#define LAUNCH_MR_M(bits_val, codebook, warps_val, m_tile, kernel_name, ...) \
-    if (c_fp32) { \
-        hipLaunchKernelGGL((kernel_name<bits_val, true, codebook, warps_val, m_tile>), \
+// These choices are captured as kernel arguments, so changing the environment
+// later cannot alter a captured graph's arithmetic or pointer patch sites.
+static bool exl3_gemv_word_tile_enabled()
+{
+    const char* e = std::getenv("EXL3_GEMV_WORD_TILE");
+    return e && e[0] == '1' && e[1] == '\0';
+}
+
+static int exl3_gemv_physical_warps(int logical_warps)
+{
+    if (const char* e = std::getenv("EXL3_GEMV_PHYSICAL_WARPS"))
+    {
+        const int w = atoi(e);
+        if (w == 4 || w == 8 || w == 16) return w;
+    }
+    return logical_warps;
+}
+
+#define LAUNCH_MR_TYPE(bits_val, fp32, codebook, warps_val, m_tile, kernel_name, ...) \
+    if (experimental) { \
+        hipLaunchKernelGGL((kernel_name<bits_val, fp32, codebook, warps_val, m_tile, true>), \
             grid, block, smem, stream, __VA_ARGS__); \
     } else { \
-        hipLaunchKernelGGL((kernel_name<bits_val, false, codebook, warps_val, m_tile>), \
+        hipLaunchKernelGGL((kernel_name<bits_val, fp32, codebook, warps_val, m_tile, false>), \
             grid, block, smem, stream, __VA_ARGS__); \
+    }
+#define LAUNCH_MR_M(bits_val, codebook, warps_val, m_tile, kernel_name, ...) \
+    if (c_fp32) { \
+        LAUNCH_MR_TYPE(bits_val, true, codebook, warps_val, m_tile, kernel_name, __VA_ARGS__) \
+    } else { \
+        LAUNCH_MR_TYPE(bits_val, false, codebook, warps_val, m_tile, kernel_name, __VA_ARGS__) \
     }
 #define LAUNCH_MR_W(bits_val, codebook, warps_val, kernel_name, ...) \
     switch (m_tile) { \
@@ -639,12 +730,16 @@ bool exl3_gemv_multirow_try_launch
     // 2. GEMV, M rows per warp, fused output epilogue
     {
         const int n_tiles = size_n / 16;
-        const int warps = exl3_gemv_mr_warps(size_k, n_tiles, 1);
+        const int logical_warps = exl3_gemv_mr_warps(size_k, n_tiles, 1);
+        const int warps = exl3_gemv_physical_warps(logical_warps);
+        const bool word_tile = exl3_gemv_word_tile_enabled();
+        const bool experimental = word_tile || warps != logical_warps;
         const int m_tile = exl3_gemv_mr_row_tile(size_m);
         dim3 grid(n_tiles, 1);
         dim3 block(warps * 32);
-        size_t smem = exl3_gemv_mr_smem_bytes(warps, m_tile);
-        LAUNCH_MR(exl3_gemv_mr_dot_single, pb, size_k, size_n, size_m)
+        size_t smem = exl3_gemv_mr_smem_bytes(logical_warps, m_tile);
+        LAUNCH_MR(exl3_gemv_mr_dot_single, pb, size_k, size_n, size_m,
+                  word_tile, logical_warps)
     }
     return true;
 }
@@ -714,13 +809,17 @@ bool exl3_mgemv_multirow_try_launch
     // 2. GEMV
     {
         const int n_tiles = size_n / 16;
-        const int warps = exl3_gemv_mr_warps(size_k, n_tiles, bszm);
+        const int logical_warps = exl3_gemv_mr_warps(size_k, n_tiles, bszm);
+        const int warps = exl3_gemv_physical_warps(logical_warps);
+        const bool word_tile = exl3_gemv_word_tile_enabled();
+        const bool experimental = word_tile || warps != logical_warps;
         const int m_tile = exl3_gemv_mr_row_tile(size_m);
         dim3 grid(n_tiles, bszm);
         dim3 block(warps * 32);
-        size_t smem = exl3_gemv_mr_smem_bytes(warps, m_tile);
+        size_t smem = exl3_gemv_mr_smem_bytes(logical_warps, m_tile);
         LAUNCH_MR(exl3_gemv_mr_dot_multi, pb, B_ptr_ptr, svh_ptr_ptr, A_had_ptr,
-                  size_k, size_n, size_m, bszm, min_index, max_index, size_n_list, c_list)
+                  size_k, size_n, size_m, bszm, min_index, max_index, size_n_list, c_list,
+                  word_tile, logical_warps)
     }
     return true;
 }
@@ -730,3 +829,4 @@ bool exl3_mgemv_multirow_try_launch
 #undef LAUNCH_MR_CB
 #undef LAUNCH_MR_W
 #undef LAUNCH_MR_M
+#undef LAUNCH_MR_TYPE

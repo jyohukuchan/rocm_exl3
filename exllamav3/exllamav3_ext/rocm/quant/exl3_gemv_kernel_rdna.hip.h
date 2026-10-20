@@ -45,6 +45,7 @@
 #include <hip/hip_fp16.h>
 
 #include "exl3_dq_rdna.hip.h"
+#include "exl3_dq_word_tile_rdna.hip.h"
 #include "../../quant/hadamard_inner.cuh"
 
 // -----------------------------------------------------------------------------
@@ -275,7 +276,8 @@ __device__ __forceinline__ float exl3_gemv_dot_tile_direct
     const int tile_n,                  // this warp's N-tile
     const int lane,
     const int kb_begin,                // k16-tile range for THIS warp
-    const int kb_end
+    const int kb_end,
+    const bool word_tile = false
 )
 {
     constexpr int tile_elements = 16 * bits;
@@ -291,7 +293,8 @@ __device__ __forceinline__ float exl3_gemv_dot_tile_direct
             (B + (k_tile * n_tiles + tile_n) * tile_elements);
 
         FragB frag0, frag1;
-        dq_dispatch<bits, cb>(b_ptr, lane << 3, frag0, frag1);
+        if (word_tile) dq_dispatch_word_tile<bits, cb>(b_ptr, lane, frag0, frag1);
+        else dq_dispatch<bits, cb>(b_ptr, lane << 3, frag0, frag1);
 
         const half2* a2 = (const half2*) (A + k_tile * 16);
         half2 a01 = a2[r0 >> 1];             // (A[r0],   A[r0+1])

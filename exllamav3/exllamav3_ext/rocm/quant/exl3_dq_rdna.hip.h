@@ -13,8 +13,8 @@ __device__ __forceinline__ uint32_t fshift(const uint32_t b, const uint32_t a, i
     // return a >> (shift - 32);
 }
 
-template <int bits, int cb>
-__device__ __forceinline__ half dq(const uint32_t* ptr, int t_offset)
+template <int bits, int cb, typename Words>
+__device__ __forceinline__ half dq(const Words& ptr, int t_offset)
 {
     int b0 = t_offset * bits + bits - 16 + 256 * bits;  // bit index, start of word0
     int b1 = b0 + 16;                                   // bit index, end of word0
@@ -31,8 +31,8 @@ __device__ __forceinline__ half dq(const uint32_t* ptr, int t_offset)
     return decode_3inst<cb>(w0);
 }
 
-template <int bits, int cb>
-__device__ __forceinline__ half2 dq2(const uint32_t* ptr, int t_offset)
+template <int bits, int cb, typename Words>
+__device__ __forceinline__ half2 dq2(const Words& ptr, int t_offset)
 {
     int b0 = t_offset * bits + bits - 16 + 256 * bits;  // bit index, start of word0
     int b1 = b0 + 16;                                   // bit index, end of word0
@@ -50,8 +50,8 @@ __device__ __forceinline__ half2 dq2(const uint32_t* ptr, int t_offset)
     return decode_3inst_2<cb>(w0, w1);
 }
 
-template <int bits, int cb>
-__device__ __forceinline__ void dq4(const uint32_t* ptr, int t_offset, FragB& frag)
+template <int bits, int cb, typename Words>
+__device__ __forceinline__ void dq4(const Words& ptr, int t_offset, FragB& frag)
 {
     int b0 = (t_offset + 257) * bits - 16;      // start of first word
     int b1 = b0 + 3 * bits;                     // start of last word
@@ -72,8 +72,8 @@ __device__ __forceinline__ void dq4(const uint32_t* ptr, int t_offset, FragB& fr
     frag[1] = d2d3;
 }
 
-template <int bits, int cb>
-__device__ __forceinline__ void dq2x2(const uint32_t* ptr, int t_offset, FragB& frag)
+template <int bits, int cb, typename Words>
+__device__ __forceinline__ void dq2x2(const Words& ptr, int t_offset, FragB& frag)
 {
     #pragma unroll
     for (int i = 0; i < 2; ++i)
@@ -94,8 +94,8 @@ __device__ __forceinline__ void dq2x2(const uint32_t* ptr, int t_offset, FragB& 
     }
 }
 
-template <int bits, int cb, int align>
-__device__ __forceinline__ void dq8(const uint32_t* ptr, int t_offset, FragB& frag0, FragB& frag1)
+template <int bits, int cb, int align, typename Words>
+__device__ __forceinline__ void dq8(const Words& ptr, int t_offset, FragB& frag0, FragB& frag1)
 {
     int b1 = (t_offset + 257) * bits;               // end of first word
     int b0 = b1 - 16;                               // start of first word
@@ -161,8 +161,8 @@ __device__ __forceinline__ void dq8(const uint32_t* ptr, int t_offset, FragB& fr
     frag1[1] = d6d7;
 }
 
-template <int cb>
-__device__ __forceinline__ void dq8_aligned_4bits(const uint32_t* ptr, int t_offset, FragB& frag0, FragB& frag1)
+template <int cb, typename Words>
+__device__ __forceinline__ void dq8_aligned_4bits(const Words& ptr, int t_offset, FragB& frag0, FragB& frag1)
 {
     uint32_t i0, i1, a, b, s, w0, w1, w2, w3, w4, w5, w6, w7;
     i1 = t_offset >> 3;
@@ -184,8 +184,8 @@ __device__ __forceinline__ void dq8_aligned_4bits(const uint32_t* ptr, int t_off
     frag1[1] = decode_3inst_2<cb>(w6, w7);
 }
 
-template <int cb>
-__device__ __forceinline__ void dq8_aligned_2bits(const uint32_t* ptr, int t_offset, FragB& frag0, FragB& frag1)
+template <int cb, typename Words>
+__device__ __forceinline__ void dq8_aligned_2bits(const Words& ptr, int t_offset, FragB& frag0, FragB& frag1)
 {
     uint32_t i0, i1, a, b, w0, w1, w2, w3, w4, w5, w6, w7;
     i1 = t_offset >> 4;
@@ -207,8 +207,8 @@ __device__ __forceinline__ void dq8_aligned_2bits(const uint32_t* ptr, int t_off
     frag1[1] = decode_3inst_2<cb>(w6, w7);
 }
 
-template <int cb>
-__device__ __forceinline__ void dq8_aligned_1bit(const uint32_t* ptr, int t_offset, FragB& frag0, FragB& frag1)
+template <int cb, typename Words>
+__device__ __forceinline__ void dq8_aligned_1bit(const Words& ptr, int t_offset, FragB& frag0, FragB& frag1)
 {
     uint32_t i0, i1, a, b, w0, w1, w2, w3, w4, w5, w6, w7;
     i1 = t_offset >> 5;
@@ -231,8 +231,8 @@ __device__ __forceinline__ void dq8_aligned_1bit(const uint32_t* ptr, int t_offs
 }
 
 
-template <int cb>
-__device__ __forceinline__ void dq8_aligned_4bits_bfe64(const uint32_t* ptr, int t_offset, FragB& frag0, FragB& frag1)
+template <int cb, typename Words>
+__device__ __forceinline__ void dq8_aligned_4bits_bfe64(const Words& ptr, int t_offset, FragB& frag0, FragB& frag1)
 {
     int i1 = t_offset / 8;
     int i0 = (i1 + 31) % 32;
@@ -252,8 +252,8 @@ __device__ __forceinline__ void dq8_aligned_4bits_bfe64(const uint32_t* ptr, int
     frag1[1] = decode_3inst_2<cb>(w6, w7);
 }
 
-template <int bits, int cb>
-__device__ __forceinline__ void dq_dispatch(const uint32_t* ptr, int idx, FragB& frag0, FragB& frag1)
+template <int bits, int cb, typename Words>
+__device__ __forceinline__ void dq_dispatch(const Words& ptr, int idx, FragB& frag0, FragB& frag1)
 {
     if constexpr (bits == 1)
     {
