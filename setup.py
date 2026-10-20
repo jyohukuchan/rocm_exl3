@@ -553,7 +553,9 @@ class HIPBuildExtension(build_ext):
             "-lc10_hip", "-lamdhip64", "-lhipblas", "-lrocblas", "-lhiprand",
         ]
 
-        cmd = (["hipcc", "-shared", "-fgpu-rdc", "--hip-link", "-o", ext_path]
+        # Device linking must see the same targets as compilation. Otherwise
+        # hipcc links only the visible GPU's image out of multi-arch objects.
+        cmd = (["hipcc", "-shared", "-fgpu-rdc", "--hip-link", *arch_flags, "-o", ext_path]
                + objs + lib_args + link_libs + ["-fPIC"])
         print(f"[link] {ext_path}", flush=True)
         if verbose:
