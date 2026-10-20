@@ -298,8 +298,8 @@ throughput on a Xeon Gold 6148. The `vbmi` tier
 without VBMI and stay on the `vnni` tier) is 15-70% faster than the dword scheme depending on
 bitrate. Never upgrades past what the CPU actually supports; unrecognized values are ignored.
 Read once per process (parent and worker independently), so it must be set before either is
-started. Note that capping below `bw` also disables the swizzled weight layout (see
-`EXL3_MOE_CPU_SWIZZLE`).
+started. With automatic tile order, capping to `avx2` selects N-major weights and
+capping to `scalar` selects canonical weights (see `EXL3_MOE_CPU_TILE_ORDER`).
 
 ### `EXL3_MOE_CPU_SWIZZLE` (default: `1`)
 
@@ -310,10 +310,37 @@ roofline). Takes effect on every AVX-512 kernel tier: `vbmi`, whose byte-gather 
 leaves the register headroom for the wide bands the swizzled layout wants at m > 1, `bw`
 (+2-29% on Skylake-SP, where the sequential per-band k-stream beats 96-128 B strided reads)
 and `vnni` (the dword kernel with the same band structure; +40% cold-expert decode measured
-with the tier forced on a 7960X). The `avx2` and `scalar` tiers read the native layout. K8
-tensors always stay in the native layout (they route to the dword kernel). The GPU-streaming
-prefill path un-swizzles during staging, so staged bytes reaching the GPU dequant are
-unaffected. Set to `0` to keep the native layout.
+with the tier forced on a 7960X). AVX2 instead uses N-major tiles, making each output
+tile's K walk contiguous. K8 stays canonical only with the AVX-512 band order;
+N-major includes K8. The GPU-streaming prefill path restores canonical order on
+the GPU after DMA. Set to `0` to keep canonical order on every tier.
+
+### `EXL3_MOE_CPU_TILE_ORDER` (default: `auto`)
+
+RAM-only expert tile order, selected when the CPU worker loads. `auto` uses eight-tile
+bands on AVX-512BW/VNNI/VBMI, N-major on AVX2, and canonical order on scalar CPUs.
+`0` forces canonical, `1` forces bands (requires an AVX-512BW tier), and `2` forces
+N-major (uses AVX2 when available, otherwise scalar). `EXL3_MOE_CPU_SWIZZLE=0`
+overrides this setting. Expert swaps apply the same packing as initial loading;
+streamed GPU consumers always receive canonical bytes. Disk checkpoints are unchanged.
+Restart the worker to change the order.
+
+### `EXL3_GEMV_WORD_TILE` (ROCm, default: `0`)
+
+Set to `1` to share compressed EXL3 tile words across the wave in multirow GEMV
+(including the default single-row route for ordinary output widths). This changes
+word supply while retaining the existing FragB layout, FP16 decode and FP32 sums.
+It does not change cooperative GEMM or the weighted-reduction GEMV path.
+The switch is evaluated at launch/capture; rebuild captured graphs to change it.
+
+### `EXL3_GEMV_PHYSICAL_WARPS` (ROCm, default: unset)
+
+Force `4`, `8` or `16` physical waves per multirow GEMV block. Logical K partitions
+and their addition order still come from the existing split-K rule, including
+`EXL3_GEMV_SPLITK_WARPS`. Fewer physical waves execute multiple logical partitions;
+extra waves participate in the barrier without changing the result. Shared reduction
+storage is sized by logical partitions. Useful for tuning without changing FP32 bits.
+The switch is captured with each graph, like `EXL3_GEMV_WORD_TILE`.
 
 ### `EXL3_MOE_MEMOPS` (default: `1`)
 
