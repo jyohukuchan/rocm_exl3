@@ -324,7 +324,7 @@ def _resolve_smem_max(archs):
 def _resolve_offload_archs():
     """Pin --offload-arch so hipcc does not try to build for every installed GPU."""
     if env := os.environ.get("PYTORCH_ROCM_ARCH") or os.environ.get("GPU_ARCHS"):
-        return [a.strip() for a in env.replace(",", " ").split() if a.strip()]
+        return [a.strip() for a in env.replace(",", " ").replace(";", " ").split() if a.strip()]
     try:
         out = subprocess.check_output(["rocminfo"], text=True, stderr=subprocess.DEVNULL)
         found = {
