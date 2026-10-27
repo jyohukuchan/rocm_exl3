@@ -298,15 +298,15 @@ class LinearEXL3:
 
     def _quant_w8(self, w):
         # Per-output-channel symmetric int8 grid of the inner trellis weights,
-        # with scales folded into an svh copy (epilogue unchanged). Rebuilt
-        # per call on purpose: holding a copy for every dense linear costs
-        # gigabytes next to a 28 GB/rank model.
+        # with fp32 per-channel scales for the epilogue (deliberately NOT
+        # folded into an fp16 svh copy: that rounding cost +0.058 macro KLD).
+        # Rebuilt per call on purpose: holding a copy for every dense linear
+        # costs gigabytes next to a 28 GB/rank model.
         with torch.inference_mode():
             # fp32 scales: a half-rounded scale would add needless error.
             s = w.float().abs().amax(dim=0).clamp_min(1e-12) / 127.0
             w8 = (w.float() / s).round().clamp(-128, 127).to(torch.int8)
-            svh8 = (self.svh.float() * s).to(self.svh.dtype).contiguous()
-        return w8, svh8
+        return w8, s
 
 
     def _reconstruct_hgemm_int8(self, x, y, y_, rows, out_dtype):
@@ -323,7 +323,7 @@ class LinearEXL3:
         w = torch.empty((self.in_features, self.out_features),
                         dtype=torch.half, device=self.trellis.device)
         ext.reconstruct(w, self.trellis, self.K, self.mcg, self.mul1)
-        w8, svh8 = self._quant_w8(w)
+        w8, ws = self._quant_w8(w)
         if _int8_ablate == "w":
             # Weight-grid error only: fp32 activations, fp32 matmul on the
             # dequantized int8 weights, original svh.
@@ -346,26 +346,6 @@ class LinearEXL3:
             if self.bias is not None:
                 y += self.bias
             return y
-        if _int8_ablate == "s":
-            # Scale-placement check: full int8 GEMM, but the per-channel
-            # weight scales stay in fp32 in the epilogue with the ORIGINAL
-            # svh (no fp16 svh8 rounding). Decides whether the W+A error is
-            # grid interaction or folded-scale rounding.
-            with torch.inference_mode():
-                sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
-                a8 = (xh.float() / sa).round().clamp(-128, 127).to(torch.int8)
-                igemm = getattr(ext, "igemm_recon", None)
-                if igemm is not None:
-                    c = torch.empty((rows, self.out_features), dtype=torch.int32, device=x.device)
-                    igemm(a8, w8, c)
-                else:
-                    c = _exact_int32_gemm(a8, w8)
-                y_.copy_((c.float() * sa * self._wscales(w)).to(y_.dtype))
-            del w, c
-            ext.had_r_128(y_, y_, None, self.svh, 1.0)
-            if self.bias is not None:
-                y += self.bias
-            return y
         del w
         with torch.inference_mode():
             sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
@@ -378,9 +358,11 @@ class LinearEXL3:
             # Exact emulation until the backend provides the int8 GEMM entry.
             c = _exact_int32_gemm(a8, w8)
         with torch.inference_mode():
-            y_.copy_((c.float() * sa).to(y_.dtype))
+            # Weight scales in fp32 (ws), output Hadamard with the ORIGINAL
+            # svh: folding scales into an fp16 svh copy cost +0.058 macro KLD.
+            y_.copy_((c.float() * sa * ws).to(y_.dtype))
         del c
-        ext.had_r_128(y_, y_, None, svh8, 1.0)
+        ext.had_r_128(y_, y_, None, self.svh, 1.0)
         if self.bias is not None:
             y += self.bias
         return y

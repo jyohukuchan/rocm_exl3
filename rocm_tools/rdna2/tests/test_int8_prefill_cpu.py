@@ -209,16 +209,29 @@ class Int8PrefillCpuTest(unittest.TestCase):
             self.assertNotIn("igemm_recon", calls.names)
             self.assertTrue(torch.isfinite(y.float()).all())
 
-    def test_ablate_s_uses_int_gemm_with_fp32_scales(self):
+    def test_default_path_applies_fp32_scales_with_original_svh(self):
         calls = _Calls()
-        mod = _load_exl3(_ext_stub(calls, with_igemm=True))
+        ns = _ext_stub(calls, with_igemm=True)
+        seen = {}
+        orig_had = ns.had_r_128
+        def had(a, b, s, sv, scale):
+            seen.setdefault("svh_args", []).append(sv)
+            return orig_had(a, b, s, sv, scale)
+        ns.had_r_128 = had
+        mod = _load_exl3(ns)
         with patch.object(mod, "int8_prefill", True), \
-             patch.object(mod, "_int8_ablate", "s"):
+             patch.object(mod, "_int8_ablate", ""):
             lin = _fake_linear(mod)
             x = torch.randn(200, 256, dtype=torch.float16)
             y = lin.forward(x, {}, None)
             self.assertIn("igemm_recon", calls.names)
             self.assertTrue(torch.isfinite(y.float()).all())
+            # Output Hadamard(s) must carry the ORIGINAL svh: folding the
+            # weight scales into an fp16 svh copy cost +0.058 macro KLD.
+            self.assertTrue(seen["svh_args"])
+            for sv in seen["svh_args"]:
+                if sv is not None:
+                    self.assertIs(sv, lin.svh)
 
     def test_no_igemm_backend_uses_exact_emulation(self):
         calls = _Calls()
