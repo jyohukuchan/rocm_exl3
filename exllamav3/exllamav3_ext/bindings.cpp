@@ -24,6 +24,7 @@
 #include "quant/exl3_gemm.cuh"
 #include "quant/exl3_gemv.cuh"
 #include "quant/exl3_gemv_int8.cuh"
+#include "quant/exl3_igemm.cuh"
 #include "cpu/moe_mul1.h"
 #include "cpu/moe_handoff.h"
 #include "quant/exl3_kernel_map.cuh"
@@ -196,6 +197,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def("hgemm_batched", &hgemm_batched, "hgemm_batched");
     m.def("hgemm_exact_group", &hgemm_exact_group, "original-shape per-expert GEMMs");
     m.def("hgemm_recon", &hgemm_recon, "hgemm_recon");
+    m.def("igemm_recon", &igemm_recon, "igemm_recon");
     m.def("hgemm_f16acc", &hgemm_f16acc, "hgemm_f16acc");
     m.def("hgemm_f16acc_status", &hgemm_f16acc_status, "hgemm_f16acc_status");
     m.def("rope", &rope, "rope");
