@@ -126,8 +126,6 @@ def _fake_linear(mod, scale=1.0):
     lin.suh = torch.full((256,), 0.5, dtype=torch.float16) * scale
     lin.svh = torch.full((256,), 0.25, dtype=torch.float16) * scale
     lin.bias = None
-    lin._w8 = None
-    lin._svh8 = None
     lin._fused_reconstruct = False
     lin.key = None
     lin.config = types.SimpleNamespace(
@@ -165,9 +163,6 @@ class Int8PrefillCpuTest(unittest.TestCase):
             y = lin.forward(x, {}, None)
             self.assertIn("igemm_recon", calls.names)
             self.assertNotIn("hgemm_recon", calls.names)
-            # per-channel scales folded into the svh copy, weights cached int8
-            self.assertEqual(lin._w8.dtype, torch.int8)
-            self.assertEqual(lin._svh8.dtype, torch.float16)
             self.assertTrue(torch.isfinite(y.float()).all())
 
     def test_capture_stays_on_fp16_path(self):
@@ -179,7 +174,6 @@ class Int8PrefillCpuTest(unittest.TestCase):
             y = lin.forward(x, {"capture": object()}, None)
             self.assertIn("hgemm_recon", calls.names)
             self.assertNotIn("igemm_recon", calls.names)
-            self.assertIsNone(lin._w8)
             self.assertTrue(torch.isfinite(y.float()).all())
 
     def test_env_off_stays_on_fp16_path(self):

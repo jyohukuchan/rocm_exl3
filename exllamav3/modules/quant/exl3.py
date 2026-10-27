@@ -129,10 +129,6 @@ class LinearEXL3:
         self.mul1 = self.mul1_tensor is not None
 
         self._fused_reconstruct = None
-        # INT8 W8A8 cache: per-channel int8 inner weights + svh with folded
-        # scales. Built lazily on the first int8 call (weights are static).
-        self._w8 = None
-        self._svh8 = None
         self.bsz1_xh_args = (self.trellis.device, (1, self.in_features), self.out_dtype)
         self.bc = ext.BC_LinearEXL3(
             self.trellis,
@@ -294,20 +290,17 @@ class LinearEXL3:
         )
 
 
-    def _get_w8(self):
+    def _quant_w8(self, w):
         # Per-output-channel symmetric int8 grid of the inner trellis weights,
-        # with scales folded into a cached svh copy (epilogue unchanged).
-        if self._w8 is None:
-            w = torch.empty((self.in_features, self.out_features),
-                            dtype=torch.half, device=self.trellis.device)
-            ext.reconstruct(w, self.trellis, self.K, self.mcg, self.mul1)
-            with torch.inference_mode():
-                # fp32 scales: a half-rounded scale would add needless error.
-                s = w.float().abs().amax(dim=0).clamp_min(1e-12) / 127.0
-                self._w8 = (w.float() / s).round().clamp(-128, 127).to(torch.int8)
-                self._svh8 = (self.svh.float() * s).to(self.svh.dtype).contiguous()
-            del w
-        return self._w8, self._svh8
+        # with scales folded into an svh copy (epilogue unchanged). Rebuilt
+        # per call on purpose: holding a copy for every dense linear costs
+        # gigabytes next to a 28 GB/rank model.
+        with torch.inference_mode():
+            # fp32 scales: a half-rounded scale would add needless error.
+            s = w.float().abs().amax(dim=0).clamp_min(1e-12) / 127.0
+            w8 = (w.float() / s).round().clamp(-128, 127).to(torch.int8)
+            svh8 = (self.svh.float() * s).to(self.svh.dtype).contiguous()
+        return w8, svh8
 
 
     def _reconstruct_hgemm_int8(self, x, y, y_, rows, out_dtype):
@@ -321,7 +314,11 @@ class LinearEXL3:
                   flush=True)
         xh = torch.empty_like(x)
         ext.had_r_128(x, xh, self.suh, None, 1.0)
-        w8, svh8 = self._get_w8()
+        w = torch.empty((self.in_features, self.out_features),
+                        dtype=torch.half, device=self.trellis.device)
+        ext.reconstruct(w, self.trellis, self.K, self.mcg, self.mul1)
+        w8, svh8 = self._quant_w8(w)
+        del w
         with torch.inference_mode():
             sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
             a8 = (xh.float() / sa).round().clamp(-128, 127).to(torch.int8)
@@ -366,10 +363,6 @@ class LinearEXL3:
 
     # Swap tensors to CPU (to free some space while quantizing)
     def swap_cpu(self):
-        # Drop the lazily built int8 cache with the GPU tensors; it rebuilds
-        # on the next int8 call (and stays empty when the path is off).
-        self._w8 = None
-        self._svh8 = None
         if self.swap_device is not None:
             return
         self.swap_device = self.trellis.device
