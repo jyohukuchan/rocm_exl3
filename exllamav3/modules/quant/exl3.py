@@ -13,6 +13,38 @@ RECONSTRUCT_SLICE_GRANULARITY_N = 128
 
 no_fused_reconstruct = os.environ.get("EXL3_NO_FUSED_RECONSTRUCT", "0") != "0"
 
+# INT8 W8A8 prefill path (experimental, default off). When enabled, eligible
+# linears run the rotated basis (input Hadamard, same as the non-fused path)
+# with the inner trellis weights rounded once to a per-output-channel int8
+# grid (scales folded into a cached svh copy, so the epilogue is unchanged)
+# and activations quantized to int8 per token. Accumulation is exact int32
+# (K <= tens of thousands cannot overflow: K * 127 * 127 < 2^31).
+# The math is backend-agnostic torch ops plus one int8->int32 GEMM; on ROCm
+# that GEMM is ext.igemm_recon (rocBLAS int8), elsewhere an exact emulation.
+int8_prefill = os.environ.get("EXL3_INT8_PREFILL", "0") != "0"
+
+# K-block size for the exact-int32 emulation GEMM: partial sums stay below
+# 2^24, so every fp32 block product is bit-exact and the fp64 tail is too.
+_INT8_EMU_KBLOCK = 512
+
+
+def _exact_int32_gemm(a8: torch.Tensor, w8: torch.Tensor) -> torch.Tensor:
+    # Bit-exact (a8 int8) @ (w8 int8) in int32, via K-blocked fp32 products
+    # accumulated in fp64. Exact: products fit 15 bits, block sums fit 23.
+    m, k = a8.shape
+    n = w8.shape[1]
+    acc = torch.zeros((m, n), dtype=torch.float64, device=a8.device)
+    af = a8.float()
+    prev_tf32 = torch.backends.cuda.matmul.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = False
+    try:
+        for k0 in range(0, k, _INT8_EMU_KBLOCK):
+            acc += af[:, k0:k0 + _INT8_EMU_KBLOCK] @ w8[k0:k0 + _INT8_EMU_KBLOCK, :].float()
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = prev_tf32
+    return acc.to(torch.int32)
+
+
 class LinearEXL3:
 
     quant_type: str = "exl3"
@@ -94,6 +126,10 @@ class LinearEXL3:
         self.mul1 = self.mul1_tensor is not None
 
         self._fused_reconstruct = None
+        # INT8 W8A8 cache: per-channel int8 inner weights + svh with folded
+        # scales. Built lazily on the first int8 call (weights are static).
+        self._w8 = None
+        self._svh8 = None
         self.bsz1_xh_args = (self.trellis.device, (1, self.in_features), self.out_dtype)
         self.bc = ext.BC_LinearEXL3(
             self.trellis,
@@ -151,11 +187,11 @@ class LinearEXL3:
             rows = x.numel() // x.shape[-1]
             if rows <= AUTO_RECONSTRUCT_THRESHOLD or self.config.infer_params.no_reconstruct:
                 if rows > 1 and not self.cooperative_gemm_supported:
-                    return self.reconstruct_hgemm(x, out_dtype)
+                    return self.reconstruct_hgemm(x, out_dtype, params)
                 dtype = out_dtype or self.default_out_dtype
                 return self.bc.run_alloc(x, self.out_features, dtype == torch.float)
 
-        return self.reconstruct_hgemm(x, out_dtype)
+        return self.reconstruct_hgemm(x, out_dtype, params)
 
 
     def unpack_bf(self, bitfield: torch.Tensor):
@@ -177,7 +213,7 @@ class LinearEXL3:
         return expanded.contiguous().to(device)
 
 
-    def reconstruct_hgemm(self, x: torch.Tensor, out_dtype):
+    def reconstruct_hgemm(self, x: torch.Tensor, out_dtype, params: dict | None = None):
 
         shape = x.shape
         rows = x.numel() // shape[-1]
@@ -201,6 +237,14 @@ class LinearEXL3:
         # The fused kernel costs ~4x plain reconstruct (k*n-proportional) while the saved
         # had launches scale with rows*(k+n); breakeven is rows ~400-900 across shapes
         use_fused = self._fused_reconstruct and rows >= 1024
+
+        # INT8 W8A8 path (experimental): rotated basis with int8 inner weights
+        # and per-token int8 activations. Takes the non-fused branch below, so
+        # the fused original-basis kernel keeps serving rows >= 1024 unless the
+        # int8 route proves faster there too.
+        if (int8_prefill and not use_fused and self._int8_eligible()
+                and (params is None or "capture" not in params)):
+            return self._reconstruct_hgemm_int8(x, y, y_, rows, out_dtype)
 
         if use_fused:
             xh = x
@@ -237,6 +281,55 @@ class LinearEXL3:
         return y
 
 
+    def _int8_eligible(self) -> bool:
+        # Sliced lm_head (out_features > 32k) stays on the fp16 path for now;
+        # the int8 GEMM also wants at least 16-aligned dims (always true here).
+        return (
+            self.out_features <= MAX_RECONSTRUCT_SLICE_N
+            and self.in_features % 16 == 0 and self.out_features % 16 == 0
+            and self.trellis.is_cuda
+        )
+
+
+    def _get_w8(self):
+        # Per-output-channel symmetric int8 grid of the inner trellis weights,
+        # with scales folded into a cached svh copy (epilogue unchanged).
+        if self._w8 is None:
+            w = torch.empty((self.in_features, self.out_features),
+                            dtype=torch.half, device=self.trellis.device)
+            ext.reconstruct(w, self.trellis, self.K, self.mcg, self.mul1)
+            with torch.inference_mode():
+                s = w.abs().amax(dim=0).clamp_min(1e-12) / 127.0
+                self._w8 = (w.float() / s).round().clamp(-128, 127).to(torch.int8)
+                self._svh8 = (self.svh * s.to(self.svh.dtype)).contiguous()
+            del w
+        return self._w8, self._svh8
+
+
+    def _reconstruct_hgemm_int8(self, x, y, y_, rows, out_dtype):
+        # Rotated-basis W8A8: input Hadamard, int8 GEMM, output Hadamard.
+        xh = torch.empty_like(x)
+        ext.had_r_128(x, xh, self.suh, None, 1.0)
+        w8, svh8 = self._get_w8()
+        with torch.inference_mode():
+            sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+            a8 = (xh.float() / sa).round().clamp(-128, 127).to(torch.int8)
+        igemm = getattr(ext, "igemm_recon", None)
+        if igemm is not None:
+            c = torch.empty((rows, self.out_features), dtype=torch.int32, device=x.device)
+            igemm(a8, w8, c)
+        else:
+            # Exact emulation until the backend provides the int8 GEMM entry.
+            c = _exact_int32_gemm(a8, w8)
+        with torch.inference_mode():
+            y_.copy_((c.float() * sa).to(y_.dtype))
+        del c
+        ext.had_r_128(y_, y_, None, svh8, 1.0)
+        if self.bias is not None:
+            y += self.bias
+        return y
+
+
     def get_inner_weight_tensor(self, n_offset: int = 0, n_features: int | None = None):
         w = torch.empty((self.in_features, self.out_features), dtype = torch.half, device = self.trellis.device)
         ext.reconstruct(w, self.trellis, self.K, self.mcg, self.mul1)
@@ -262,6 +355,10 @@ class LinearEXL3:
 
     # Swap tensors to CPU (to free some space while quantizing)
     def swap_cpu(self):
+        # Drop the lazily built int8 cache with the GPU tensors; it rebuilds
+        # on the next int8 call (and stays empty when the path is off).
+        self._w8 = None
+        self._svh8 = None
         if self.swap_device is not None:
             return
         self.swap_device = self.trellis.device
