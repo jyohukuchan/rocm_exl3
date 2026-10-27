@@ -193,6 +193,20 @@ class Int8PrefillCpuTest(unittest.TestCase):
             self.assertNotIn("igemm_recon", calls.names)
             self.assertTrue(torch.isfinite(y.float()).all())
 
+    def test_no_igemm_backend_uses_exact_emulation(self):
+        calls = _Calls()
+        mod = _load_exl3(_ext_stub(calls, with_igemm=False))
+        with patch.object(mod, "int8_prefill", True):
+            lin = _fake_linear(mod)
+            x = torch.randn(200, 256, dtype=torch.float16)
+            real_emu = mod._exact_int32_gemm
+            with patch.object(mod, "_exact_int32_gemm",
+                              wraps=real_emu) as emu:
+                y = lin.forward(x, {}, None)
+                self.assertEqual(emu.call_count, 1)
+            self.assertNotIn("hgemm_recon", calls.names)
+            self.assertTrue(torch.isfinite(y.float()).all())
+
 
 if __name__ == "__main__":
     unittest.main()

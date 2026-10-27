@@ -299,9 +299,10 @@ class LinearEXL3:
                             dtype=torch.half, device=self.trellis.device)
             ext.reconstruct(w, self.trellis, self.K, self.mcg, self.mul1)
             with torch.inference_mode():
-                s = w.abs().amax(dim=0).clamp_min(1e-12) / 127.0
+                # fp32 scales: a half-rounded scale would add needless error.
+                s = w.float().abs().amax(dim=0).clamp_min(1e-12) / 127.0
                 self._w8 = (w.float() / s).round().clamp(-128, 127).to(torch.int8)
-                self._svh8 = (self.svh * s.to(self.svh.dtype)).contiguous()
+                self._svh8 = (self.svh.float() * s).to(self.svh.dtype).contiguous()
             del w
         return self._w8, self._svh8
 

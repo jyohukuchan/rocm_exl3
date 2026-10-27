@@ -182,6 +182,18 @@ per-expert MoE dequant path (small row counts per expert), the rotated-basis pip
 (input Hadamard → GEMM → output Hadamard) is kept. Set to `1` to force the rotated-basis
 pipeline everywhere, for A/B testing.
 
+### `EXL3_INT8_PREFILL` (default: `0`)
+
+Experimental INT8 W8A8 path for the reconstruct-then-GEMM prefill linears
+(RDNA2 prefill work; see `doc/w8a8_int8_prefill.md`). When enabled, eligible
+dense linears run the rotated basis with the inner trellis weights rounded
+once to a per-output-channel int8 grid (scales folded into a cached svh copy,
+so the epilogue is unchanged) and activations quantized to int8 per token;
+accumulation is exact int32. The int8 GEMM is `ext.igemm_recon` (rocBLAS int8
+on ROCm) with a bit-exact torch emulation as fallback. Graph-captured calls
+(`capture` in params) and the sliced lm_head stay on the fp16 path. Off by
+default; numeric and speed tradeoffs are recorded in the design doc, not here.
+
 ### `EXLLAMAV3_TUNE_CACHE` (default: platform cache dir)
 
 Override the path of the on-disk autotune cache for the cooperative GEMM kernels (kernel shape
