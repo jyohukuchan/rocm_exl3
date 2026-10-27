@@ -27,6 +27,9 @@ int8_prefill = os.environ.get("EXL3_INT8_PREFILL", "0") != "0"
 # 2^24, so every fp32 block product is bit-exact and the fp64 tail is too.
 _INT8_EMU_KBLOCK = 512
 
+# Shapes that already logged int8 engagement (one line per unique GEMM shape).
+_int8_logged_shapes = set()
+
 
 def _exact_int32_gemm(a8: torch.Tensor, w8: torch.Tensor) -> torch.Tensor:
     # Bit-exact (a8 int8) @ (w8 int8) in int32, via K-blocked fp32 products
@@ -309,6 +312,13 @@ class LinearEXL3:
 
     def _reconstruct_hgemm_int8(self, x, y, y_, rows, out_dtype):
         # Rotated-basis W8A8: input Hadamard, int8 GEMM, output Hadamard.
+        key = (rows, self.in_features, self.out_features)
+        if key not in _int8_logged_shapes:
+            _int8_logged_shapes.add(key)
+            print(f"EXL3_INT8_PREFILL engaged: rows={rows} "
+                  f"k={self.in_features} n={self.out_features} "
+                  f"backend={'igemm' if getattr(ext, 'igemm_recon', None) else 'emu'}",
+                  flush=True)
         xh = torch.empty_like(x)
         ext.had_r_128(x, xh, self.suh, None, 1.0)
         w8, svh8 = self._get_w8()
