@@ -27,6 +27,12 @@ int8_prefill = os.environ.get("EXL3_INT8_PREFILL", "0") != "0"
 # 2^24, so every fp32 block product is bit-exact and the fp64 tail is too.
 _INT8_EMU_KBLOCK = 512
 
+# Ablation for error attribution (dumps only, never for speed):
+# "" = full W8A8, "w" = int8 weights + fp32 activations, "a" = fp16 weights +
+# int8 activations. The single-side paths use fp32 matmuls on dequantized
+# operands, so each measures exactly one grid's error.
+_int8_ablate = os.environ.get("EXL3_INT8_ABLATE", "")
+
 # Shapes that already logged int8 engagement (one line per unique GEMM shape).
 _int8_logged_shapes = set()
 
@@ -318,6 +324,28 @@ class LinearEXL3:
                         dtype=torch.half, device=self.trellis.device)
         ext.reconstruct(w, self.trellis, self.K, self.mcg, self.mul1)
         w8, svh8 = self._quant_w8(w)
+        if _int8_ablate == "w":
+            # Weight-grid error only: fp32 activations, fp32 matmul on the
+            # dequantized int8 weights, original svh.
+            with torch.inference_mode():
+                y_.copy_((xh.float() @ (w8.float() * self._wscales(w))).to(y_.dtype))
+            del w
+            ext.had_r_128(y_, y_, None, self.svh, 1.0)
+            if self.bias is not None:
+                y += self.bias
+            return y
+        if _int8_ablate == "a":
+            # Activation-grid error only: fp16 weights, fp32 matmul on the
+            # dequantized int8 activations, original svh.
+            with torch.inference_mode():
+                sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+                a8 = (xh.float() / sa).round().clamp(-128, 127).to(torch.int8)
+                y_.copy_(((a8.float() * sa) @ w.float()).to(y_.dtype))
+            del w
+            ext.had_r_128(y_, y_, None, self.svh, 1.0)
+            if self.bias is not None:
+                y += self.bias
+            return y
         del w
         with torch.inference_mode():
             sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
@@ -336,6 +364,11 @@ class LinearEXL3:
         if self.bias is not None:
             y += self.bias
         return y
+
+    def _wscales(self, w):
+        # Recompute the per-channel weight scales (ablation path only).
+        with torch.inference_mode():
+            return w.float().abs().amax(dim=0).clamp_min(1e-12) / 127.0
 
 
     def get_inner_weight_tensor(self, n_offset: int = 0, n_features: int | None = None):

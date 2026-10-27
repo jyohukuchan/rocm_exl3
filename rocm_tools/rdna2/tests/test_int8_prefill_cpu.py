@@ -187,6 +187,28 @@ class Int8PrefillCpuTest(unittest.TestCase):
             self.assertNotIn("igemm_recon", calls.names)
             self.assertTrue(torch.isfinite(y.float()).all())
 
+    def test_ablate_w_measures_weight_grid_only(self):
+        calls = _Calls()
+        mod = _load_exl3(_ext_stub(calls, with_igemm=True))
+        with patch.object(mod, "int8_prefill", True), \
+             patch.object(mod, "_int8_ablate", "w"):
+            lin = _fake_linear(mod)
+            x = torch.randn(200, 256, dtype=torch.float16)
+            y = lin.forward(x, {}, None)
+            self.assertNotIn("igemm_recon", calls.names)
+            self.assertTrue(torch.isfinite(y.float()).all())
+
+    def test_ablate_a_measures_activation_grid_only(self):
+        calls = _Calls()
+        mod = _load_exl3(_ext_stub(calls, with_igemm=True))
+        with patch.object(mod, "int8_prefill", True), \
+             patch.object(mod, "_int8_ablate", "a"):
+            lin = _fake_linear(mod)
+            x = torch.randn(200, 256, dtype=torch.float16)
+            y = lin.forward(x, {}, None)
+            self.assertNotIn("igemm_recon", calls.names)
+            self.assertTrue(torch.isfinite(y.float()).all())
+
     def test_no_igemm_backend_uses_exact_emulation(self):
         calls = _Calls()
         mod = _load_exl3(_ext_stub(calls, with_igemm=False))
