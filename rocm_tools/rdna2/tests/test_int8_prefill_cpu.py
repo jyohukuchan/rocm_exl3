@@ -209,6 +209,17 @@ class Int8PrefillCpuTest(unittest.TestCase):
             self.assertNotIn("igemm_recon", calls.names)
             self.assertTrue(torch.isfinite(y.float()).all())
 
+    def test_ablate_s_uses_int_gemm_with_fp32_scales(self):
+        calls = _Calls()
+        mod = _load_exl3(_ext_stub(calls, with_igemm=True))
+        with patch.object(mod, "int8_prefill", True), \
+             patch.object(mod, "_int8_ablate", "s"):
+            lin = _fake_linear(mod)
+            x = torch.randn(200, 256, dtype=torch.float16)
+            y = lin.forward(x, {}, None)
+            self.assertIn("igemm_recon", calls.names)
+            self.assertTrue(torch.isfinite(y.float()).all())
+
     def test_no_igemm_backend_uses_exact_emulation(self):
         calls = _Calls()
         mod = _load_exl3(_ext_stub(calls, with_igemm=False))

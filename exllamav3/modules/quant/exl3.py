@@ -346,6 +346,26 @@ class LinearEXL3:
             if self.bias is not None:
                 y += self.bias
             return y
+        if _int8_ablate == "s":
+            # Scale-placement check: full int8 GEMM, but the per-channel
+            # weight scales stay in fp32 in the epilogue with the ORIGINAL
+            # svh (no fp16 svh8 rounding). Decides whether the W+A error is
+            # grid interaction or folded-scale rounding.
+            with torch.inference_mode():
+                sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+                a8 = (xh.float() / sa).round().clamp(-128, 127).to(torch.int8)
+                igemm = getattr(ext, "igemm_recon", None)
+                if igemm is not None:
+                    c = torch.empty((rows, self.out_features), dtype=torch.int32, device=x.device)
+                    igemm(a8, w8, c)
+                else:
+                    c = _exact_int32_gemm(a8, w8)
+                y_.copy_((c.float() * sa * self._wscales(w)).to(y_.dtype))
+            del w, c
+            ext.had_r_128(y_, y_, None, self.svh, 1.0)
+            if self.bias is not None:
+                y += self.bias
+            return y
         del w
         with torch.inference_mode():
             sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
