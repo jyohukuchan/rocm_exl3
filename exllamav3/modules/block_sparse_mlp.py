@@ -26,6 +26,17 @@ from .block_sparse_mlp_routing import (
 # rows take the reconstruct paths); EXL3_MOE_FUSED_ROWS overrides for tuning sweeps
 TEMP_ROWS_FUSED = int(os.environ.get("EXL3_MOE_FUSED_ROWS", 128))
 TEMP_ROWS_GRAPH = 32
+
+# INT8 MoE prototype (round 2 of the W8A8 prefill work, default off). When the
+# layer's gate/up experts share one hidden-side input vector (shared rotation)
+# and every expert inner matrix carries an int8 grid step s0, the expert input
+# is rotated and quantized ONCE per token and reused by all active experts,
+# with per-expert int8 GEMMs. Engages for prefill-sized batches only.
+int8_moe_prefill = os.environ.get("EXL3_INT8_PREFILL", "0") != "0"
+INT8_MOE_MIN_ROWS = int(os.environ.get("EXL3_INT8_MOE_MIN_ROWS", 32))
+
+# Shapes that already logged int8-MoE engagement (one line per module shape).
+_int8_moe_logged = set()
 # Batched reconstruct tier for the experts above the fused kernel's row capacity at prefill
 # (moe_batch_recon.py); EXL3_MOE_BATCH_RECON=0 restores the per-expert reconstruct loop
 BATCH_RECON = os.environ.get("EXL3_MOE_BATCH_RECON", "1") != "0"
@@ -955,6 +966,156 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             handled.update(grp)
         return handled
 
+    def _int8_moe_state(self):
+        # Cached eligibility for the INT8 MoE prototype: every gate/up/down
+        # expert must be an int8-grid LinearEXL3, and all gate/up input
+        # vectors must be bit-identical (the shared hidden-side rotation).
+        # Returns (su_shared, s0g, s0u, s0d) lists or None. The su comparison
+        # runs once per module; later forwards reuse the verdict.
+        cached = getattr(self, "_int8_moe_cached", None)
+        if cached is not None:
+            return cached or None
+        state = None
+        if (
+            int8_moe_prefill and getattr(ext, "igemm_recon", None) is not None
+            and self.gated and self.latent_in is None and self.interm_dtype == torch.half
+            and self.activation_fn in ("silu", "gelu") and self.cpu_split_first is None
+            and not self.cpu_offload and self.multi_gate is not None
+        ):
+            try:
+                inners_g = [l.inner for l in self.gates]
+                inners_u = [l.inner for l in self.ups]
+                inners_d = [l.inner for l in self.downs]
+                from .quant.exl3 import LinearEXL3
+                inners = inners_g + inners_u + inners_d
+                if all(isinstance(m, LinearEXL3) for m in inners) and all(
+                    m.s0 is not None for m in inners
+                ) and all(
+                    m.in_features == self.expert_size for m in inners_g + inners_u
+                ) and all(
+                    m.out_features == self.expert_size for m in inners_d
+                ):
+                    su0 = inners_g[0].suh
+                    if all(torch.equal(m.suh, su0) for m in inners_g[1:] + inners_u):
+                        state = (
+                            su0,
+                            [m.s0_value for m in inners_g],
+                            [m.s0_value for m in inners_u],
+                            [m.s0_value for m in inners_d],
+                        )
+            except Exception:
+                state = None
+        self._int8_moe_cached = state or False
+        key = (self.key, self.expert_size, self.intermediate_size)
+        if state is not None and key not in _int8_moe_logged:
+            _int8_moe_logged.add(key)
+            print(f"EXL3_INT8_PREFILL MoE engaged: {self.key} "
+                  f"experts={self.num_local_experts} k={self.expert_size} "
+                  f"n={self.intermediate_size}", flush=True)
+        return state
+
+    def _int8_moe_go(self, bsz, y, params) -> bool:
+        # Prefill-sized batches only, never under capture/measure/CPU paths.
+        return (
+            bsz >= INT8_MOE_MIN_ROWS and "capture" not in params
+            and not params.get("autosplit_measure") and self._int8_moe_state() is not None
+        )
+
+    def _recon_int8(self, inner, s0_value):
+        # Decode one expert trellis to int8 with its stored grid step (exact:
+        # the states were chosen for this grid, so no amax is computed).
+        k, n = inner.in_features, inner.out_features
+        w = torch.empty((k, n), dtype = torch.half, device = inner.trellis.device)
+        ext.reconstruct(w, inner.trellis, inner.K, inner.mcg, inner.mul1)
+        with torch.inference_mode():
+            w8 = (w.float() / s0_value).round().clamp(-128, 127).to(torch.int8)
+        del w
+        return w8
+
+    def _forward_int8_moe(self, y, bsz, selected_experts, routing_weights, params):
+        # INT8 MoE prototype: one shared rotation + activation quant per
+        # token, per-expert int8 GEMMs, fp32 epilogue, per-expert output
+        # Hadamard with the stored svh. Mirrors the unfolded batch-tier math.
+        dev = y.device
+        su_shared, s0g, s0u, s0d = self._int8_moe_state()
+        num_ex = self.num_local_experts or self.num_experts
+
+        with torch.inference_mode():
+            xh = torch.empty_like(y)
+            ext.had_r_128(y, xh, su_shared, None, 1.0)
+            sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+            a8 = (xh.float() / sa).round().clamp(-128, 127).to(torch.int8)
+            del xh
+
+        # Flatten assignments (same mapping as the fp16 tiers, incl. the
+        # sentinel bucket for picks outside this module's expert slice)
+        num_tokens, top_k = selected_experts.shape
+        flat_expert_global = selected_experts.reshape(-1)
+        flat_weight = routing_weights.reshape(-1)
+        flat_token = buffered_interleaved_arange(num_tokens, top_k, device = dev)
+        if self.num_local_experts == self.num_experts:
+            flat_expert_local = flat_expert_global
+        else:
+            flat_expert_local = flat_expert_global - self.routing_first
+            valid = (flat_expert_local >= 0) & (flat_expert_local < num_ex)
+            flat_expert_local = torch.where(
+                valid, flat_expert_local, torch.full_like(flat_expert_local, num_ex))
+        order = flat_expert_local.argsort()
+        token_sorted = flat_token[order]
+        weight_sorted = flat_weight[order]
+        expert_count = torch.bincount(flat_expert_local, minlength = num_ex + 1)
+        expert_count_list = expert_count.tolist()
+        starts = [0]
+        for c in expert_count_list:
+            starts.append(starts[-1] + c)
+
+        out = torch.zeros((y.shape[0], self.expert_size), dtype = torch.float, device = dev)
+        igemm = ext.igemm_recon
+        for e in range(num_ex):
+            count = expert_count_list[e]
+            if not count:
+                continue
+            seg = slice(starts[e], starts[e] + count)
+            top = token_sorted[seg]
+            wgt = weight_sorted[seg].unsqueeze(1)
+            a8e = a8.index_select(0, top)
+            sae = sa.index_select(0, top)
+            gi, ui, di = self.gates[e].inner, self.ups[e].inner, self.downs[e].inner
+
+            Wg8 = self._recon_int8(gi, s0g[e])
+            Wu8 = self._recon_int8(ui, s0u[e])
+            Cg = torch.empty((count, gi.out_features), dtype = torch.int32, device = dev)
+            Cu = torch.empty((count, ui.out_features), dtype = torch.int32, device = dev)
+            igemm(a8e, Wg8, Cg)
+            igemm(a8e, Wu8, Cu)
+            del Wg8, Wu8
+            g = (Cg.float() * sae * s0g[e]).to(torch.half)
+            u = (Cu.float() * sae * s0u[e]).to(torch.half)
+            del Cg, Cu
+            ext.had_r_128(g, g, None, gi.svh, 1.0)
+            ext.had_r_128(u, u, None, ui.svh, 1.0)
+            a = torch.empty_like(u)
+            self.activation_fn_call(g, u, a, self.act_limit)
+            del g, u
+
+            with torch.inference_mode():
+                sad = a.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+                a8d = (a.float() / sad).round().clamp(-128, 127).to(torch.int8)
+            del a
+            Wd8 = self._recon_int8(di, s0d[e])
+            Cd = torch.empty((count, di.out_features), dtype = torch.int32, device = dev)
+            igemm(a8d, Wd8, Cd)
+            del a8d, Wd8
+            d = Cd.float() * sad * s0d[e]
+            del Cd
+            d = d.to(torch.half)
+            ext.had_r_128(d, d, None, di.svh, 1.0)
+            d = d.to(torch.float)
+            d.mul_(wgt)
+            out.index_add_(0, top, d)
+            del d
+        return out
+
     @override
     def unload(self):
         self.cpu_unload()
@@ -1055,6 +1216,13 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         # Empty slice
         elif self.intermediate_size == 0 or self.num_local_experts == 0:
             final_hidden_states = torch.zeros(eshape, dtype = torch.float, device = y.device)
+
+        # INT8 MoE prototype (round 2 of the W8A8 prefill work): one shared
+        # rotation + activation quant per token, per-expert int8 GEMMs. The
+        # tail below (post norm, shared experts, TP reduce) runs unchanged.
+        elif self._int8_moe_go(bsz, y, params):
+            final_hidden_states = self._forward_int8_moe(y, bsz, selected_experts, routing_weights, params)
+            final_hidden_states = final_hidden_states.reshape(eshape)
 
         # Torch/C++/fused path
         elif (
