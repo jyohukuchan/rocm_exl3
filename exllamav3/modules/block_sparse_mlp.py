@@ -1288,14 +1288,16 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         act_ids = torch.tensor([e for e, _, _ in entries], dtype=torch.int64, device=dev)
 
         # Padded flat maps: token ids (sentinel T = zero row), routing weights
-        # (sentinel 0). One pass over entries; slice copies only.
-        tok_pad = torch.full((B * cmax,), T, dtype=torch.long, device=dev)
-        w_pad = torch.zeros((B * cmax,), dtype=torch.float, device=dev)
-        for b, (e, off, n) in enumerate(entries):
-            r0 = b * cmax
-            s = starts[e] + off
-            tok_pad[r0:r0 + n] = token_sorted[s:s + n]
-            w_pad[r0:r0 + n] = weight_sorted[s:s + n].float()
+        # (sentinel 0). Fully vectorized (the per-entry slice-copy loop cost
+        # ~2ms/layer at 2048 tokens).
+        pos = torch.arange(cmax, device=dev).unsqueeze(0)
+        n_b = torch.tensor([n for _, _, n in entries], dtype=torch.long, device=dev)
+        s_b = torch.tensor([starts[e] + off for e, off, _ in entries],
+                           dtype=torch.long, device=dev)
+        valid = pos < n_b.unsqueeze(1)
+        src = torch.where(valid, s_b.unsqueeze(1) + pos, 0)
+        tok_pad = torch.where(valid.view(-1), token_sorted[src.view(-1)], T)
+        w_pad = torch.where(valid.view(-1), weight_sorted[src.view(-1)].float(), 0.0)
 
         ev = []
         def tick(name, fn):
