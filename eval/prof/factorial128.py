@@ -71,4 +71,18 @@ with torch.inference_mode():
         op = mlp._forward_int8_moe(y, T, sel, w, {})
         d = (o1.float() - op.float()).abs()
         print(f"{tag}: g-vs-p maxabs={d.max().item():.3e} mean={d.mean().item():.3e}", flush=True)
+        if d.max().item() > 1e-3:
+            rm = d.max(dim=1).values
+            big = (rm > 0.1).nonzero().flatten().tolist()
+            from collections import Counter
+            cnt = Counter()
+            for e in range(E):
+                cnt[e] = int((sel == e).sum().item())
+            print(f"   {len(big)} rows>0.1, e.g. rows {big[:6]}", flush=True)
+            for r in big[:4]:
+                ex = sel[r].tolist()
+                print(f"   row {r}: experts {ex} counts {[cnt[e] for e in ex]}", flush=True)
+            # counts histogram
+            import statistics
+            print(f"   counts: max={max(cnt.values())} med={statistics.median(cnt.values())}", flush=True)
 print("done", flush=True)
