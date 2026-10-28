@@ -373,3 +373,30 @@ assert に落ちた。修正は 1 行:
 - (ii) ablation はゲート既決のため実施しない。
   本ブランチは実験記録として保持。`EXL3_INT8_PREFILL` 系は
   デフォルト off のまま残し、本番挙動に影響させない。
+
+---
+
+## ラウンド 4: プロファイリングと融合 INT8 MoE (feat/w8a8-fused-prefill、進行中)
+
+### 計測方針の変更: rocprofv3 不可 → CUDA イベント計測
+
+- `rocprofv3 --kernel-trace` は本コンテナでハングする。
+  自明な matmul (`python3 -c "import torch..."`) でも終了せず、
+  別試行 (`prof_one.py` 2048、`/tmp/tiny_hip.py`) も 0% CPU のまま
+  進行しなかった。SDK 初期化後の futex 待機で固まる模様。
+- 代替としてイベント計測ハーネスを `eval/prof/` に追加
+  (ライブラリ無改修。`torch.cuda.Event` による device time):
+  - `prof_one.py`: 起動確認用 (warmup + N 回 full prefill)。
+  - `agg_trace.py`: (rocprofv3 用だったが未使用。将来用に保持)
+  - `stage_profile.py`: ブロック/attention/MLP(MoE) の forward を
+    モンキーパッチで包み、層別・部位別の device time を集計。
+    exllamav3 の Module は torch.nn ではないため hook 方式は不可、
+    前方/後方ラッパ + イベント対で計測する。
+  - `kernel_microbench.py`: 実テンソルでの単体計測
+    (`reconstruct` / `reconstruct_had_slice` / `hgemm_recon` /
+    `igemm_recon` / `had_r_128` / 量子化 / エピローグ)。
+- 既知の落とし穴: コンテナ内 `HIP_VISIBLE_DEVICES=0` での初回
+  ロードは約 4.6GB 読込後に進行停止 (ユーザ空間で 2 スレッドが
+  空転、IO・GPU とも無変化。`kill -9` はコンテナ内 PID で行う)。
+  ラウンド 3 の bench は `--device 1` で成功しているため、
+  以降の計測は device 1 で行う。
