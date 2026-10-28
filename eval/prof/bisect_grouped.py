@@ -160,5 +160,60 @@ with torch.inference_mode():
     gg2 = gg.view(-1, N)
     ext.had_r_128_batch(gg2, gg2, None, C["svg"][ef:ef+1], torch.tensor([0], dtype=torch.int64, device=dev), len(e0rows), 1.0)
     dg = (gg2.float() - gp.float()).abs()
-    print(f"gate epilogue grouped[0] vs proto: maxabs={dg.max().item():.3e}", flush=True)
+    print(f"gate epilogue grouped[ef] vs proto: maxabs={dg.max().item():.3e}", flush=True)
+
+    # Full up + silu + down chain for expert ef, grouped-style vs proto
+    ui = mlp.gates[ef].inner  # placeholder, replaced below
+    ui = mlp.ups[ef].inner
+    di = mlp.downs[ef].inner
+    s0u = C["s0u"][ef, 0, 0].item()
+    s0d = C["s0d"][ef, 0, 0].item()
+    # proto up
+    w8pu = mlp._recon_int8(ui, torch.tensor(s0u, device=dev))
+    Cu0 = torch.empty((len(e0rows), ui.out_features), dtype=torch.int32, device=dev)
+    ext.igemm_recon(a8e, w8pu, Cu0)
+    up = (Cu0.float() * sae * torch.tensor(s0u, device=dev)).to(torch.half)
+    ext.had_r_128(up, up, None, ui.svh, 1.0)
+    ap = torch.empty_like(up)
+    mlp.activation_fn_call(gp, up, ap, mlp.act_limit)
+    # grouped up
+    t2 = C["it"]["u"]
+    WfpU = torch.empty((1, t2["K"], t2["N"]), dtype=torch.half, device=dev)
+    ext.reconstruct_batch(WfpU, t2["ptrs"][ef:ef+1], t2["bK"], t2["mcg"], t2["mul1"])
+    W8U = (WfpU.float() / C["s0u"][ef]).round().clamp(-128, 127).to(torch.int8)
+    CuB = torch.empty((1, len(e0rows), t2["N"]), dtype=torch.int32, device=dev)
+    ext.igemm_batched(Xb.view(1, -1, t2["K"]), W8U, CuB)
+    ug = (CuB.float() * SAb.view(1, -1, 1) * C["s0u"][ef]).to(torch.half)
+    ug2 = ug.view(-1, t2["N"])
+    ext.had_r_128_batch(ug2, ug2, None, C["svu"][ef:ef+1], torch.tensor([0], dtype=torch.int64, device=dev), len(e0rows), 1.0)
+    du = (ug2.float() - up.float()).abs()
+    print(f"up epilogue grouped vs proto: maxabs={du.max().item():.3e}", flush=True)
+    ag = torch.empty_like(ug2)
+    mlp.activation_fn_call(gg2, ug2, ag, mlp.act_limit)
+    da = (ag.float() - ap.float()).abs()
+    print(f"silu grouped vs proto: maxabs={da.max().item():.3e}", flush=True)
+    # proto down
+    with torch.inference_mode():
+        sadp = ap.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+        a8dp = (ap.float() / sadp).round().clamp(-128, 127).to(torch.int8)
+    w8pd = mlp._recon_int8(di, torch.tensor(s0d, device=dev))
+    Cd0 = torch.empty((len(e0rows), di.out_features), dtype=torch.int32, device=dev)
+    ext.igemm_recon(a8dp, w8pd, Cd0)
+    dp = (Cd0.float() * sadp * torch.tensor(s0d, device=dev)).to(torch.half)
+    ext.had_r_128(dp, dp, None, di.svh, 1.0)
+    # grouped down
+    with torch.inference_mode():
+        sadg = ag.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+        XdB = (ag.float() / sadg).round().clamp(-128, 127).to(torch.int8)
+    t3 = C["it"]["d"]
+    WfpD = torch.empty((1, t3["K"], t3["N"]), dtype=torch.half, device=dev)
+    ext.reconstruct_batch(WfpD, t3["ptrs"][ef:ef+1], t3["bK"], t3["mcg"], t3["mul1"])
+    W8D = (WfpD.float() / C["s0d"][ef]).round().clamp(-128, 127).to(torch.int8)
+    CdB = torch.empty((1, len(e0rows), t3["N"]), dtype=torch.int32, device=dev)
+    ext.igemm_batched(XdB.view(1, -1, t3["K"]), W8D, CdB)
+    dg2 = (CdB.float() * sadg.view(1, -1, 1) * C["s0d"][ef]).to(torch.half)
+    dg2v = dg2.view(-1, t3["N"])
+    ext.had_r_128_batch(dg2v, dg2v, None, C["svd"][ef:ef+1], torch.tensor([0], dtype=torch.int64, device=dev), len(e0rows), 1.0)
+    dd = (dg2v.float() - dp.float()).abs()
+    print(f"down epilogue grouped vs proto: maxabs={dd.max().item():.3e}", flush=True)
 print("done", flush=True)
