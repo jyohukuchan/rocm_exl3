@@ -70,12 +70,15 @@ def main():
 
     config = Config.from_directory(model_dir)
     model = Model.from_config(config)
-    cache = Cache(model, max_num_tokens=L + 2048, max_batch_size=1)
     model.load(device=torch.device("cuda:0"))
     print(f"loaded {model_dir}", flush=True)
     tokenizer = Tokenizer.from_config(config)
-    gen = Generator(model=model, cache=cache, tokenizer=tokenizer,
-                    max_chunk_size=CH)
+
+    def fresh_gen():
+        _cache = Cache(model, max_num_tokens=L + 2048, max_batch_size=1)
+        _cache.allocate()
+        return Generator(model=model, cache=_cache, tokenizer=tokenizer,
+                         max_chunk_size=CH)
 
     # Text-only prompt of exactly L tokens (repeat + truncate; no vision).
     enc = tokenizer.encode(
@@ -105,9 +108,6 @@ def main():
                     if ttft is None and res.get("text"):
                         ttft = time.perf_counter() - t0
             torch.cuda.synchronize()
-            if r == 0:
-                print(f"L={L} CH={CH} warmup TTFT={ttft:.2f}s", flush=True)
-                continue
             acc = {}
             for (kind, idx), pairs in TIMES.items():
                 ms = sum(e0.elapsed_time(e1) for e0, e1 in pairs)
@@ -116,6 +116,11 @@ def main():
             sums["ttft_s"] = round(ttft, 3)
             sums["toks"] = round(L / ttft, 1)
             result[f"run{r}"] = sums
+            if r == 0:
+                print(f"L={L} CH={CH} warmup TTFT={ttft:.2f}s " +
+                      json.dumps({k: v for k, v in sums.items()
+                                  if not k.startswith("lin:")}), flush=True)
+                continue
             big = {k: v for k, v in sums.items() if not k.startswith("lin:")}
             print(f"L={L} run{r}: " + json.dumps(big), flush=True)
     if out:
