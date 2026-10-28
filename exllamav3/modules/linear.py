@@ -409,7 +409,11 @@ class Linear(Module):
         mcg = opt(".mcg", "cpu")
         mul1 = opt(".mul1", "cpu")
         bias = opt(".bias", self.device)
-        s0 = opt(".s0", "cpu")
+        # s0 is consumed at init time (LinearEXL3 reads s0.item()), so like su/sv
+        # it must bypass deferred loading, which would hand back an unfilled
+        # placeholder. (Round 3: every s0-bearing model failed inference load
+        # with "s0 must be positive" until this flag was added.)
+        s0 = opt(".s0", "cpu", no_defer = True)
         self.inner = LinearEXL3(
             self.config,
             self.in_features,
