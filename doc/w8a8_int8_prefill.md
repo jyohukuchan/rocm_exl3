@@ -400,3 +400,55 @@ assert に落ちた。修正は 1 行:
   空転、IO・GPU とも無変化。`kill -9` はコンテナ内 PID で行う)。
   ラウンド 3 の bench は `--device 1` で成功しているため、
   以降の計測は device 1 で行う。
+
+### プロファイリング結果 (fp16 パス、単一 V620、(i) モデル)
+
+`eval/prof/stage_profile.py` (forward のモンキーパッチ + CUDA イベント、
+warmup 除く 3 回平均) の結果。壁時間からの tok/s はベースライン
+(450/890/865) と一致し、計測の妥当性を確認済み。
+
+| 長さ | 層合計 | attention | MoE (mlp) | norm 等 | 壁時間 | tok/s |
+|---|---|---|---|---|---|---|
+| 512 | 1115.6ms | 100.0 (9%) | 1012.7 (**91%**) | 3.0 | 1.128s | 454 |
+| 2048 | 2263.9ms | 469.4 (21%) | 1786.5 (**79%**) | 8.0 | 2.308s | 887 |
+| 8192 | 8999.7ms | 4175.3 (46%) | 4781.6 (**53%**) | 42.9 | 9.184s | 892 |
+
+結論: 512/2048 では MoE が支配的 (9 割/8 割)。
+8192 では attention が 46% を占め、MoE だけ速くしても
+1.2x はぎりぎり (MoE 1.5x で全体 1.19x の計算)。
+
+`eval/prof/kernel_microbench.py` (実テンソル単体、中央値):
+
+| 操作 | 形状 | 時間 | 備考 |
+|---|---|---|---|
+| reconstruct (trellis 復号) | expert 2048x768 | 0.039ms | 復号は安い。律速ではない |
+| hgemm fp16 | M=128,K=2048,N=768 | 0.241ms | int8 対比 1.14x に留まる |
+| igemm int8 | 同上 | 0.211ms | 小 M・小 N では DP4A が効かない |
+| 活性量子化 (amax+除算+丸め) | M=128,K=2048 | 0.146ms | expert 毎の固定費 |
+| int32 エピローグ (scale) | M=128,N=768 | 0.057ms | — |
+| reconstruct | dense 2048x151936 (lm_head) | 1.9ms | — |
+| hgemm fp16 | M=512/2048,K=2048,N=151936 | 16.5/64.9ms | — |
+| igemm int8 | 同上 | 7.8/30.9ms | **2.1x**。大 M・大 N では DP4A が効く |
+
+読み: 現 MoE-int8 (per-expert 3 GEMM、約 0.48ms/seg) の病因は
+復号ではなく、小規模 GEMM の効率と起動回数である。
+128 experts x 3 launches = 384 launches/層が約 60ms/層を生む。
+fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
+
+### 設計: グループ化 INT8 MoE (v1)
+
+- 1 層あたり GEMM を 2 発に集約する。gate/up は入力行を共有する
+  ため重みを N 方向に結合 (N=1536) し 1 発、down を 1 発。
+  トークンは expert 別に事前整列 (既存の order/counts を再利用)、
+  パディング行は入力 0 埋め (int8 GEMM の 0 行は厳密に 0 を出す)。
+- 重み復号は当面 per-expert のまま (`_recon_int8` を slab へ直書き。
+  約 0.039ms x 384 = 15ms/層の上限。律速になれば
+  `reconstruct_batch` 化 = v2)。
+- 新規ネイティブは `igemm_batched` 1 本のみ
+  (`cublasGemmStridedBatchedEx`、int8→int32。`hgemm_batched`
+  と同型)。エピローグは slab 上のベクトル演算 + 既存
+  `had_r_128_batch` で融合不要にする。
+- 試算 (2048 tok): MoE FLOP/層 = 154GFLOP。fp16 fused は約
+  4.2TFLOPS 実効。グループ int8 が 6TFLOPS に届けば MoE
+  約 26ms/層 → forward 約 1.78s → 約 1150tok/s = **1.30x**。
+  8192 では MoE 1.5x でも全体 1.19x のため、要実測。

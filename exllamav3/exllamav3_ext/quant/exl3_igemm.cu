@@ -25,6 +25,68 @@
 #include "exl3_devctx.cuh"
 #include <limits>
 
+void igemm_batched
+(
+    at::Tensor a,
+    at::Tensor w,
+    at::Tensor c
+)
+// Batched row-major C[b] = A[b] @ W[b], A/W int8, C int32, one rocBLAS/
+// cuBLAS strided-batched launch for the grouped INT8 MoE path (gate/up
+// share one launch via an N-concatenated weight slab). All three slabs
+// must be contiguous; batch/ M/K/N come from the tensor shapes.
+{
+    const at::cuda::OptionalCUDAGuard device_guard(a.device());
+
+    TORCH_CHECK_DTYPE(a, kChar);
+    TORCH_CHECK_DTYPE(w, kChar);
+    TORCH_CHECK_DTYPE(c, kInt);
+    TORCH_CHECK_DIM(a, 3);
+    TORCH_CHECK_DIM(w, 3);
+    TORCH_CHECK_DIM(c, 3);
+    TORCH_CHECK(a.is_contiguous() && w.is_contiguous() && c.is_contiguous(),
+                "igemm_batched: slabs must be contiguous");
+    TORCH_CHECK_SHAPES(a, 0, w, 0, 1);
+    TORCH_CHECK_SHAPES(a, 0, c, 0, 1);
+    TORCH_CHECK_SHAPES(a, 2, w, 1, 1);
+    TORCH_CHECK_SHAPES(a, 1, c, 1, 1);
+    TORCH_CHECK_SHAPES(w, 2, c, 2, 1);
+
+    int batch = a.size(0);
+    int size_m = a.size(1);
+    int size_k = a.size(2);
+    int size_n = w.size(2);
+    if (!batch || !size_m || !size_n || !size_k) return;
+
+    const int8_t* a_ptr = (const int8_t*) a.data_ptr();
+    const int8_t* w_ptr = (const int8_t*) w.data_ptr();
+
+    cublasHandle_t cublas_handle = at::cuda::getCurrentCUDABlasHandle();
+    cublasSetStream(cublas_handle, at::cuda::getCurrentCUDAStream().stream());
+    cublasSetPointerMode(cublas_handle, CUBLAS_POINTER_MODE_HOST);
+    int device;
+    cudaGetDevice(&device);
+    void* ws = DevCtx::instance().get_ws(device);
+    cublasSetWorkspace(cublas_handle, ws, WORKSPACE_SIZE);
+
+    int32_t alpha_ = 1;
+    int32_t beta_ = 0;
+    auto r = cublasGemmStridedBatchedEx
+    (
+        cublas_handle,
+        CUBLAS_OP_N, CUBLAS_OP_N,
+        size_n, size_m, size_k,
+        &alpha_, w_ptr, CUDA_R_8I, size_n, (long long) size_k * size_n,
+                 a_ptr, CUDA_R_8I, size_k, (long long) size_m * size_k,
+        &beta_,  c.data_ptr(), CUDA_R_32I, size_n, (long long) size_m * size_n,
+        batch,
+        CUBLAS_COMPUTE_32I,
+        CUBLAS_GEMM_DEFAULT
+    );
+    cublas_check(r);
+    cuda_check(cudaPeekAtLastError());
+}
+
 void igemm_recon
 (
     at::Tensor a,

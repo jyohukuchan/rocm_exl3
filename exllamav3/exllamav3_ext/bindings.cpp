@@ -208,6 +208,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def("hgemm_exact_group", &hgemm_exact_group, "original-shape per-expert GEMMs");
     m.def("hgemm_recon", &hgemm_recon, "hgemm_recon");
     m.def("igemm_recon", &igemm_recon, "igemm_recon");
+    m.def("igemm_batched", &igemm_batched, "igemm_batched");
     m.def("hgemm_f16acc", &hgemm_f16acc, "hgemm_f16acc");
     m.def("hgemm_f16acc_status", &hgemm_f16acc_status, "hgemm_f16acc_status");
     m.def("rope", &rope, "rope");
