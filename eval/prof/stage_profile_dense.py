@@ -64,7 +64,6 @@ def main():
     from exllamav3.modules import gated_delta_net as G
     from exllamav3.modules import mlp as P
     from exllamav3.modules.quant.exl3 import LinearEXL3
-    from exllamav3.modules.linear import Linear
 
     for cls in (T.TransformerBlock, T.ParallelDecoderBlock):
         wrap(cls, "layer")
@@ -72,8 +71,6 @@ def main():
     wrap(G.GatedDeltaNet, "gdn")
     wrap(P.GatedMLP, "mlp")
     wrap(LinearEXL3, "lin")
-    if Linear is not LinearEXL3:
-        wrap(Linear, "lin")
 
     config = Config.from_directory(model_dir)
     model = Model.from_config(config)
