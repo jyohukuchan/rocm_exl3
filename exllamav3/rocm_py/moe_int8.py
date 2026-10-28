@@ -20,6 +20,22 @@ import triton.language as tl
 
 
 @triton.jit
+def _rint_half_even(x):
+    # Round-half-to-even matching torch.round (banker's). tl.math has no
+    # rint on this backend, and half-up (+0.5 floor) differs on exact .5,
+    # which real grid-exact weights do hit (see expert-43 saga).
+    fx = tl.floor(x)
+    d = x - fx
+    is_even = (fx * 0.5) == tl.floor(fx * 0.5)
+    q = tl.where(d < 0.5, fx, tl.where(d > 0.5, fx + 1.0, tl.where(is_even, fx, fx + 1.0)))
+    # Non-finite inputs never occur here (finite fp16 / positive fp32), but
+    # keep torch.round semantics if they do (round(inf) = inf -> clamps).
+    q = tl.where(x == float("inf"), float("inf"), q)
+    q = tl.where(x == float("-inf"), float("-inf"), q)
+    return q
+
+
+@triton.jit
 def _w8quant_kernel(
     WFP,
     S0,
@@ -33,7 +49,7 @@ def _w8quant_kernel(
     mask = offs < KN
     s0 = tl.load(S0 + b)
     x = tl.load(WFP + b * KN + offs, mask).to(tl.float32)
-    q = tl.math.round(x / s0)
+    q = _rint_half_even(x / s0)
     q = tl.clamp(q, -128, 127).to(tl.int8)
     tl.store(W8 + b * KN + offs, q, mask)
 
