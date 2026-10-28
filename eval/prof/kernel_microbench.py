@@ -72,7 +72,11 @@ def main():
     while stack:
         m = stack.pop()
         visit(m)
-        for attr in vars(m).values():
+        try:
+            attrs = vars(m).values()
+        except TypeError:
+            continue
+        for attr in attrs:
             if attr is None or attr is m:
                 continue
             cn = type(attr).__name__
