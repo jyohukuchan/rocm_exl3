@@ -44,10 +44,13 @@ INT8_MOE_GROUPED = os.environ.get("EXL3_INT8_MOE_GROUPED", "1") != "0"
 # Smaller = less padding but more batch entries; 128-192 is the sweet spot.
 INT8_MOE_ROW_CAP = int(os.environ.get("EXL3_INT8_MOE_ROW_CAP", 160))
 try:
-    from ..rocm_py.moe_int8 import quant_w8_slab
+    from ..rocm_py.moe_int8 import quant_w8_slab, gu_epilog_had, dquant_rowwise, d_epilog_had
     _HAS_W8QUANT = True
 except Exception:
     quant_w8_slab = None
+    gu_epilog_had = None
+    dquant_rowwise = None
+    d_epilog_had = None
     _HAS_W8QUANT = False
 
 # Shapes that already logged int8-MoE engagement (one line per module shape).
@@ -1337,28 +1340,17 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         Cg = grouped_gemm(Xgu, "g")
         Cu = grouped_gemm(Xgu, "u")
         del Xgu
-        # In-place epilogue: peak 3 slabs instead of 5 (OOM headroom).
+        # Fused GU epilogue + Hadamard (single Triton pass; peak 2 slabs).
         def _epigu():
-            with torch.inference_mode():
-                g = Cg.float()
-                g *= SAslab
-                g *= s0g_b
-                g = g.to(torch.half)
-                u = Cu.float()
-                u *= SAslab
-                u *= s0u_b
-                u = u.to(torch.half)
-            return g, u
-        g, u = tick("epigu", _epigu)
+            gg = torch.empty((B * cmax, C["it"]["g"]["N"]), dtype=torch.half, device=dev)
+            uu = torch.empty_like(gg)
+            gu_epilog_had(Cg.view(B * cmax, -1), Cu.view(B * cmax, -1),
+                          SAslab.view(B * cmax, 1),
+                          s0g_b.reshape(-1), s0u_b.reshape(-1),
+                          C["svg"], C["svu"], act_ids, cmax, gg, uu)
+            return gg, uu
+        g2, u2 = tick("epigu", _epigu)
         del Cg, Cu
-        def _hadgu():
-            g2 = g.view(B * cmax, -1)
-            u2 = u.view(B * cmax, -1)
-            ext.had_r_128_batch(g2, g2, None, C["svg"], act_ids, cmax, 1.0)
-            ext.had_r_128_batch(u2, u2, None, C["svu"], act_ids, cmax, 1.0)
-            return g2, u2
-        g2, u2 = tick("hadgu", _hadgu)
-        del g, u
         def _silu():
             aa = torch.empty_like(u2)
             self.activation_fn_call(g2, u2, aa, self.act_limit)
@@ -1367,34 +1359,27 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         del g2, u2
 
         def _dquant():
-            with torch.inference_mode():
-                s = a.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
-                X = (a.float() / s).round().clamp(-128, 127).to(torch.int8)
-            return s, X
+            ss = torch.empty((B * cmax, 1), dtype=torch.float, device=dev)
+            XX = torch.empty((B * cmax, C["it"]["d"]["K"]), dtype=torch.int8, device=dev)
+            dquant_rowwise(a, ss, XX)
+            return ss, XX
         sad, Xd = tick("dquant", _dquant)
         del a
         Cd = grouped_gemm(Xd.view(B, cmax, -1), "d")
         del Xd
         def _epid():
-            with torch.inference_mode():
-                dd = Cd.float()
-                dd *= sad.view(B, cmax, 1)
-                dd *= s0d_b
-                dd = dd.to(torch.half)
+            dd = torch.empty((B * cmax, C["it"]["d"]["N"]), dtype=torch.half, device=dev)
+            d_epilog_had(Cd.view(B * cmax, -1), sad,
+                         s0d_b.reshape(-1), C["svd"], act_ids, cmax, dd)
             return dd
-        d = tick("epid", _epid)
+        d2 = tick("epid", _epid)
         del Cd
-        def _hadd():
-            d2 = d.view(B * cmax, -1)
-            ext.had_r_128_batch(d2, d2, None, C["svd"], act_ids, cmax, 1.0)
-            return d2
-        d2 = tick("hadd", _hadd)
         def _accum():
             with torch.inference_mode():
                 dff = d2.to(torch.float).mul_(w_pad.unsqueeze(1))
             return dff
         df = tick("accum_prep", _accum)
-        del d, d2
+        del d2
         def _indexadd():
             for b, (_, _, n) in enumerate(entries):
                 r0 = b * cmax
