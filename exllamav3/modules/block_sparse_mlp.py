@@ -39,8 +39,10 @@ INT8_MOE_MIN_ROWS = int(os.environ.get("EXL3_INT8_MOE_MIN_ROWS", 32))
 # the per-expert prototype for A/B. Requires ext.igemm_batched (else fallback).
 INT8_MOE_GROUPED = os.environ.get("EXL3_INT8_MOE_GROUPED", "1") != "0"
 # Max rows per slab entry; experts above this split into multiple entries.
-# Bounds all grouped slabs (OOM fix for skewed routing at long contexts).
-INT8_MOE_ROW_CAP = int(os.environ.get("EXL3_INT8_MOE_ROW_CAP", 512))
+# Bounds all grouped slabs and caps padding waste under skewed routing
+# (real routers are heavily skewed: cmax=374 at mean 128 was measured).
+# Smaller = less padding but more batch entries; 128-192 is the sweet spot.
+INT8_MOE_ROW_CAP = int(os.environ.get("EXL3_INT8_MOE_ROW_CAP", 160))
 try:
     from ..rocm_py.moe_int8 import quant_w8_slab
     _HAS_W8QUANT = True
