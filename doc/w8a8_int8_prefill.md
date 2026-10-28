@@ -574,7 +574,7 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
 - 目的: 優先度付け (Flash Next では attention INT8 の寄与が
   小さく GDN カーネルが律速かもしれない)。
 
-### レジューム記録 (10/28 16:00Z 頃。中断時はここから再開)
+### レジューム記録 (10/28 16:00Z 頃。以下は親 PIVOT により無効。上書き済み)
 
 - ブランチ `feat/w8a8-fused-prefill`、legacy-fork に push 済み。
 - v3 + gather ベクトル化の再ベンチ未実施
@@ -599,25 +599,63 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
   全 19,295,872 桁が nonfinite。KLD 比較は assert で停止。
   すなわち grouped INT8 パスがこの入力で NaN を出す。
 
-### NaN の追跡 (進行中。未解決)
+### v3 融合 epilogue の系統的バグ (commit `5a96436` で部分修正)
 
-- 層 16 の grouped MoE 出力が最初に NaN (入力は有限、
-  routing も正常)。NaN 以降は router が全 -1 を返し
-  全層に波及する (番兵修正でクラッシュはしないが
-  値は NaN のまま)。
-- 再現性なし: 同一入力でも run ごとに NaN/正常が変わる
-  (1/3 程度で NaN)。単体では全カーネル決定論的
-  (`igemm_batched`、`quant_w8_slab`、`gu_epilog_had` を
-  層 16/層 8 形状で各 10〜50 回試験し完全一致)。
-- `torch.empty` 全ゼロ化でも NaN が出るため未初期化
-  メモリ穴ではない。イベント同期を入れても NaN が出る
-  ため単純なストリーム競合でもない。
-- 層ごと valid 行のみ hash 比較では、NaN run と正常 run で
-  層 0 の `guV` から既に乖離 (入力 hash は yhash 別 run では
-  層 8 まで一致)。全入出力 hash プローブ
-  (`/tmp/alleverything.py`、結果は `/work/kl-q30b/`。
-  throwaway) で乖離の起点を特定中。
-- 次の一手: 乖離起点の層の全入力 (Cg/Cu/SA/s0/ids) を
-  hash 比較し、最初に変わる入力を突き止める。
-  カーネル単体が決定論的なら入力が変わっているはずで、
-  その入力の上流をさらに遡る。
+- `factorial128` (grouped 対 prototype) が v3 以降に破綻:
+  v2 時点では全条件ビット一致 (0.0) だったのが、
+  v3 では `even128: 6.2、skew128: 6.4、no43: 449` (maxabs)。
+  `git bisect` 的に pre-v3 (`febd4f2`) に戻すと 0.0 に
+  戻るため、v3 融合 epilogue の導入が原因と確定。
+- 真因 1 (修正済み): 融合カーネル (`gu`/`d`) が S0
+  (グリッドステップ) を expert ID で索引していた。
+  ところが呼び出し側の `s0g_b/s0u_b/s0d_b` は
+  エントリ単位 ([B]、experts_b 順) の配列であり、
+  expert ID (0〜127) で読むと B を超えた番地の
+  範囲外読みになる。B < E の形状で必ず踏む。
+  修正: エントリ番号 (`row // CMAX`) で索引する
+  (SVG/SVD は [E, N] テーブルなので expert 索引のまま)。
+  修正後の factorial: `no43: 449→4.8`。
+  ただし `even128/skew128: 6.2` は残存 (d-path 未解決)。
+- 真因 1 の副次効果: 範囲外読みはヒープのゴミを拾うため、
+  run ごとに結果が変わり、時に NaN・時に GPU page fault
+  (HSA queue abort、`gpucore.*.gpu` を残す) を起こす。
+  これが「NaN の追跡」で見た非決定性の正体だった。
+  修正後は `en_prose_129` が 4/4 ビット一致・有限に安定
+  (修正前は run ごとに NaN/正常が変動)。
+- 真因 2 (未解決): d-path 側に残る系統誤差。
+  切り分け用プローブ (fused 対 torch+nodative had の直接比較)
+  では `gu: 1 ulp` (half 丸めの範囲内)、`dquant: 1 LSB x3要素`
+  (Triton fp32 除算と torch の最終 ulp 差)、
+  `d_epilog: maxabs 32 (=2 ulp @5e4)` で、いずれも小さい。
+  しかし full-model の L0 MoE 出力は fp16 対比で無相関
+  (corr≈0、std 比 28x) のまま。d-path (silu 後) の
+  どこかにまだ系統バグが残っている。
+  時間切れのため MoE 線はここで停止する。
+
+### KLD 評価の無効化宣言
+
+- v3 速度値 (512: 441 = 0.94x、2048: 978 = 1.08x、
+  8192: 898 = 1.00x) は**破損出力での計測であり無効**。
+  同じバイナリでの KLD は macro 16.75、top-1 一致率
+  0.0035% で、完全なゴミ出力だった。
+  (原因: 上記 v3 epilogue バグ。速度だけ正しくても
+  ゲート判定には使えない。)
+- 帰属プローブ (arithmetic_65、full-model):
+  MoE-only-int8 対 fp16 で maxabs=41 (破損確定)、
+  dense-only-int8 対 fp16 で maxabs=0.0
+  (dense 側は無罪。ただし engage ログが出ておらず、
+  未 engage の可能性も残るため断定は弱い)。
+- よって round 4 の MoE 速度ゲートは未達・無効であり、
+  MoE 線の作業は停止する (親 PIVOT 指示)。
+
+### レジューム記録 (親 PIVOT 後。中断時はここから再開)
+
+- MoE 線は停止。grouped INT8 MoE は既定 off のまま。
+  v3 融合カーネルは「s0 をエントリ単位で索引する」まで
+  修正済みだが d-path 未解決 (`factorial128` 6.2 残存)。
+- ブランチ `feat/w8a8-fused-prefill`、legacy-fork に push 予定
+  (この節のコミットで最新化)。
+- 次は高密度 27B 線 (Qwen3.8-27B):
+  fp16 ベースライン profile → `--int8-grid` encode (承認済み)
+  → dense INT8 path → 27B ゲート判定。
+  27B の詳細計画は親指示を参照。
