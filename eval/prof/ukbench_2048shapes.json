@@ -1,0 +1,34 @@
+{
+ "expert_shapes": {
+  "gate": [
+   2048,
+   768
+  ],
+  "up": [
+   2048,
+   768
+  ],
+  "down": [
+   768,
+   2048
+  ]
+ },
+ "dense_shape": [
+  2048,
+  151936
+ ],
+ "recon_expert_ms": 0.039,
+ "had_in_expert_ms": 0.025,
+ "igemm_expert_ms": 0.211,
+ "hgemm_expert_ms": 0.241,
+ "actquant_expert_ms": 0.146,
+ "epilog_expert_ms": 0.057,
+ "recon_dense_rows512_ms": 1.885,
+ "had_dense_rows512_ms": 0.018,
+ "hgemm_dense_rows512_ms": 16.469,
+ "igemm_dense_rows512_ms": 7.838,
+ "recon_dense_rows2048_ms": 1.888,
+ "had_dense_rows2048_ms": 0.118,
+ "hgemm_dense_rows2048_ms": 64.855,
+ "igemm_dense_rows2048_ms": 30.947
+}

@@ -1,0 +1,32 @@
+{
+ "512": {
+  "mean": {
+   "layer": 1115.61,
+   "attn": 99.97,
+   "mlp": 1012.68,
+   "norms_resid": 2.96,
+   "wall_s": 1.128,
+   "dispatch_gap_ms": 12.19
+  }
+ },
+ "2048": {
+  "mean": {
+   "layer": 2263.89,
+   "attn": 469.39,
+   "mlp": 1786.48,
+   "norms_resid": 8.02,
+   "wall_s": 2.308,
+   "dispatch_gap_ms": 43.66
+  }
+ },
+ "8192": {
+  "mean": {
+   "layer": 8999.73,
+   "attn": 4175.25,
+   "mlp": 4781.56,
+   "norms_resid": 42.92,
+   "wall_s": 9.184,
+   "dispatch_gap_ms": 184.28
+  }
+ }
+}
