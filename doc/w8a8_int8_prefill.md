@@ -162,3 +162,100 @@ a-quant 0.34ms + w-quant 0.93ms + igemm 3.13ms + i32*scale 0.11ms
    どちらも大型カーネル開発であり、別タスクとして見積もるべき。
 3. 本ブランチは実験記録として保持。`EXL3_INT8_PREFILL` はデフォルト
    off のまま残し、本番挙動に影響しない。
+
+---
+
+## ラウンド 2: エンコード時 INT8 化 + 小規模 MoE 検証 (feat/w8a8-codebook)
+
+ラウンド 1 の結論 (ランタイム量子化の固定費が勝ち分を消す) を受け、
+EXLR8 の encode-time 着想だけを採用する。Flash Next の re-encode 前に
+小さな MoE で形式と速度の両方を検証するのが目的である。
+EXLR8 の多幅ストレージ (K2/K3/K4) と TP シャーディング則は対象外。
+
+### フォーマット設計
+
+(a) INT8-exact codebook: Viterbi 探索の内部でコードブック出力を
+int8 グリッド `T = q * s0` に丸める。`s0` はエンコード時に決まる
+per-tensor 定数 (`amax / 127`) で、モデル内に `*.s0` テンソルとして
+保存する。ランタイムは重みスケールを計算しない (`s0` を `suh`/`svh`
+または fp32 エピローグに折り畳み)。`s0 = 0` の旧モデルは従来動作の
+まま (ビット同一を確認済み)。
+プレーンカーネルと dense 特殊化カーネルの両方に丸めを実装した。
+特殊化側は `s0 > 0` で例外にしていたが、9 箇所の decode 呼び出し
+(`decode_3inst`/`decode_3inst_2`/LUT/state/出力書き込み) を wrap して
+対応し、ガードを撤去した。
+
+(b) 共有 hidden-side 回転 (MoE gate/up 用): 層ごとに 1 本の入力側符号
+ベクトルを routed experts 間で共有し、トークンごとの expert 入力を
+1 回だけ int8 化して active experts 全員で使い回す。per-expert の
+中間側符号・スケールは EXLR8 と同様に格納ベクトルへ折り畳む。
+設定フラグをテンソル/モデル config に保存し、旧モデルは従来動作。
+
+### 検証モデル選定
+
+Qwen3.5-35B-A3B (Flash Next と同族) ではなく Qwen3-30B-A3B を使う。
+Qwen3.5 の BF16 (~70GB) は V620x2 (64GB) に載らず、exllamav3 の
+2-GPU 分割読み込みも層 15 で失敗する (autosplit の上限チェックが
+断片化に弱い)。Qwen3-30B-A3B は同族 (`qwen3_moe`、128 experts /
+top-8) で BF16 (61GB) と既存 3bpw EXL3 が手元にあり、
+コーパスの再トークナイズも通った。LFM2.5-8B-A1B / Gemma E2B/E4B は
+実体が dense で MoE 検証に使えない。
+
+量子化は ~3bpw (`-b 3.05 --hq -hb 5 -cb mul1`) で 3 通り:
+(i) 通常 EXL3、(ii) `--int8-grid`、(iii) `--int8-grid --share-input-su`。
+
+### カーネルゲート (新 `.so`、V620)
+
+- `sweep_s0_shapes.py`: 全 (K=1..7 × plain/mcg/mul1) × 両 leg
+  (plain / optimized) で fp16 往復偏差 `0.0`。`s0=0` は旧 `.so` (r2)
+  と `qt_bitwise.py` 全行ビット同一。
+- よってランタイム側の丸め実装は正しい。残る精度リスクは
+  `s0` 丸めが `proxy_err` / 状態遷移に与える影響のみで、KLD で測る。
+
+### 11:59 クラッシュ記録 (10/28)
+
+2 本の convert (i: 層 7、ii: 層 2) が SIGILL (`invalid opcode` in
+`exllamav3_ext`) で死亡。直前のホスト負荷は高かった
+(load avg 18〜23: convert×2 + 拡張ビルド `-j12` + llama ダンプ +
+検証スクリプト)。他セッションの `llama-quantize` が同 GPU0 上で
+動作中であり、OOM された他セッション由来の python もいたため、
+原因の切り分けはできていない (自カーネル起因の証拠はない:
+上記ゲートは全通過、amdgpu エラーなし)。
+副被害: host GPU0 に所有者なしの 26GB 使用中が残留
+(KFD にプロセスなし、reclaim されず)。同 GPU 使用中の他者ジョブが
+あるため `gpureset` は打たず、以降の作業は host GPU1
+(コンテナ内 `HIP_VISIBLE_DEVICES=1`) で継続する。
+
+### 精度評価 (TODO: ダンプ後に記入)
+
+- BF16 参照: llama.cpp `dump_logits` (`-ngl 20`) で 21 ケース全成功、
+  非有限要素 0。語彙幅は llama 側パディングで 151936 だが、
+  `compare.py` は valid 列だけ参照するためそのまま比較可能。
+- 候補: exllamav3 `dump` で (i)/(ii)/(iii) を単一 GPU ダンプ予定。
+- クロスエンジン・ノイズフロア未測定 (通常 EXL3 候補を llama でも
+  取るか、短ケースで exllamav3-vs-llama 比較が必要)。
+
+| 候補 | macro KLD vs BF16 | 備考 |
+|---|---|---|
+| (i) 通常 EXL3 | TODO | ノイズフロアの基準 |
+| (ii) int8-grid | TODO | |
+| (iii) +共有回転 | TODO | ゲート対象 |
+
+### 速度評価 (TODO: モデル完成後に記入)
+
+`bench_prefill.py` (単一 GPU、ケース毎に新規ランダムプロンプト、
+KV 再利用なし) で 512/2048/8192 tok/s を (i) fp16 vs INT8 で比較予定。
+`EXL3_INT8_MOE_PROFILE=1` で内訳 (dense int8 / MoE int8 / 量子化固定費)
+を取得する。
+
+| 長さ | (i) fp16 | INT8 | 倍率 |
+|---|---|---|---|
+| 512 | TODO | TODO | TODO |
+| 2048 | TODO | TODO | TODO |
+| 8192 | TODO | TODO | TODO |
+
+### ゲート判定 (TODO)
+
+(iii) が (i) と KLD ノイズ範囲内で同等 かつ 2048+ で約 1.2x 以上なら
+Flash Next の re-encode (~18.5h) を提案・実施。満たさなければ中止し
+理由を報告する。
