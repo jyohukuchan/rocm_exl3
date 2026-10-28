@@ -47,9 +47,13 @@ def _w8quant_kernel(
     cid = tl.program_id(1)
     offs = cid * BLOCK + tl.arange(0, BLOCK)
     mask = offs < KN
-    s0 = tl.load(S0 + b)
+    # Reciprocal-multiply, NOT true division: torch's scalar division on
+    # this build lowers to x * (1/s) (verified: scalar-div == explicit
+    # recip-mul bitwise, while tensor division uses true fdiv and differs
+    # on .5-boundary elements). Match the prototype's kernel selection.
+    r = 1.0 / tl.load(S0 + b)
     x = tl.load(WFP + b * KN + offs, mask).to(tl.float32)
-    q = _rint_half_even(x / s0)
+    q = _rint_half_even(x * r)
     q = tl.clamp(q, -128, 127).to(tl.int8)
     tl.store(W8 + b * KN + offs, q, mask)
 
