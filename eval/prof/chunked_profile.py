@@ -90,7 +90,9 @@ def main():
             STACK.clear()
             for cls in (T.TransformerBlock, T.ParallelDecoderBlock):
                 cls.forward.counter = [0]
-            job = Job(input_ids=ids, max_new_tokens=1)
+            job = Job(input_ids=torch.tensor([ids],
+                                                         device="cuda:0"),
+                        max_new_tokens=1)
             gen.enqueue(job)
             t0 = time.perf_counter()
             ttft = None
