@@ -70,10 +70,10 @@ def main():
 
     config = Config.from_directory(model_dir)
     model = Model.from_config(config)
+    cache = Cache(model, max_num_tokens=L + 2048, max_batch_size=1)
     model.load(device=torch.device("cuda:0"))
     print(f"loaded {model_dir}", flush=True)
     tokenizer = Tokenizer.from_config(config)
-    cache = Cache(model, max_num_tokens=L + 2048, max_batch_size=1)
     gen = Generator(model=model, cache=cache, tokenizer=tokenizer,
                     max_chunk_size=CH)
 
