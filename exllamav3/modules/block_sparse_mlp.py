@@ -41,6 +41,7 @@ INT8_MOE_GROUPED = os.environ.get("EXL3_INT8_MOE_GROUPED", "1") != "0"
 
 # Shapes that already logged int8-MoE engagement (one line per module shape).
 _int8_moe_logged = set()
+_int8_moe_grouped_logged = set()
 # Batched reconstruct tier for the experts above the fused kernel's row capacity at prefill
 # (moe_batch_recon.py); EXL3_MOE_BATCH_RECON=0 restores the per-expert reconstruct loop
 BATCH_RECON = os.environ.get("EXL3_MOE_BATCH_RECON", "1") != "0"
@@ -1209,7 +1210,12 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         dev = y.device
         C = self._int8_moe_grouped_cache()
         if C is None:
+            print(f"EXL3_INT8_MOE_GROUPED fallback to prototype: {self.key}", flush=True)
             return self._forward_int8_moe(y, bsz, selected_experts, routing_weights, params)
+        prof = os.environ.get("EXL3_INT8_MOE_PROFILE", "0") != "0"
+        if self.key not in _int8_moe_grouped_logged:
+            _int8_moe_grouped_logged.add(self.key)
+            print(f"EXL3_INT8_MOE_GROUPED active: {self.key}", flush=True)
         num_ex = self.num_local_experts or self.num_experts
         H = self.expert_size
 
@@ -1269,15 +1275,28 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         del a8s, sas
         igemm = ext.igemm_batched
 
+        ev = []
+        def tick(name, fn):
+            if not prof:
+                return fn()
+            e0 = torch.cuda.Event(enable_timing=True)
+            e1 = torch.cuda.Event(enable_timing=True)
+            e0.record()
+            r = fn()
+            e1.record()
+            ev.append((name, e0, e1))
+            return r
+
         def grouped_gemm(X, tag):
             t = C["it"][tag]
             Wfp = torch.empty((B, t["K"], t["N"]), dtype=torch.half, device=dev)
             W8 = torch.empty((B, t["K"], t["N"]), dtype=torch.int8, device=dev)
-            self._recon_int8_slab(W8, Wfp, t["ptrs"][act_t], t["bK"], t["mcg"], t["mul1"],
-                                  C["s0" + tag][act_t])
+            tick("recon_" + tag, lambda: self._recon_int8_slab(
+                W8, Wfp, t["ptrs"][act_t], t["bK"], t["mcg"], t["mul1"],
+                C["s0" + tag][act_t]))
             del Wfp
             Cc = torch.empty((B, cmax, t["N"]), dtype=torch.int32, device=dev)
-            igemm(X, W8, Cc)
+            tick("igemm_" + tag, lambda: igemm(X, W8, Cc))
             del W8
             return Cc
 
@@ -1314,6 +1333,14 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             c = expert_count_list[e]
             r0 = b * cmax
             out.index_add_(0, tok_pad[r0:r0 + c], df[r0:r0 + c])
+        if prof:
+            torch.cuda.synchronize()
+            from collections import defaultdict
+            agg = defaultdict(float)
+            for name, e0, e1 in ev:
+                agg[name] += e0.elapsed_time(e1)
+            print(f"EXL3_INT8_MOE_GROUPED prof {self.key} B={B} cmax={cmax}: " +
+                  " ".join(f"{k}={v:.2f}ms" for k, v in sorted(agg.items())), flush=True)
         return out
 
     @override
