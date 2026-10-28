@@ -134,4 +134,19 @@ ext.had_r_128(dp, dp, None, di.svh, 1.0)
 dp = dp.to(torch.float).mul_(wgt.unsqueeze(1))
 df43 = df.view(-1, df.shape[-1])[r0:r0 + c].to(dev)
 print("df[43] vs proto contrib:", (df43.float() - dp.float()).abs().max().item(), flush=True)
+
+# B=1 grouped-style chain for expert 43 (same inputs) vs proto
+tG, tU, tD = C["it"]["g"], C["it"]["u"], C["it"]["d"]
+Xb = a8[top].view(1, -1, tG["K"])
+SAb = sa[top].view(1, -1, 1)
+Wf = torch.empty((1, tG["K"], tG["N"]), dtype=torch.half, device=dev)
+mlp._recon_int8_slab(
+    (W8g1 := torch.empty((1, tG["K"], tG["N"]), dtype=torch.int8, device=dev)),
+    Wf, tG["ptrs"][43:44], tG["bK"], tG["mcg"], tG["mul1"], C["s0g"][43:44])
+Cg1 = torch.empty((1, c, tG["N"]), dtype=torch.int32, device=dev)
+ext.igemm_batched(Xb, W8g1, Cg1)
+gg1 = (Cg1.float() * SAb * C["s0g"][43:44]).to(torch.half).view(-1, tG["N"])
+ext.had_r_128_batch(gg1, gg1, None, C["svg"][43:44],
+                    torch.tensor([0], dtype=torch.int64, device=dev), c, 1.0)
+print("B=1 gate vs proto:", (gg1.float() - gp.float()).abs().max().item(), flush=True)
 print("done", flush=True)
