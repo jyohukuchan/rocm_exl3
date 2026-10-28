@@ -142,7 +142,7 @@ SAb = sa[top].view(1, -1, 1)
 Wf = torch.empty((1, tG["K"], tG["N"]), dtype=torch.half, device=dev)
 mlp._recon_int8_slab(
     (W8g1 := torch.empty((1, tG["K"], tG["N"]), dtype=torch.int8, device=dev)),
-    Wf, tG["ptrs"][43:44], tG["bK"], tG["mcg"], tG["mul1"], C["s0g"][43:44])
+    Wf, tG["ptrs"][43:44], tG["bK"], tG["mcg"], tG["mul1"], [float(C["s0g"][43, 0, 0])])
 Cg1 = torch.empty((1, c, tG["N"]), dtype=torch.int32, device=dev)
 ext.igemm_batched(Xb, W8g1, Cg1)
 gg1 = (Cg1.float() * SAb * C["s0g"][43:44]).to(torch.half).view(-1, tG["N"])
@@ -157,7 +157,7 @@ if D2["Cg"] is not None:
 # B=1 up + silu for expert 43
 WfU = torch.empty((1, tU["K"], tU["N"]), dtype=torch.half, device=dev)
 W8U1 = torch.empty((1, tU["K"], tU["N"]), dtype=torch.int8, device=dev)
-mlp._recon_int8_slab(W8U1, WfU, tU["ptrs"][43:44], tU["bK"], tU["mcg"], tU["mul1"], C["s0u"][43:44])
+mlp._recon_int8_slab(W8U1, WfU, tU["ptrs"][43:44], tU["bK"], tU["mcg"], tU["mul1"], [float(C["s0u"][43, 0, 0])])
 Cu1 = torch.empty((1, c, tU["N"]), dtype=torch.int32, device=dev)
 ext.igemm_batched(Xb, W8U1, Cu1)
 ug1 = (Cu1.float() * SAb * C["s0u"][43:44]).to(torch.half).view(-1, tU["N"])
@@ -181,7 +181,7 @@ with torch.inference_mode():
 tD = C["it"]["d"]
 WfD = torch.empty((1, tD["K"], tD["N"]), dtype=torch.half, device=dev)
 W8D1 = torch.empty((1, tD["K"], tD["N"]), dtype=torch.int8, device=dev)
-mlp._recon_int8_slab(W8D1, WfD, tD["ptrs"][43:44], tD["bK"], tD["mcg"], tD["mul1"], C["s0d"][43:44])
+mlp._recon_int8_slab(W8D1, WfD, tD["ptrs"][43:44], tD["bK"], tD["mcg"], tD["mul1"], [float(C["s0d"][43, 0, 0])])
 Cd1 = torch.empty((1, c, tD["N"]), dtype=torch.int32, device=dev)
 ext.igemm_batched(Xd1.view(1, -1, tD["K"]), W8D1, Cd1)
 dg1 = (Cd1.float() * sad1.view(1, -1, 1) * C["s0d"][43:44]).to(torch.half).view(-1, tD["N"])

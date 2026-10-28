@@ -57,7 +57,7 @@ with torch.inference_mode():
         s0 = C["s0" + tag].view(E)
         Wfp = torch.empty((E, K, N), dtype=torch.half, device=dev)
         W8 = torch.empty((E, K, N), dtype=torch.int8, device=dev)
-        mlp._recon_int8_slab(W8, Wfp, ptrs, t["bK"], t["mcg"], t["mul1"], s0.view(E, 1, 1))
+        mlp._recon_int8_slab(W8, Wfp, ptrs, t["bK"], t["mcg"], t["mul1"], [float(x) for x in s0])
         torch.cuda.synchronize()
         bad = []
         for e in range(E):

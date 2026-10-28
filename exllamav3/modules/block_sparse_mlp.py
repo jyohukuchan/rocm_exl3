@@ -1186,6 +1186,11 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                 "s0g": torch.tensor(s0g, dtype=torch.float, device=dev).view(E, 1, 1),
                 "s0u": torch.tensor(s0u, dtype=torch.float, device=dev).view(E, 1, 1),
                 "s0d": torch.tensor(s0d, dtype=torch.float, device=dev).view(E, 1, 1),
+                # Python-float lists for the scalar-division quant (see
+                # _recon_int8_slab): identical kernels to the prototype.
+                "s0g_list": [float(x) for x in s0g],
+                "s0u_list": [float(x) for x in s0u],
+                "s0d_list": [float(x) for x in s0d],
             }
         except Exception:
             self._int8_moe_grouped = False
@@ -1193,12 +1198,17 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         self._int8_moe_grouped = cache
         return cache
 
-    def _recon_int8_slab(self, W8, Wfp, ptrs, bK, mcg, mul1, s0):
+    def _recon_int8_slab(self, W8, Wfp, ptrs, bK, mcg, mul1, s0_list):
         # Decode a [B, K, N] expert slab to fp16, then quantize to int8 with
         # the per-expert grid steps. Wfp is scratch, freed by the caller.
+        # The quant runs per expert with a Python-float divisor: a tensor
+        # divisor selects a much slower broadcast-divide kernel on this ROCm
+        # build (16.7ms vs ~2ms here), and scalar division is also what the
+        # per-expert prototype uses (bitwise identical results).
         ext.reconstruct_batch(Wfp, ptrs, bK, mcg, mul1)
         with torch.inference_mode():
-            W8.copy_((Wfp.float() / s0).round().clamp(-128, 127).to(torch.int8))
+            for b, s in enumerate(s0_list):
+                W8[b].copy_((Wfp[b].float() / s).round().clamp(-128, 127).to(torch.int8))
 
     def _forward_int8_moe_grouped(self, y, bsz, selected_experts, routing_weights, params):
         # Grouped INT8 MoE: same math as the per-expert prototype, but tokens
@@ -1291,9 +1301,9 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             t = C["it"][tag]
             Wfp = torch.empty((B, t["K"], t["N"]), dtype=torch.half, device=dev)
             W8 = torch.empty((B, t["K"], t["N"]), dtype=torch.int8, device=dev)
+            s0l = [C["s0" + tag + "_list"][e] for e in active]
             tick("recon_" + tag, lambda: self._recon_int8_slab(
-                W8, Wfp, t["ptrs"][act_t], t["bK"], t["mcg"], t["mul1"],
-                C["s0" + tag][act_t]))
+                W8, Wfp, t["ptrs"][act_t], t["bK"], t["mcg"], t["mul1"], s0l))
             del Wfp
             Cc = torch.empty((B, cmax, t["N"]), dtype=torch.int32, device=dev)
             tick("igemm_" + tag, lambda: igemm(X, W8, Cc))
