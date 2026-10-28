@@ -95,10 +95,15 @@ def _gu_epilog_kernel(
     chunk = transform % (COLS // 128)
     c = tl.arange(0, 128)
     valid = row < ROWS
-    expert = tl.load(IDS + row // CMAX, valid, 0)
+    # S0G/S0U are per-entry (one scale per slab entry, matching the s0g_b /
+    # s0u_b vectors built from experts_b); SVG/SVU are per-expert tables.
+    # Indexing S0 by expert id reads out of bounds whenever an expert id
+    # exceeds the entry count (found via factorial128: g-vs-p maxabs=449).
+    entry = row // CMAX
+    expert = tl.load(IDS + entry, valid, 0)
     sa = tl.load(SA + row, valid, 0.0)
-    s0g = tl.load(S0G + expert, valid, 0.0)
-    s0u = tl.load(S0U + expert, valid, 0.0)
+    s0g = tl.load(S0G + entry, valid, 0.0)
+    s0u = tl.load(S0U + entry, valid, 0.0)
     off = row[:, None] * COLS + chunk[:, None] * 128 + c[None, :]
     m = valid[:, None]
     g = tl.load(CG + off, m, 0).to(tl.float32)
@@ -175,9 +180,11 @@ def _d_epilog_kernel(
     chunk = transform % (COLS // 128)
     c = tl.arange(0, 128)
     valid = row < ROWS
-    expert = tl.load(IDS + row // CMAX, valid, 0)
+    # S0D is per-entry (see _gu_epilog_kernel note); SVD is per-expert.
+    entry = row // CMAX
+    expert = tl.load(IDS + entry, valid, 0)
     sad = tl.load(SAD + row, valid, 0.0)
-    s0d = tl.load(S0D + expert, valid, 0.0)
+    s0d = tl.load(S0D + entry, valid, 0.0)
     off = row[:, None] * COLS + chunk[:, None] * 128 + c[None, :]
     m = valid[:, None]
     v = tl.load(CD + off, m, 0).to(tl.float32)
