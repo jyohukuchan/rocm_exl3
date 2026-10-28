@@ -1316,6 +1316,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         ext.had_r_128_batch(u2, u2, None, C["svu"], act_ids, cmax, 1.0)
         a = torch.empty_like(u2)
         self.activation_fn_call(g2, u2, a, self.act_limit)
+        a_saved = a if dump_on else None
         del g, u, g2, u2
 
         with torch.inference_mode():
@@ -1330,6 +1331,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         del Cd
         d2 = d.view(B * cmax, -1)
         ext.had_r_128_batch(d2, d2, None, C["svd"], act_ids, cmax, 1.0)
+        d_saved = d2 if dump_on else None
         with torch.inference_mode():
             df = d2.to(torch.float).mul_(w_pad.unsqueeze(1))
         del d, d2
@@ -1345,6 +1347,8 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                         "Xgu": Xgu_saved.cpu() if Xgu_saved is not None else None,
                         "Cg": Cg_saved.cpu() if Cg_saved is not None else None,
                         "Cd": Cd_saved.cpu() if Cd_saved is not None else None,
+                        "a": a_saved.cpu() if a_saved is not None else None,
+                        "d": d_saved.cpu() if d_saved is not None else None,
                         "active": active, "cmax": cmax,
                         "counts": expert_count_list, "starts": starts},
                        "/tmp/moe_dump.pt")

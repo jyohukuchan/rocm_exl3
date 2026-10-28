@@ -154,4 +154,24 @@ if D2["Cg"] is not None:
     Cg43 = D2["Cg"].view(-1, D2["Cg"].shape[-1])[43 * cmax:43 * cmax + c].to(dev)
     print("Cg[43]-full vs Cg-B=1:",
           (Cg43.float() - Cg1.float()).abs().max().item(), flush=True)
+# B=1 up + silu for expert 43
+WfU = torch.empty((1, tU["K"], tU["N"]), dtype=torch.half, device=dev)
+W8U1 = torch.empty((1, tU["K"], tU["N"]), dtype=torch.int8, device=dev)
+mlp._recon_int8_slab(W8U1, WfU, tU["ptrs"][43:44], tU["bK"], tU["mcg"], tU["mul1"], C["s0u"][43:44])
+Cu1 = torch.empty((1, c, tU["N"]), dtype=torch.int32, device=dev)
+ext.igemm_batched(Xb, W8U1, Cu1)
+ug1 = (Cu1.float() * SAb * C["s0u"][43:44]).to(torch.half).view(-1, tU["N"])
+ext.had_r_128_batch(ug1, ug1, None, C["svu"][43:44],
+                    torch.tensor([0], dtype=torch.int64, device=dev), c, 1.0)
+ag1 = torch.empty_like(ug1)
+mlp.activation_fn_call(gg1, ug1, ag1, mlp.act_limit)
+if D2["a"] is not None:
+    a43 = D2["a"].view(-1, D2["a"].shape[-1])[43 * cmax:43 * cmax + c].to(dev)
+    print("a[43]-full vs a-B=1:",
+          (a43.float() - ag1.float()).abs().max().item(), flush=True)
+if D2["d"] is not None:
+    d43 = D2["d"].view(-1, D2["d"].shape[-1])[43 * cmax:43 * cmax + c].to(dev)
+    print("d[43]-full: range [%s, %s] mean %s" % (
+        d43.float().min().item(), d43.float().max().item(), d43.float().mean().item()),
+        flush=True)
 print("done", flush=True)
