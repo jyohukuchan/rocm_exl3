@@ -212,19 +212,62 @@ top-8) で BF16 (61GB) と既存 3bpw EXL3 が手元にあり、
 - よってランタイム側の丸め実装は正しい。残る精度リスクは
   `s0` 丸めが `proxy_err` / 状態遷移に与える影響のみで、KLD で測る。
 
-### 11:59 クラッシュ記録 (10/28)
+### 11:59 クラッシュ記録 (10/28) → 原因判明: 稼働中 `.so` への上書きコピー
 
 2 本の convert (i: 層 7、ii: 層 2) が SIGILL (`invalid opcode` in
-`exllamav3_ext`) で死亡。直前のホスト負荷は高かった
-(load avg 18〜23: convert×2 + 拡張ビルド `-j12` + llama ダンプ +
-検証スクリプト)。他セッションの `llama-quantize` が同 GPU0 上で
-動作中であり、OOM された他セッション由来の python もいたため、
-原因の切り分けはできていない (自カーネル起因の証拠はない:
-上記ゲートは全通過、amdgpu エラーなし)。
+`exllamav3_ext`) で死亡。原因は自カーネルではなく、round 2 の拡張
+ビルド (`-j12`) の成果物を `w8a8_lib/` へ `cp` したことが直接の引き金
+(確定。以下すべて 10/28 の実測):
+
+- 新 `.so` のリンク完了が 11:52:15 (`build/lib.../` の mtime)、
+  `w8a8_lib/exllamav3_ext.cpython-312-x86_64-linux-gnu.so` への
+  コピー完了が 11:59:23 (mtime)。
+- カーネルログ: `11:59:23 traps: python[666913] trap invalid opcode
+  ... in exllamav3_ext...so[2bf5ad1,...]`、続いて `11:59:43` に
+  もう 1 本も**同一ファイルオフセット `2bf5ad1`** で fault。
+  1 本目の fault がコピー完了と同秒、2 本が同一オフセットで
+  20 秒差というのは、混成テキストページの特徴である。
+- 機序: 2 本の convert は旧 `.so` を `PROT_EXEC` で mmap したまま
+  実行中だった。`cp` は同一 inode を truncate-in-place するため、
+  既フォールト頁は旧内容・未フォールト頁は新内容で読まれ、
+  旧コードからのジャンプ先がゴミになる → `invalid opcode`。
+  `mv` (rename) なら旧 inode が生き残るため起きなかった。
+- AVX-512 コード生成説は否定: `setup.py` に `-march=native` はなく
+  (hipcc 既定は generic x86-64、自動ベクトル化で AVX-512 は出ない)。
+  `cpu/moe_mul1.cpp` の `detect_isa()` は Linux では
+  `__builtin_cpu_supports` で正しくガードされ Zen2 では Avx2 tier に
+  落ちる。`all_reduce_cpu_avx512.cpp` の呼び出し側も
+  `is_avx512_supported()` ガード付き。真に AVX-512 命令が実行されたなら
+  2 本が同一オフセット・同一秒で落ちる説明がつかない。
+- 再発防止: ジョブ稼働中は `.so` を直接 `cp` 上書きしない。
+  一時ファイル名に書いてから `mv` (atomic rename) で配置するか、
+  ジョブ停止後に配置する。ビルドと convert の同時実行自体も避ける
+  (load avg 18〜23 の高負荷も一因の可能性)。
 副被害: host GPU0 に所有者なしの 26GB 使用中が残留
 (KFD にプロセスなし、reclaim されず)。同 GPU 使用中の他者ジョブが
 あるため `gpureset` は打たず、以降の作業は host GPU1
 (コンテナ内 `HIP_VISIBLE_DEVICES=1`) で継続する。
+
+### convert (i) の OOM 死と再開 (10/28、ラウンド 3)
+
+- 親の 14:10 JST 確認の直後、**14:11:04** に docker memory cgroup
+  (上限 56 GiB) が (i) を OOM-kill (host PID 707431 = コンテナ内
+  57079、anon-rss 58 GB)。進行は層 29/48 (ログ 9064 行、
+  `layers.29 ... experts.31.down_proj` で停止)。
+- RSS は開始から単調増加していた模様 ((ii) の層 2 時点 anon 34.6 GB
+  → (i) の層 29 時点 58 GB から約 0.9 GB/層の概算)。
+  真性リークか再利用可能な断片化かは、再開後の RSS 傾斜で判定する
+  (`/work/rss-i.log` に 120 秒毎に記録中)。
+- 同一コマンドで 14:16 JST に再開 (コンテナ PID 58275、
+  `build-q30b-i/ckpt` から層 29 を resume)。設定は一切変えていない
+  (比較可能性のため `-cr/-cc` 既定のまま)。
+- 教訓: 56 GiB 上限下では 30B 級の convert 単独でも OOM しうる。
+  2 本同時実行は厳禁 (前例: (ii) が 12:52 に anon 34.6 GB で kill)。
+  コンテナ上限の引き上げは不可 (ホスト RAM 逼迫) のため、
+  再開が層 40 付近で再 OOM するようなら、蓄積箇所の特定
+  (`get_temp_buffers.cache_clear()`/`free_mem()` をすり抜ける保持)
+  または `-cr` 縮小の検討が必要。ただし `-cr` 変更は (i) の
+  比較条件を変えるためゲート判定と要相談。
 
 ### 精度評価 (TODO: ダンプ後に記入)
 
