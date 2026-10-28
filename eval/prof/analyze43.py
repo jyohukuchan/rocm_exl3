@@ -174,4 +174,24 @@ if D2["d"] is not None:
     print("d[43]-full: range [%s, %s] mean %s" % (
         d43.float().min().item(), d43.float().max().item(), d43.float().mean().item()),
         flush=True)
+# B=1 down chain for expert 43 from ag1 (verified == full a[43])
+with torch.inference_mode():
+    sad1 = ag1.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+    Xd1 = (ag1.float() / sad1).round().clamp(-128, 127).to(torch.int8)
+tD = C["it"]["d"]
+WfD = torch.empty((1, tD["K"], tD["N"]), dtype=torch.half, device=dev)
+W8D1 = torch.empty((1, tD["K"], tD["N"]), dtype=torch.int8, device=dev)
+mlp._recon_int8_slab(W8D1, WfD, tD["ptrs"][43:44], tD["bK"], tD["mcg"], tD["mul1"], C["s0d"][43:44])
+Cd1 = torch.empty((1, c, tD["N"]), dtype=torch.int32, device=dev)
+ext.igemm_batched(Xd1.view(1, -1, tD["K"]), W8D1, Cd1)
+dg1 = (Cd1.float() * sad1.view(1, -1, 1) * C["s0d"][43:44]).to(torch.half).view(-1, tD["N"])
+ext.had_r_128_batch(dg1, dg1, None, C["svd"][43:44],
+                    torch.tensor([0], dtype=torch.int64, device=dev), c, 1.0)
+print("B=1 down vs proto:", (dg1.float() - dp.float()).abs().max().item(), flush=True)
+if D2["Cd"] is not None:
+    Cd43 = D2["Cd"].view(-1, D2["Cd"].shape[-1])[43 * cmax:43 * cmax + c].to(dev)
+    print("Cd[43]-full vs Cd-B=1:",
+          (Cd43.float() - Cd1.float()).abs().max().item(), flush=True)
+    print("d[43]-full vs d-B=1:",
+          (d43.float() - dg1.float()).abs().max().item(), flush=True)
 print("done", flush=True)
