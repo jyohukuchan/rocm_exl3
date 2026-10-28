@@ -519,3 +519,66 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
   (b) 8192 は attention が 46% のため MoE だけでは届かず、
   attention 側 (INT8 qkv + コア) が必須。
   (c) KLD による精度検証 (実施中: cand-iii-v3)。
+- KLD 状態 (10/28 15:45Z 時点):
+  `EXL3_INT8_PREFILL=1 EXL3_INT8_MOE_GROUPED=1` で
+  `/work/models/q30b-exl3-305-iii` → `/work/kl-q30b/cand-iii-v3`
+  をダンプ中 (プロセス生存確認、env 正当)。
+  完了後に `compare_kld.py --refdir /work/kl-q30b/ref-llama
+  --canddir /work/kl-q30b/cand-iii-v3` を実行し、
+  (iii) 0.0455 との差を記録すること。
+- 注意: ダンプの stdout リダイレクト先 `/tmp/kld.log`
+  (コンテナ内) が `ls` で見えない。プロセスは生存・env 正当で
+  出力は `/work/kl-q30b/cand-iii-v3/*.npy` に向かうため、
+  進捗は outdir のファイル数で監視すること
+  (`ls /work/kl-q30b/cand-iii-v3 | wc -l`、全 21 件で完了)。
+
+### attention フェーズ計画 (MoE 完成後の次段。未着手)
+
+- 背景: 8192 での attention 占有 46% のため 8192 ゲート
+  (1.2x) には attention 側の高速化が必須。
+- (1) attention バケットの三分離 (2048/8192):
+  q/k/v/o 射影 vs コア (QK^T/softmax/PV。gfx1030 では
+  `modules/attention_fn` の Triton パスと想定。どちらか確認) vs
+  RoPE/norm/KV 更新。コアは causal FLOPs ≒ 2·n²·d·h_q/層
+  (d=128、h_q=32) から到達 TFLOPS を算出し fp16 ピーク
+  約 41TFLOPS と比較する。
+- (2) 射影: q/k/v/o を dense INT8 パスに寄せる
+  (大 M で igemm 2.1x の実績)。
+- (3) コア: 効率が低ければ RDNA2 向け調整 HIP
+  flash-attention (packed fp16 / v_dot2) と SageAttention 型
+  INT8 QK^T (DP4A、ブロック単位 Q/K スケール、K 平均平滑化、
+  PV は fp16 維持) を検討。causal ブロック skip は維持。
+- 精度: INT8 attention の KLD は MoE 変更と分離して測定する。
+
+### Flash Next 優先度プローブ計画 (attention カーネル投資の前に実施。未着手)
+
+- 背景: 実目標 Qwen3.8 Flash Next は Qwen3-30B-A3B と構造が違う:
+  48 層 = 線形 attention (Gated DeltaNet、n に対し線形。
+  K head 16 / V head 48 ×128) 36 層 + full attention
+  (q 24 head、kv 2 head、head_dim 256、partial rotary 0.25、
+  QSA indexer 4 head×128。prefill が sparse/top-k か要確認)
+  12 層 + MoE (512 experts top-10 + shared、moe_intermediate 640、
+  hidden 2560) + 層 2 の PLE/ngram embedding。
+  二次 attention cost は Qwen3-30B の約 37%
+  (12×24×256 対 48×32×128) 一方 MoE/token は約 1.4 倍。
+  ラウンド 1 では Flash Next prefill が 2048→8192 で
+  571→538tok/s と attention 増加が小さい。
+- 方針: 既存 Flash Next EXL3
+  (`/work/models/qwen38-flash-next-orcarouter-exl3-3.05bpw-original-vision`。
+  速度目的なので orcarouter 重みで可。ラウンド 1 と同じく 2×V620)
+  に対し `stage_profile` (fp16 パス) を 2048/8192 で実行し、
+  MoE / full-attention / GDN 線形 attention / indexer / PLE /
+  other に bucket 化する (`architecture/qwen3_next.py` は
+  TransformerBlock 下に GatedDeltaNet/Attention を置く構成で
+  既存フック方針が使えることを確認済み)。
+- 目的: 優先度付け (Flash Next では attention INT8 の寄与が
+  小さく GDN カーネルが律速かもしれない)。
+
+### レジューム記録 (10/28 16:00Z 頃。中断時はここから再開)
+
+- ブランチ `feat/w8a8-fused-prefill`、legacy-fork に push 済み。
+- v3 + gather ベクトル化の再ベンチ未実施
+  (コマンドは評価節参照。GPU が KLD ダンプで占有中だった)。
+- KLD: `cand-iii-v3` ダンプ完了待ち → `compare_kld.py` 実行。
+- その後: attention 三分離 (2048/8192) → 射影 INT8 化 →
+  コア方針決定 → Flash Next stage_profile → ゲート判定。
