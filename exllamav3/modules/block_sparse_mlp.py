@@ -34,6 +34,10 @@ TEMP_ROWS_GRAPH = 32
 # with per-expert int8 GEMMs. Engages for prefill-sized batches only.
 int8_moe_prefill = os.environ.get("EXL3_INT8_PREFILL", "0") != "0"
 INT8_MOE_MIN_ROWS = int(os.environ.get("EXL3_INT8_MOE_MIN_ROWS", 32))
+# Grouped INT8 MoE (round 4): 3 strided-batched igemm launches per layer over
+# expert slabs instead of 3 per-expert launches per expert. =0 falls back to
+# the per-expert prototype for A/B. Requires ext.igemm_batched (else fallback).
+INT8_MOE_GROUPED = os.environ.get("EXL3_INT8_MOE_GROUPED", "1") != "0"
 
 # Shapes that already logged int8-MoE engagement (one line per module shape).
 _int8_moe_logged = set()
@@ -1139,6 +1143,179 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                           f"(med {statistics.median(ms):.3f}ms)", flush=True)
         return out
 
+    def _int8_moe_grouped_cache(self):
+        # Per-module constants for the grouped INT8 path, built once: inner
+        # linears, uniform (K, mcg, mul1) per projection, trellis pointer
+        # tables, stacked per-expert output sign tables and s0 scale tensors.
+        # None when the module isn't eligible (mirrors _int8_moe_state).
+        cached = getattr(self, "_int8_moe_grouped", None)
+        if cached is not None:
+            return cached or None
+        state = self._int8_moe_state()
+        if state is None:
+            self._int8_moe_grouped = False
+            return None
+        su_shared, s0g, s0u, s0d = state
+        try:
+            from .quant.exl3 import LinearEXL3
+            inners_g = [l.inner for l in self.gates]
+            inners_u = [l.inner for l in self.ups]
+            inners_d = [l.inner for l in self.downs]
+            assert all(isinstance(m, LinearEXL3) for m in inners_g + inners_u + inners_d)
+            dev = self.device
+            it = {}
+            for tag, inners in (("g", inners_g), ("u", inners_u), ("d", inners_d)):
+                K = inners[0].in_features
+                assert all(m.in_features == K for m in inners)
+                assert all(m.K == inners[0].K and m.mcg == inners[0].mcg
+                           and m.mul1 == inners[0].mul1 for m in inners[1:])
+                it[tag] = {
+                    "K": K, "N": inners[0].out_features,
+                    "bK": inners[0].K, "mcg": inners[0].mcg, "mul1": inners[0].mul1,
+                    "ptrs": torch.tensor([m.trellis.data_ptr() for m in inners],
+                                         dtype=torch.int64, device=dev),
+                }
+            E = len(inners_g)
+            assert len(inners_u) == E and len(inners_d) == E
+            cache = {
+                "su": su_shared, "E": E, "it": it,
+                "svg": torch.stack([m.svh for m in inners_g]).to(dev),
+                "svu": torch.stack([m.svh for m in inners_u]).to(dev),
+                "svd": torch.stack([m.svh for m in inners_d]).to(dev),
+                "s0g": torch.tensor(s0g, dtype=torch.float, device=dev).view(E, 1, 1),
+                "s0u": torch.tensor(s0u, dtype=torch.float, device=dev).view(E, 1, 1),
+                "s0d": torch.tensor(s0d, dtype=torch.float, device=dev).view(E, 1, 1),
+            }
+        except Exception:
+            self._int8_moe_grouped = False
+            return None
+        self._int8_moe_grouped = cache
+        return cache
+
+    def _recon_int8_slab(self, W8, Wfp, ptrs, bK, mcg, mul1, s0):
+        # Decode a [B, K, N] expert slab to fp16, then quantize to int8 with
+        # the per-expert grid steps. Wfp is scratch, freed by the caller.
+        ext.reconstruct_batch(Wfp, ptrs, bK, mcg, mul1)
+        with torch.inference_mode():
+            W8.copy_((Wfp.float() / s0).round().clamp(-128, 127).to(torch.int8))
+
+    def _forward_int8_moe_grouped(self, y, bsz, selected_experts, routing_weights, params):
+        # Grouped INT8 MoE: same math as the per-expert prototype, but tokens
+        # are gathered into padded expert slabs and each projection runs as a
+        # single strided-batched int8 GEMM (gate/up share the input slab).
+        # Padding rows are exact zeros (input 0 -> C 0 -> epilogue 0) and carry
+        # routing weight 0. Accumulation is per-expert index_add_ (unique
+        # indices per launch), hence deterministic like the prototype.
+        dev = y.device
+        C = self._int8_moe_grouped_cache()
+        if C is None:
+            return self._forward_int8_moe(y, bsz, selected_experts, routing_weights, params)
+        num_ex = self.num_local_experts or self.num_experts
+        H = self.expert_size
+
+        with torch.inference_mode():
+            xh = torch.empty_like(y)
+            ext.had_r_128(y, xh, C["su"], None, 1.0)
+            sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+            a8 = (xh.float() / sa).round().clamp(-128, 127).to(torch.int8)
+            del xh
+        T = y.shape[0]
+
+        num_tokens, top_k = selected_experts.shape
+        flat_expert_global = selected_experts.reshape(-1)
+        flat_weight = routing_weights.reshape(-1)
+        flat_token = buffered_interleaved_arange(num_tokens, top_k, device=dev)
+        if self.num_local_experts == self.num_experts:
+            flat_expert_local = flat_expert_global
+        else:
+            flat_expert_local = flat_expert_global - self.routing_first
+            valid = (flat_expert_local >= 0) & (flat_expert_local < num_ex)
+            flat_expert_local = torch.where(
+                valid, flat_expert_local, torch.full_like(flat_expert_local, num_ex))
+        order = flat_expert_local.argsort()
+        token_sorted = flat_token[order]
+        weight_sorted = flat_weight[order]
+        expert_count = torch.bincount(flat_expert_local, minlength=num_ex + 1)
+        expert_count_list = expert_count.tolist()
+        starts = [0]
+        for c in expert_count_list:
+            starts.append(starts[-1] + c)
+
+        active = [e for e in range(num_ex) if expert_count_list[e] > 0]
+        B = len(active)
+        out = torch.zeros((T, H), dtype=torch.float, device=dev)
+        if B == 0:
+            return out
+        cmax = max(expert_count_list[e] for e in active)
+        act_t = torch.tensor(active, dtype=torch.long, device=dev)
+        act_ids = torch.tensor(active, dtype=torch.int64, device=dev)
+
+        # Padded flat maps: token ids (sentinel T = zero row), routing weights
+        # (sentinel 0). One pass over active experts; slice copies only.
+        tok_pad = torch.full((B * cmax,), T, dtype=torch.long, device=dev)
+        w_pad = torch.zeros((B * cmax,), dtype=torch.float, device=dev)
+        for b, e in enumerate(active):
+            c = expert_count_list[e]
+            r0 = b * cmax
+            s = starts[e]
+            tok_pad[r0:r0 + c] = token_sorted[s:s + c]
+            w_pad[r0:r0 + c] = weight_sorted[s:s + c].float()
+
+        Kg = C["it"]["g"]["K"]
+        a8s = torch.cat([a8, torch.zeros((1, Kg), dtype=torch.int8, device=dev)])
+        sas = torch.cat([sa, torch.ones((1, 1), dtype=torch.float, device=dev)])
+        Xgu = a8s[tok_pad].view(B, cmax, -1)
+        SAslab = sas[tok_pad].view(B, cmax, 1)
+        del a8s, sas
+        igemm = ext.igemm_batched
+
+        def grouped_gemm(X, tag):
+            t = C["it"][tag]
+            Wfp = torch.empty((B, t["K"], t["N"]), dtype=torch.half, device=dev)
+            W8 = torch.empty((B, t["K"], t["N"]), dtype=torch.int8, device=dev)
+            self._recon_int8_slab(W8, Wfp, t["ptrs"][act_t], t["bK"], t["mcg"], t["mul1"],
+                                  C["s0" + tag][act_t])
+            del Wfp
+            Cc = torch.empty((B, cmax, t["N"]), dtype=torch.int32, device=dev)
+            igemm(X, W8, Cc)
+            del W8
+            return Cc
+
+        Cg = grouped_gemm(Xgu, "g")
+        Cu = grouped_gemm(Xgu, "u")
+        del Xgu
+        with torch.inference_mode():
+            g = (Cg.float() * SAslab * C["s0g"][act_t]).to(torch.half)
+            u = (Cu.float() * SAslab * C["s0u"][act_t]).to(torch.half)
+        del Cg, Cu
+        g2 = g.view(B * cmax, -1)
+        u2 = u.view(B * cmax, -1)
+        ext.had_r_128_batch(g2, g2, None, C["svg"], act_ids, cmax, 1.0)
+        ext.had_r_128_batch(u2, u2, None, C["svu"], act_ids, cmax, 1.0)
+        a = torch.empty_like(u2)
+        self.activation_fn_call(g2, u2, a, self.act_limit)
+        del g, u, g2, u2
+
+        with torch.inference_mode():
+            sad = a.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+            Xd = (a.float() / sad).round().clamp(-128, 127).to(torch.int8)
+        del a
+        Cd = grouped_gemm(Xd.view(B, cmax, -1), "d")
+        del Xd
+        with torch.inference_mode():
+            d = (Cd.float() * sad.view(B, cmax, 1) * C["s0d"][act_t]).to(torch.half)
+        del Cd
+        d2 = d.view(B * cmax, -1)
+        ext.had_r_128_batch(d2, d2, None, C["svd"], act_ids, cmax, 1.0)
+        with torch.inference_mode():
+            df = d2.to(torch.float).mul_(w_pad.unsqueeze(1))
+        del d, d2
+        for b, e in enumerate(active):
+            c = expert_count_list[e]
+            r0 = b * cmax
+            out.index_add_(0, tok_pad[r0:r0 + c], df[r0:r0 + c])
+        return out
+
     @override
     def unload(self):
         self.cpu_unload()
@@ -1244,7 +1421,11 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         # rotation + activation quant per token, per-expert int8 GEMMs. The
         # tail below (post norm, shared experts, TP reduce) runs unchanged.
         elif self._int8_moe_go(bsz, y, params):
-            final_hidden_states = self._forward_int8_moe(y, bsz, selected_experts, routing_weights, params)
+            if INT8_MOE_GROUPED and getattr(ext, "igemm_batched", None) is not None:
+                final_hidden_states = self._forward_int8_moe_grouped(
+                    y, bsz, selected_experts, routing_weights, params)
+            else:
+                final_hidden_states = self._forward_int8_moe(y, bsz, selected_experts, routing_weights, params)
             final_hidden_states = final_hidden_states.reshape(eshape)
 
         # Torch/C++/fused path
