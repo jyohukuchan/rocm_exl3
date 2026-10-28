@@ -293,36 +293,83 @@ top-8) で BF16 (61GB) と既存 3bpw EXL3 が手元にあり、
   パターン確定: lm_head 相は毎回 OOM するため、
   head までの resume + compile のみの resume の 2 段階が必要。
 
-### 精度評価 (TODO: ダンプ後に記入)
+### s0 ロード不具合と修正 (ラウンド 3、commit `3b2f1fd`)
+
+(iii) 完成直後のベンチが `AssertionError: s0 must be positive` で
+全滅した (全 s0 モデルが推論ロード不可 — round 2 はロード試験を
+していなかった)。格納値は全 18,625 テンソルとも正であり、
+原因は読み側: 推論ロードは `model_ls.py` が全モジュールを
+`begin_deferred_load` で括り、s0 取得 (`opt(".s0", "cpu")`) が
+遅延読み (後で埋まる未充填プレースホルダ) になっていた。
+`LinearEXL3.__init__` は `s0.item()` を即時消費するため 0 を読み、
+assert に落ちた。修正は 1 行:
+`load_exl3` の s0 取得に `no_defer=True` を追加
+(su/sv と同じ扱い。即時消費するテンソルは全て `no_defer` が付く、
+という既存則どおり)。MoE expert も同一経路のため同時解決。
+修正後は (iii) のロード・INT8 engage を確認済み。
+
+### 精度評価 (記入済み)
 
 - BF16 参照: llama.cpp `dump_logits` (`-ngl 20`) で 21 ケース全成功、
-  非有限要素 0。語彙幅は llama 側パディングで 151936 だが、
-  `compare.py` は valid 列だけ参照するためそのまま比較可能。
-- 候補: exllamav3 `dump` で (i)/(ii)/(iii) を単一 GPU ダンプ予定。
-- クロスエンジン・ノイズフロア未測定 (通常 EXL3 候補を llama でも
-  取るか、短ケースで exllamav3-vs-llama 比較が必要)。
+  非有限要素 0 (32,317 位置)。語彙幅は llama 側パディングで
+  151936 だが、比較は共有先頭列のみ参照。
+- 候補ダンプ: 自作 `/work/kl-q30b/dump_exl3_logits.py`
+  (単一 GPU、1 ケース 1 フォワード、バルク・チャンクなし、
+  生 FP32 ロジット、temperature 1)。(i)/(iii) とも 21 ケース成功、
+  非有限要素 0。比較は自作 `/work/kl-q30b/compare_kld.py`
+  (macro case-mean KLD + top1 macro/位置重み)。
+- (ii) は未実施 (下記ゲートが速度で既決のため ablation 中止)。
 
-| 候補 | macro KLD vs BF16 | 備考 |
-|---|---|---|
-| (i) 通常 EXL3 | TODO | ノイズフロアの基準 |
-| (ii) int8-grid | TODO | |
-| (iii) +共有回転 | TODO | ゲート対象 |
+| 候補 | macro KLD vs BF16 | top1 macro | top1 位置重み | 備考 |
+|---|---|---|---|---|
+| (i) 通常 EXL3 | 0.0524 | 0.9133 | 0.9310 | 基準 |
+| (iii) +共有回転 | 0.0455 | 0.9201 | 0.9329 | ΔKLD -0.0069 |
+| (iii) vs (i) 直接 | 0.0674 | 0.8996 | 0.9185 | 参考値 |
 
-### 速度評価 (TODO: モデル完成後に記入)
+読み方: (iii) は BF16 参照に (i) より微接近しており、
+形式変更による系統的劣化の証拠はない。ただし直接乖離 0.0674 が
+両者の参照乖離 (0.045〜0.052) と同程度なのは、両候補の誤差方向が
+直交気味 (独立な量子化ノイズ) であることを示す。
+- ノイズフロア: **未測定**。exllamav3 BF16 (61GB) の 2-GPU ロードが
+  `use_per-device [28,28]` + `max_chunk_size=128` でも
+  `Insufficient VRAM in split for model and cache` で 2 回失敗し断念。
+  参考: ラウンド 1 のクロスエンジン・ノイズ実績 ~0.015 (別モデル)。
+  厳密な「ノイズ範囲内」主張は同モデル floor なしでは未検証だが、
+  全ペア乖離が同程度 (0.045〜0.067) で方向に系統性なし。
 
-`bench_prefill.py` (単一 GPU、ケース毎に新規ランダムプロンプト、
-KV 再利用なし) で 512/2048/8192 tok/s を (i) fp16 vs INT8 で比較予定。
-`EXL3_INT8_MOE_PROFILE=1` で内訳 (dense int8 / MoE int8 / 量子化固定費)
-を取得する。
+### 速度評価 (記入済み)
 
-| 長さ | (i) fp16 | INT8 | 倍率 |
-|---|---|---|---|
-| 512 | TODO | TODO | TODO |
-| 2048 | TODO | TODO | TODO |
-| 8192 | TODO | TODO | TODO |
+`bench_prefill.py` (単一 GPU = host GPU1、ケース毎に新規ランダム
+プロンプト、KV 再利用なし、warmup 2 + best-of-3)。
 
-### ゲート判定 (TODO)
+| 長さ | (i) fp16 | (iii) fp16 | (iii) INT8 | 倍率 INT8/(i) |
+|---|---|---|---|---|
+| 512 | 467 | 467 | 157 | **0.34x** |
+| 2048 | 908 | 926 | 556 | **0.61x** |
+| 8192 | 896 | 891 | 932 | **1.04x** |
 
-(iii) が (i) と KLD ノイズ範囲内で同等 かつ 2048+ で約 1.2x 以上なら
-Flash Next の re-encode (~18.5h) を提案・実施。満たさなければ中止し
-理由を報告する。
+(best 秒: (i) 1.096/2.256/9.139、INT8 3.253/3.686/8.793。
+(iii) fp16 は (i) と一致 = s0 形式自体は速度中立。)
+- engage: dense int8 は rows<1024 のみ (512 で 3 形状のみ engage、
+  2048/8192 は fused 域で fp16 のまま)。MoE int8 は全 48 層で engage。
+- 内訳 (`EXL3_INT8_MOE_PROFILE=1`): 共有回転 quant は ~0.1ms/層で
+  成功しているが、expert 側が 512 行で約 57〜62ms/層
+  (117〜128 segs、中央値 ~0.48ms/seg) → 48 層で約 3 秒。
+  すなわち 128 本の小規模 per-expert GEMM の起動・gather 固定費が
+  支配的で、fused fp16 MoE カーネル (約 20ms/層相当) の約 3 倍遅い。
+  8192 行では expert 約 86〜88ms/層で fp16 とほぼ並び、dense int8 の
+  寄与もないため 1.04x で頭打ち。
+- 結論: MoE INT8 化は現実装では逆効果 (0.34〜0.61x)。
+  勝つには per-seg 分割をやめる融合カーネルが必要で、別途大型開発。
+
+### ゲート判定: 不通過 (no-go)
+
+- 精度: 通過相当 ((iii) は (i) 対比で中立〜微良、ΔKLD -0.007)。
+  ただし同モデル noise floor は未測定のため厳密な主張は留保。
+- 速度: **不通過** (2048 で 0.61x、8192 で 1.04x。要求約 1.2x 以上に
+  遠く及ばず)。
+- よって Flash Next の re-encode (~18.5h) は**提案しない**。
+  精度面の改善余地も (ラウンド 1 の結論どおり) ない。
+- (ii) ablation はゲート既決のため実施しない。
+  本ブランチは実験記録として保持。`EXL3_INT8_PREFILL` 系は
+  デフォルト off のまま残し、本番挙動に影響させない。
