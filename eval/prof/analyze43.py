@@ -188,6 +188,21 @@ dg1 = (Cd1.float() * sad1.view(1, -1, 1) * C["s0d"][43:44]).to(torch.half).view(
 ext.had_r_128_batch(dg1, dg1, None, C["svd"][43:44],
                     torch.tensor([0], dtype=torch.int64, device=dev), c, 1.0)
 print("B=1 down vs proto:", (dg1.float() - dp.float()).abs().max().item(), flush=True)
+# HEAD-ON: up-branch scales + epilogue for expert 43
+ui43 = mlp.ups[43].inner
+print("svu[43] vs ups[43].svh:",
+      (C["svu"][43].float() - ui43.svh.float()).abs().max().item(), flush=True)
+print("svg[43] vs gates[43].svh:",
+      (C["svg"][43].float() - mlp.gates[43].inner.svh.float()).abs().max().item(), flush=True)
+print("svd[43] vs downs[43].svh:",
+      (C["svd"][43].float() - mlp.downs[43].inner.svh.float()).abs().max().item(), flush=True)
+st43 = mlp._int8_moe_state()
+print("s0u[43] cache vs state:", float(C["s0u"][43, 0, 0]) - float(st43[2][43]), flush=True)
+print("s0d[43] cache vs state:", float(C["s0d"][43, 0, 0]) - float(st43[3][43]), flush=True)
+print("s0g[43] cache vs state:", float(C["s0g"][43, 0, 0]) - float(st43[1][43]), flush=True)
+print("ug1(B=1 up) vs proto up:", (ug1.float() - up.float()).abs().max().item(), flush=True)
+print("Cu1(B=1 up GEMM) vs proto Cu0:",
+      (Cu1.float() - Cu0.float()).abs().max().item(), flush=True)
 if D2["Cd"] is not None:
     Cd43 = D2["Cd"].view(-1, D2["Cd"].shape[-1])[43 * cmax:43 * cmax + c].to(dev)
     print("Cd[43]-full vs Cd-B=1:",
