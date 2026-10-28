@@ -54,7 +54,7 @@ assert E == 128
 
 g = torch.Generator(device="cuda:0").manual_seed(21)
 with torch.inference_mode():
-    for tag, T, skew in [("even128", 1024, False), ("skew128", 1024, True)]:
+    for tag, T, skew in [("even128", 1024, False), ("skew128", 1024, True), ("no43", 1024, False)]:
         y = torch.randn((T, H), generator=g, device=dev).half()
         # unique picks per row by construction: 8 distinct experts per token
         sel = torch.empty((T, 8), dtype=torch.long, device=dev)
@@ -67,6 +67,15 @@ with torch.inference_mode():
             # (keep uniqueness per row by swapping within row pairs)
             pass
         w = torch.rand((T, 8), generator=g, device=dev).half()
+        if tag == "no43":
+            # remap expert 43 to an expert missing from each affected row
+            for t in range(T):
+                row = sel[t]
+                if (row == 43).any():
+                    used = set(row.tolist())
+                    rep = next(e for e in range(E) if e not in used and e != 43)
+                    row[row == 43] = rep
+            assert not (sel == 43).any()
         o1 = mlp._forward_int8_moe_grouped(y, T, sel, w, {})
         op = mlp._forward_int8_moe(y, T, sel, w, {})
         d = (o1.float() - op.float()).abs()
