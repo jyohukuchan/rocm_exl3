@@ -68,3 +68,134 @@ def quant_w8_slab(wfp: torch.Tensor, s0: torch.Tensor, w8: torch.Tensor) -> None
     BLOCK = 4096
     grid = (B, triton.cdiv(KN, BLOCK))
     _w8quant_kernel[grid](wfp, s0, w8, KN, BLOCK)
+
+
+@triton.jit
+def _butterflies_moe(value, columns, GROUPS: tl.constexpr):
+    # Local copy of the repo Hadamard butterflies (rocm_py/moe_prefill.py).
+    for shift in tl.static_range(7):
+        step = 1 << shift
+        indices = tl.broadcast_to(columns[None, :] ^ step, (GROUPS, 128))
+        peer = tl.gather(value, indices, axis=1)
+        value = tl.where((columns[None, :] & step) != 0, -value, value) + peer
+    return value
+
+
+@triton.jit
+def _gu_epilog_kernel(
+    CG, CU, SA, S0G, S0U, SVG, SVU, IDS, G, U,
+    ROWS, CMAX, COLS: tl.constexpr, GROUPS: tl.constexpr = 4,
+):
+    # Fused gate/up epilogue + output Hadamard. One (row, 128-chunk) per
+    # program group row. Replaces: int32->float, xsa, xs0, to-half, had_batch
+    # (5 passes) with a single pass. Association matches the torch sequence:
+    # ((C * sa) * s0) in fp32, butterflies, x 0.088388347648, x sign.
+    transform = tl.program_id(0) * GROUPS + tl.arange(0, GROUPS)
+    row = transform // (COLS // 128)
+    chunk = transform % (COLS // 128)
+    c = tl.arange(0, 128)
+    valid = row < ROWS
+    expert = tl.load(IDS + row // CMAX, valid, 0)
+    sa = tl.load(SA + row, valid, 0.0)
+    s0g = tl.load(S0G + expert, valid, 0.0)
+    s0u = tl.load(S0U + expert, valid, 0.0)
+    off = row[:, None] * COLS + chunk[:, None] * 128 + c[None, :]
+    m = valid[:, None]
+    g = tl.load(CG + off, m, 0).to(tl.float32)
+    u = tl.load(CU + off, m, 0).to(tl.float32)
+    g = (g * sa[:, None]) * s0g[:, None]
+    u = (u * sa[:, None]) * s0u[:, None]
+    g = _butterflies_moe(g, c, GROUPS)
+    u = _butterflies_moe(u, c, GROUPS)
+    g = g * 0.088388347648
+    u = u * 0.088388347648
+    sg = tl.load(SVG + expert[:, None] * COLS + chunk[:, None] * 128 + c[None, :], m, 0).to(tl.float32)
+    su = tl.load(SVU + expert[:, None] * COLS + chunk[:, None] * 128 + c[None, :], m, 0).to(tl.float32)
+    g = (g * sg).to(G.dtype.element_ty)
+    u = (u * su).to(U.dtype.element_ty)
+    tl.store(G + off, g, m)
+    tl.store(U + off, u, m)
+
+
+def gu_epilog_had(cg, cu, sa, s0g, s0u, svg, svu, ids, cmax, g, u):
+    """cg/cu [R,N] int32, sa [R,1] fp32, s0g/s0u [B] fp32,
+    svg/svu [E,N] half, ids [B] int64. g/u [R,N] half out."""
+    R, N = cg.shape
+    assert N % 128 == 0
+    GROUPS = 4
+    grid = (triton.cdiv(R * (N // 128), GROUPS),)
+    _gu_epilog_kernel[grid](cg, cu, sa, s0g, s0u, svg, svu, ids, g, u,
+                            R, cmax, N, GROUPS, num_warps=4,
+                            enable_fp_fusion=False)
+
+
+@triton.jit
+def _dquant_kernel(
+    A, SAD, XD,
+    ROWS, COLS: tl.constexpr, BLOCK: tl.constexpr = 128,
+):
+    # Fused activation amax + quantize (true division, half-even).
+    # Replaces amax / div / round / clamp / convert (5 passes) with 2.
+    r = tl.program_id(0)
+    offs = tl.arange(0, BLOCK)
+    amax = 0.0
+    for c0 in tl.static_range(0, COLS, BLOCK):
+        cols = c0 + offs
+        m = cols < COLS
+        v = tl.load(A + r * COLS + cols, m, 0.0).to(tl.float32)
+        amax = tl.maximum(amax, tl.max(tl.abs(v), 0))
+    sad = tl.maximum(amax / 127.0, 1e-12)
+    tl.store(SAD + r, sad)
+    for c0 in tl.static_range(0, COLS, BLOCK):
+        cols = c0 + offs
+        m = cols < COLS
+        v = tl.load(A + r * COLS + cols, m, 0.0).to(tl.float32)
+        q = _rint_half_even(v / sad)
+        q = tl.clamp(q, -128, 127).to(tl.int8)
+        tl.store(XD + r * COLS + cols, q, m)
+
+
+def dquant_rowwise(a: torch.Tensor, sad: torch.Tensor, xd: torch.Tensor) -> None:
+    """a [R,N] half, sad [R,1] fp32 out, xd [R,N] int8 out."""
+    R, N = a.shape
+    assert sad.shape == (R, 1) and xd.shape == (R, N)
+    assert a.is_contiguous() and xd.is_contiguous() and sad.is_contiguous()
+    _dquant_kernel[(R,)](a, sad, xd, R, N)
+
+
+@triton.jit
+def _d_epilog_kernel(
+    CD, SAD, S0D, SVD, IDS, D,
+    ROWS, CMAX, COLS: tl.constexpr, GROUPS: tl.constexpr = 4,
+):
+    # Fused down epilogue + output Hadamard. Replaces int32->float, xsad,
+    # xs0, to-half, had_batch (5 passes) with a single pass.
+    transform = tl.program_id(0) * GROUPS + tl.arange(0, GROUPS)
+    row = transform // (COLS // 128)
+    chunk = transform % (COLS // 128)
+    c = tl.arange(0, 128)
+    valid = row < ROWS
+    expert = tl.load(IDS + row // CMAX, valid, 0)
+    sad = tl.load(SAD + row, valid, 0.0)
+    s0d = tl.load(S0D + expert, valid, 0.0)
+    off = row[:, None] * COLS + chunk[:, None] * 128 + c[None, :]
+    m = valid[:, None]
+    v = tl.load(CD + off, m, 0).to(tl.float32)
+    v = (v * sad[:, None]) * s0d[:, None]
+    v = _butterflies_moe(v, c, GROUPS)
+    v = v * 0.088388347648
+    sv = tl.load(SVD + expert[:, None] * COLS + chunk[:, None] * 128 + c[None, :], m, 0).to(tl.float32)
+    v = (v * sv).to(D.dtype.element_ty)
+    tl.store(D + off, v, m)
+
+
+def d_epilog_had(cd, sad, s0d, svd, ids, cmax, d):
+    """cd [R,N] int32, sad [R,1] fp32, s0d [B] fp32, svd [E,N] half,
+    ids [B] int64. d [R,N] half out."""
+    R, N = cd.shape
+    assert N % 128 == 0
+    GROUPS = 4
+    grid = (triton.cdiv(R * (N // 128), GROUPS),)
+    _d_epilog_kernel[grid](cd, sad, s0d, svd, ids, d,
+                           R, cmax, N, GROUPS, num_warps=4,
+                           enable_fp_fusion=False)
