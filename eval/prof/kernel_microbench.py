@@ -154,6 +154,29 @@ def main():
                 res[f"igemm_dense_{tag}_ms"] = med(
                     lambda: ext.igemm_recon(a8, w8, c32))
 
+    with torch.inference_mode():
+        # --- reconstruct_batch scaling (grouped MoE weight decode) ---------
+        if moe is not None:
+            dev = gate0.trellis.device
+            k, n = gate0.in_features, gate0.out_features
+            E = len(moe.gates)
+            full_ptrs = torch.tensor(
+                [moe.gates[e].inner.trellis.data_ptr() for e in range(E)],
+                dtype=torch.int64, device=dev)
+            for B in [b for b in (8, 32, 64, 128) if b <= E]:
+                W = torch.empty((B, k, n), dtype=torch.half, device=dev)
+                ptrs = full_ptrs[:B].contiguous()
+                res[f"recon_batch_B{B}_ms"] = med(
+                    lambda: ext.reconstruct_batch(W, ptrs, gate0.K, gate0.mcg, gate0.mul1),
+                    iters=10)
+            # per-expert reconstruct loop for comparison
+            def loopE():
+                for e in range(E):
+                    W = torch.empty((k, n), dtype=torch.half, device=dev)
+                    ext.reconstruct(W, moe.gates[e].inner.trellis,
+                                    gate0.K, gate0.mcg, gate0.mul1)
+            res["recon_loop_ms"] = med(loopE, iters=5)
+
     print(json.dumps(res, indent=1), flush=True)
     if out:
         with open(out, "w") as f:
