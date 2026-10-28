@@ -582,3 +582,42 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
 - KLD: `cand-iii-v3` ダンプ完了待ち → `compare_kld.py` 実行。
 - その後: attention 三分離 (2048/8192) → 射影 INT8 化 →
   コア方針決定 → Flash Next stage_profile → ゲート判定。
+
+### KLD ダンプのクラッシュと修正 (commit `ff7e436`)
+
+- `en_prose_129` で `torch.bincount` が
+  `1-d non-negative integral inputs` でクラッシュ。
+  原因: 全 -1 の `selected_experts` (NaN 入力に対する
+  router の応答と推定)。複製 shard 分岐が範囲外 ID を
+  そのまま通していた。
+- 修正: `exllamav3/modules/moe_routing_ids.py` を新設
+  (`localize_expert_ids`: 範囲外 ID を番兵バケットへ。
+  INT8 原型・grouped 両パスで使用)。
+  `tests/test_moe_routing_ids.py` で回帰試験
+  (CPU のみで実行可。失敗→成功を確認済み)。
+- 修正後にダンプ完走 (21 件) したが `en_prose_129` は
+  全 19,295,872 桁が nonfinite。KLD 比較は assert で停止。
+  すなわち grouped INT8 パスがこの入力で NaN を出す。
+
+### NaN の追跡 (進行中。未解決)
+
+- 層 16 の grouped MoE 出力が最初に NaN (入力は有限、
+  routing も正常)。NaN 以降は router が全 -1 を返し
+  全層に波及する (番兵修正でクラッシュはしないが
+  値は NaN のまま)。
+- 再現性なし: 同一入力でも run ごとに NaN/正常が変わる
+  (1/3 程度で NaN)。単体では全カーネル決定論的
+  (`igemm_batched`、`quant_w8_slab`、`gu_epilog_had` を
+  層 16/層 8 形状で各 10〜50 回試験し完全一致)。
+- `torch.empty` 全ゼロ化でも NaN が出るため未初期化
+  メモリ穴ではない。イベント同期を入れても NaN が出る
+  ため単純なストリーム競合でもない。
+- 層ごと valid 行のみ hash 比較では、NaN run と正常 run で
+  層 0 の `guV` から既に乖離 (入力 hash は yhash 別 run では
+  層 8 まで一致)。全入出力 hash プローブ
+  (`/tmp/alleverything.py`、結果は `/work/kl-q30b/`。
+  throwaway) で乖離の起点を特定中。
+- 次の一手: 乖離起点の層の全入力 (Cg/Cu/SA/s0/ids) を
+  hash 比較し、最初に変わる入力を突き止める。
+  カーネル単体が決定論的なら入力が変わっているはずで、
+  その入力の上流をさらに遡る。
