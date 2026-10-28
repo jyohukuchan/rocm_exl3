@@ -1039,13 +1039,22 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         dev = y.device
         su_shared, s0g, s0u, s0d = self._int8_moe_state()
         num_ex = self.num_local_experts or self.num_experts
+        prof = os.environ.get("EXL3_INT8_MOE_PROFILE", "0") != "0"
+        ev = {}
+        def tick(name):
+            if prof:
+                e = torch.cuda.Event(enable_timing = True)
+                e.record()
+                ev[name] = ev.get(name, []) + [e]
 
         with torch.inference_mode():
+            tick("rot0")
             xh = torch.empty_like(y)
             ext.had_r_128(y, xh, su_shared, None, 1.0)
             sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
             a8 = (xh.float() / sa).round().clamp(-128, 127).to(torch.int8)
             del xh
+            tick("rot1")
 
         # Flatten assignments (same mapping as the fp16 tiers, incl. the
         # sentinel bucket for picks outside this module's expert slice)
@@ -1078,6 +1087,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             seg = slice(starts[e], starts[e] + count)
             top = token_sorted[seg]
             wgt = weight_sorted[seg].unsqueeze(1)
+            tick("exp0")
             a8e = a8.index_select(0, top)
             sae = sa.index_select(0, top)
             gi, ui, di = self.gates[e].inner, self.ups[e].inner, self.downs[e].inner
@@ -1114,6 +1124,19 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             d.mul_(wgt)
             out.index_add_(0, top, d)
             del d
+            tick("exp1")
+        if prof:
+            torch.cuda.synchronize()
+            import statistics
+            segs = [("rot", "rot0", "rot1"), ("experts", "exp0", "exp1")]
+            for label, a, b in segs:
+                ea, eb = ev.get(a, []), ev.get(b, [])
+                if ea and eb and len(ea) == len(eb):
+                    ms = [x.elapsed_time(y) for x, y in zip(ea, eb)]
+                    tot = sum(ms)
+                    print(f"EXL3_INT8_MOE_PROFILE {self.key} {label}: "
+                          f"total {tot:.2f}ms over {len(ms)} segs "
+                          f"(med {statistics.median(ms):.3f}ms)", flush=True)
         return out
 
     @override
