@@ -70,15 +70,12 @@ def main():
 
     config = Config.from_directory(model_dir)
     model = Model.from_config(config)
+    cache = Cache(model, max_num_tokens=L + 2048, max_batch_size=1)
     model.load(device=torch.device("cuda:0"))
     print(f"loaded {model_dir}", flush=True)
     tokenizer = Tokenizer.from_config(config)
-
-    def fresh_gen():
-        _cache = Cache(model, max_num_tokens=L + 2048, max_batch_size=1)
-        _cache.allocate()
-        return Generator(model=model, cache=_cache, tokenizer=tokenizer,
-                         max_chunk_size=CH)
+    gen = Generator(model=model, cache=cache, tokenizer=tokenizer,
+                    max_chunk_size=CH)
 
     # Text-only prompt of exactly L tokens (repeat + truncate; no vision).
     enc = tokenizer.encode(
