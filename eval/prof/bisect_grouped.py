@@ -110,4 +110,55 @@ with torch.inference_mode():
     torch.cuda.synchronize()
     d = (W8[0].float() - w8p.float()).abs()
     print(f"W8 slab[0] vs proto: maxabs={d.max().item():.3e}", flush=True)
+
+    # Quant variants: speed + bitwise vs fp32 reference
+    ref = W8.clone()
+    s0h = s0.half()
+    def q_fp16():
+        with torch.inference_mode():
+            W8.copy_((Wfp / s0h).round().clamp(-128, 127).to(torch.int8))
+    print("quant fp16:", med(q_fp16), flush=True)
+    torch.cuda.synchronize()
+    dq = (W8.float() - ref.float()).abs()
+    print(f"fp16-quant vs fp32-quant: maxabs={dq.max().item():.3e}", flush=True)
+
+    # Stage 3: input gather + epilogue vs prototype pieces for expert 0
+    # (recompute grouping here)
+    from exllamav3.util.tensor import buffered_interleaved_arange
+    num_ex = E
+    flat_token = buffered_interleaved_arange(T, top_k, device=dev)
+    order = sel.reshape(-1).argsort()
+    token_sorted = flat_token[order]
+    weight_sorted = w.reshape(-1)[order]
+    counts = torch.bincount(sel.reshape(-1), minlength=num_ex).tolist()
+    starts, acc = [0], 0
+    for c in counts:
+        acc += c
+        starts.append(acc)
+    ef = next(e for e in range(num_ex) if counts[e] > 0)
+    print(f"bisect expert: {ef} rows={counts[ef]}", flush=True)
+    e0rows = token_sorted[starts[ef]:starts[ef] + counts[ef]]
+    # proto epilogue for expert ef gate (recompute)
+    gi = mlp.gates[ef].inner
+    s0g = C[f"s0g"][ef, 0, 0].item()
+    a8e = a8.index_select(0, e0rows)
+    sae = sa.index_select(0, e0rows)
+    Cg0 = torch.empty((len(e0rows), gi.out_features), dtype=torch.int32, device=dev)
+    ext.igemm_recon(a8e, w8p, Cg0)
+    gp = (Cg0.float() * sae * torch.tensor(s0g, device=dev)).to(torch.half)
+    ext.had_r_128(gp, gp, None, gi.svh, 1.0)
+    # grouped epilogue slice for expert 0 (batch position of expert 0)
+    # rebuild the slab path pieces for expert 0 only
+    Xb = a8[e0rows]
+    SAb = sa[e0rows]
+    Wfp0 = torch.empty((1, K, N), dtype=torch.half, device=dev)
+    ext.reconstruct_batch(Wfp0, ptrs[ef:ef+1], t["bK"], t["mcg"], t["mul1"])
+    W80 = (Wfp0.float() / s0[ef]).round().clamp(-128, 127).to(torch.int8)
+    CgB = torch.empty((1, len(e0rows), N), dtype=torch.int32, device=dev)
+    ext.igemm_batched(Xb.view(1, -1, K), W80, CgB)
+    gg = (CgB.float() * SAb.view(1, -1, 1) * s0[ef]).to(torch.half)
+    gg2 = gg.view(-1, N)
+    ext.had_r_128_batch(gg2, gg2, None, C["svg"][ef:ef+1], torch.tensor([0], dtype=torch.int64, device=dev), len(e0rows), 1.0)
+    dg = (gg2.float() - gp.float()).abs()
+    print(f"gate epilogue grouped[0] vs proto: maxabs={dg.max().item():.3e}", flush=True)
 print("done", flush=True)
