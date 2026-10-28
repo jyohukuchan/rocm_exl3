@@ -56,6 +56,7 @@ def main():
     from exllamav3.modules import gated_delta_net as G
     from exllamav3.modules import mlp as P
     from exllamav3.modules.quant.exl3 import LinearEXL3
+    from exllamav3.modules.linear import Linear
 
     model_dir, L, CH, reps = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
     out = sys.argv[5] if len(sys.argv) > 5 else None
@@ -67,6 +68,8 @@ def main():
     wrap(G.GatedDeltaNet, "gdn")
     wrap(P.GatedMLP, "mlp")
     wrap(LinearEXL3, "lin")
+    if Linear is not LinearEXL3:
+        wrap(Linear, "lin")
 
     config = Config.from_directory(model_dir)
     model = Model.from_config(config)
