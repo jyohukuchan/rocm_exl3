@@ -283,6 +283,15 @@ top-8) で BF16 (61GB) と既存 3bpw EXL3 が手元にあり、
 - (iii) を 15:45 JST に開始 (fresh `/work/build-q30b-iii`、
   `--int8-grid --share-input-su`、他条件は (i) と同一)。
   ログは `/work/convert-iii.log`。
+- (iii) も層 12→13 遷移で OOM 死 (16:42 JST、anon 58 GB)。
+  同一コマンド + `-r` で resume → 層 13 から継続。
+  層 27〜31 で floor 54 GB 張り付きのまま遷移を耐え、
+  層 31 で floor 14 GB に低下。その後順調に層 47・norm まで進むも、
+  (i) と同じく lm_head 相で OOM 死 (19:05 JST、anon 58 GB)。
+  再度 resume → 低 floor から compile のみ実行し成功。
+  `/work/models/q30b-exl3-305-iii` 完成 (19:1x JST)。
+  パターン確定: lm_head 相は毎回 OOM するため、
+  head までの resume + compile のみの resume の 2 段階が必要。
 
 ### 精度評価 (TODO: ダンプ後に記入)
 
