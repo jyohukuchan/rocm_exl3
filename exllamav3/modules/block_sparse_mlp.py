@@ -1300,9 +1300,11 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             del W8
             return Cc
 
+        dump_on = os.environ.get("EXL3_INT8_MOE_DUMP", "0") != "0"
         Cg = grouped_gemm(Xgu, "g")
         Cu = grouped_gemm(Xgu, "u")
-        Xgu_saved = Xgu if os.environ.get("EXL3_INT8_MOE_DUMP", "0") != "0" else None
+        Xgu_saved = Xgu if dump_on else None
+        Cg_saved = Cg if dump_on else None
         del Xgu
         with torch.inference_mode():
             g = (Cg.float() * SAslab * C["s0g"][act_t]).to(torch.half)
@@ -1321,6 +1323,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             Xd = (a.float() / sad).round().clamp(-128, 127).to(torch.int8)
         del a
         Cd = grouped_gemm(Xd.view(B, cmax, -1), "d")
+        Cd_saved = Cd if dump_on else None
         del Xd
         with torch.inference_mode():
             d = (Cd.float() * sad.view(B, cmax, 1) * C["s0d"][act_t]).to(torch.half)
@@ -1340,6 +1343,8 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                         "w_pad": w_pad.cpu(), "df": df.cpu(),
                         "SAslab": SAslab.cpu(),
                         "Xgu": Xgu_saved.cpu() if Xgu_saved is not None else None,
+                        "Cg": Cg_saved.cpu() if Cg_saved is not None else None,
+                        "Cd": Cd_saved.cpu() if Cd_saved is not None else None,
                         "active": active, "cmax": cmax,
                         "counts": expert_count_list, "starts": starts},
                        "/tmp/moe_dump.pt")

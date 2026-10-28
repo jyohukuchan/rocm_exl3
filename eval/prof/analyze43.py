@@ -149,4 +149,9 @@ gg1 = (Cg1.float() * SAb * C["s0g"][43:44]).to(torch.half).view(-1, tG["N"])
 ext.had_r_128_batch(gg1, gg1, None, C["svg"][43:44],
                     torch.tensor([0], dtype=torch.int64, device=dev), c, 1.0)
 print("B=1 gate vs proto:", (gg1.float() - gp.float()).abs().max().item(), flush=True)
+D2 = torch.load("/tmp/moe_dump.pt", map_location="cpu", weights_only=False)
+if D2["Cg"] is not None:
+    Cg43 = D2["Cg"].view(-1, D2["Cg"].shape[-1])[43 * cmax:43 * cmax + c].to(dev)
+    print("Cg[43]-full vs Cg-B=1:",
+          (Cg43.float() - Cg1.float()).abs().max().item(), flush=True)
 print("done", flush=True)
