@@ -78,9 +78,13 @@ def main():
                     max_chunk_size=CH)
 
     # Text-only prompt of exactly L tokens (repeat + truncate; no vision).
-    unit = [int(x) for x in tokenizer.encode(
+    enc = tokenizer.encode(
         "The quick brown fox jumps over the lazy dog. " * 64,
-        add_bos=True, encode_special_tokens=True)]
+        add_bos=True, encode_special_tokens=True)
+    try:
+        unit = [int(x) for x in enc]
+    except (TypeError, ValueError):
+        unit = [int(x) for x in enc.view(-1).tolist()]
     ids = (unit * (L // len(unit) + 1))[:L]
     assert len(ids) == L, (len(ids), len(unit))
 
