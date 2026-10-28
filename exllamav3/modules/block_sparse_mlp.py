@@ -21,6 +21,7 @@ from .block_sparse_mlp_routing import (
     RoutingCFG, ROUTING_ACT_SIGMOID, ROUTING_ACT_SQRTSP,
     routing_std, routing_std_bias, routing_ds3, routing_dots, routing_sqrtsp, routing_sqrtsp_hash,
 )
+from .moe_routing_ids import localize_expert_ids
 
 # Row capacity of the fused MoE kernel's per-group temp buffers (experts with more assigned
 # rows take the reconstruct paths); EXL3_MOE_FUSED_ROWS overrides for tuning sweeps
@@ -1081,13 +1082,9 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         flat_expert_global = selected_experts.reshape(-1)
         flat_weight = routing_weights.reshape(-1)
         flat_token = buffered_interleaved_arange(num_tokens, top_k, device = dev)
-        if self.num_local_experts == self.num_experts:
-            flat_expert_local = flat_expert_global
-        else:
-            flat_expert_local = flat_expert_global - self.routing_first
-            valid = (flat_expert_local >= 0) & (flat_expert_local < num_ex)
-            flat_expert_local = torch.where(
-                valid, flat_expert_local, torch.full_like(flat_expert_local, num_ex))
+        flat_expert_local = localize_expert_ids(
+            flat_expert_global, self.num_local_experts, self.num_experts,
+            self.routing_first)
         order = flat_expert_local.argsort()
         token_sorted = flat_token[order]
         weight_sorted = flat_weight[order]
@@ -1251,13 +1248,9 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         flat_expert_global = selected_experts.reshape(-1)
         flat_weight = routing_weights.reshape(-1)
         flat_token = buffered_interleaved_arange(num_tokens, top_k, device=dev)
-        if self.num_local_experts == self.num_experts:
-            flat_expert_local = flat_expert_global
-        else:
-            flat_expert_local = flat_expert_global - self.routing_first
-            valid = (flat_expert_local >= 0) & (flat_expert_local < num_ex)
-            flat_expert_local = torch.where(
-                valid, flat_expert_local, torch.full_like(flat_expert_local, num_ex))
+        flat_expert_local = localize_expert_ids(
+            flat_expert_global, self.num_local_experts, self.num_experts,
+            self.routing_first)
         order = flat_expert_local.argsort()
         token_sorted = flat_token[order]
         weight_sorted = flat_weight[order]
