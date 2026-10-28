@@ -1302,6 +1302,7 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
 
         Cg = grouped_gemm(Xgu, "g")
         Cu = grouped_gemm(Xgu, "u")
+        Xgu_saved = Xgu if os.environ.get("EXL3_INT8_MOE_DUMP", "0") != "0" else None
         del Xgu
         with torch.inference_mode():
             g = (Cg.float() * SAslab * C["s0g"][act_t]).to(torch.half)
@@ -1333,6 +1334,15 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             c = expert_count_list[e]
             r0 = b * cmax
             out.index_add_(0, tok_pad[r0:r0 + c], df[r0:r0 + c])
+        if os.environ.get("EXL3_INT8_MOE_DUMP", "0") != "0":
+            torch.save({"y": y.cpu(), "sel": selected_experts.cpu(),
+                        "w": routing_weights.cpu(), "tok_pad": tok_pad.cpu(),
+                        "w_pad": w_pad.cpu(), "df": df.cpu(),
+                        "SAslab": SAslab.cpu(),
+                        "Xgu": Xgu_saved.cpu() if Xgu_saved is not None else None,
+                        "active": active, "cmax": cmax,
+                        "counts": expert_count_list, "starts": starts},
+                       "/tmp/moe_dump.pt")
         if prof:
             torch.cuda.synchronize()
             from collections import defaultdict
