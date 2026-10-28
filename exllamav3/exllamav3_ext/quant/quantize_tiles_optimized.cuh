@@ -96,7 +96,7 @@ __global__ __launch_bounds__(qt_optimized_threads(K, cb), 1) void quantize_tiles
                 if (write)
                 {
                     output_indices[ri] = (uint16_t)encoded;
-                    output_tile[ri] = __half2float(decode_3inst<cb>(encoded));
+                    output_tile[ri] = __half2float(grid_round_3inst(decode_3inst<cb>(encoded), s0));
                 }
                 else if (ri == 0)
                     break;
@@ -147,7 +147,7 @@ __global__ __launch_bounds__(qt_optimized_threads(K, cb), 1) void quantize_tiles
                     {
                         int state = ((c * G + GL) << Kr) | out;
                         int pred = state >> K;
-                        half2 d = __hsub2(decode_3inst_2<cb>(state, state + 1), w);
+                        half2 d = __hsub2(grid_round_3inst_2(decode_3inst_2<cb>(state, state + 1), s0), w);
                         half2 err;
                         if (i == 0)
                         {
@@ -219,7 +219,7 @@ __global__ __launch_bounds__(qt_optimized_threads(K, cb), 1) void quantize_tiles
             for (int c = 0; c < NC; ++c)
             {
                 int state = ((c * G + GL) << Kr) | out;
-                values[j][c] = decode_3inst_2<cb>(state, state + 1);
+                values[j][c] = grid_round_3inst_2(decode_3inst_2<cb>(state, state + 1), s0);
             }
         }
         auto forward = [&](int roll, int pre_state)
@@ -296,7 +296,7 @@ __global__ __launch_bounds__(qt_optimized_threads(K, cb), 1) void quantize_tiles
             for (int c = 0; c < NC; ++c)
             {
                 int state = ((c * G + GL) << Kr) | out;
-                values[j][c] = decode_3inst_2<cb>(state, state + 1);
+                values[j][c] = grid_round_3inst_2(decode_3inst_2<cb>(state, state + 1), s0);
             }
         }
         auto forward = [&](int roll, int pre_state)
@@ -365,7 +365,7 @@ __global__ __launch_bounds__(qt_optimized_threads(K, cb), 1) void quantize_tiles
                 const half2 w2 = __half2half2(sh_input_tile[ri]);
                 int in_edge_idx = out_edge_idx >> K;
                 half2 decoded2;
-                decoded2 = __ldg(lut + ((out_edge_idx) >> 1));
+                decoded2 = grid_round_3inst_2(__ldg(lut + ((out_edge_idx) >> 1)), s0);
                 half2 dh2 = __hsub2(decoded2, w2);
                 half2 min_err2 = __hmul2(dh2, dh2);
                 if (pre_state >= 0 && in_edge_idx != pre_state)
@@ -380,7 +380,7 @@ __global__ __launch_bounds__(qt_optimized_threads(K, cb), 1) void quantize_tiles
                 {
                     const int state0 = (k << Kr) | out_edge_idx;
                     in_edge_idx = state0 >> K;
-                    decoded2 = __ldg(lut + ((state0) >> 1));
+                    decoded2 = grid_round_3inst_2(__ldg(lut + ((state0) >> 1)), s0);
                     dh2 = __hsub2(decoded2, w2);
                     half2 err2 = __hmul2(dh2, dh2);
                     if (pre_state >= 0 && in_edge_idx != pre_state)
@@ -414,7 +414,7 @@ __global__ __launch_bounds__(qt_optimized_threads(K, cb), 1) void quantize_tiles
                     const half2 w2 = __half2half2(sh_input_tile[ri]);
                     int in_edge_idx = out_edge_idx >> K;
                     half2 decoded2;
-                    decoded2 = __ldg(lut + ((out_edge_idx) >> 1));
+                    decoded2 = grid_round_3inst_2(__ldg(lut + ((out_edge_idx) >> 1)), s0);
                     half2 dh2 = __hsub2(decoded2, w2);
                     half2 min_err2 = __hfma2(dh2, dh2, __half2half2(temp_costs_inc[in_edge_idx]));
                     int min_in_edge0 = in_edge_idx;
@@ -427,7 +427,7 @@ __global__ __launch_bounds__(qt_optimized_threads(K, cb), 1) void quantize_tiles
                     {
                         const int state0 = (k << Kr) | out_edge_idx;
                         in_edge_idx = state0 >> K;
-                        decoded2 = __ldg(lut + ((state0) >> 1));
+                        decoded2 = grid_round_3inst_2(__ldg(lut + ((state0) >> 1)), s0);
                         dh2 = __hsub2(decoded2, w2);
                         half2 err2 = __hfma2(dh2, dh2, __half2half2(temp_costs_inc[in_edge_idx]));
                         best0 =
@@ -469,7 +469,7 @@ __global__ __launch_bounds__(qt_optimized_threads(K, cb), 1) void quantize_tiles
             for (int c = 0; c < NC; ++c)
             {
                 int state = ((c * G + GL) << Kr) | out;
-                values[j][c] = decode_3inst_2<cb>(state, state + 1);
+                values[j][c] = grid_round_3inst_2(decode_3inst_2<cb>(state, state + 1), s0);
             }
         }
         auto forward = [&](int roll, int pre_state)

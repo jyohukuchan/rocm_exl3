@@ -190,9 +190,6 @@ void quantize_tiles
     TORCH_CHECK(L == 256 || cb == 2, "quantize_tiles length 160 requires the mul1 codebook");
     const auto launch = qt_launch(device, K, cb, L);
     const bool optimized = launch.optimized;
-    TORCH_CHECK(!(s0 > 0 && optimized),
-                "quantize_tiles: int8 grid (s0 > 0) requires the plain kernel "
-                "(set EXL3_QT_OPTIMIZED=0); the dense specialization does not round");
     const auto kernel = launch.kernel;
     const int num_threads = launch.num_threads;
     const int shmem = launch.shmem;

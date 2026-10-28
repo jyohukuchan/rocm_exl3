@@ -7,8 +7,8 @@ std::tuple<bool, int64_t> quantize_tiles_scratch(int device, int K, bool mcg, bo
 
 // s0: INT8-exact codebook grid step (round 2 of the W8A8 prefill work). When
 // > 0 the Viterbi search scores codebook values rounded to the int8 grid
-// T = q * s0, so stored states decode to exactly representable int8. Only the
-// plain kernel implements it; the optimized specialization rejects s0 > 0.
+// T = q * s0, so stored states decode to exactly representable int8. Both the
+// plain and the dense-specialized kernels implement the rounding.
 void quantize_tiles
 (
     at::Tensor input_tiles,
