@@ -38,6 +38,15 @@ INT8_MOE_MIN_ROWS = int(os.environ.get("EXL3_INT8_MOE_MIN_ROWS", 32))
 # expert slabs instead of 3 per-expert launches per expert. =0 falls back to
 # the per-expert prototype for A/B. Requires ext.igemm_batched (else fallback).
 INT8_MOE_GROUPED = os.environ.get("EXL3_INT8_MOE_GROUPED", "1") != "0"
+# Max rows per slab entry; experts above this split into multiple entries.
+# Bounds all grouped slabs (OOM fix for skewed routing at long contexts).
+INT8_MOE_ROW_CAP = int(os.environ.get("EXL3_INT8_MOE_ROW_CAP", 512))
+try:
+    from ..rocm_py.moe_int8 import quant_w8_slab
+    _HAS_W8QUANT = True
+except Exception:
+    quant_w8_slab = None
+    _HAS_W8QUANT = False
 
 # Shapes that already logged int8-MoE engagement (one line per module shape).
 _int8_moe_logged = set()
@@ -1152,6 +1161,9 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         cached = getattr(self, "_int8_moe_grouped", None)
         if cached is not None:
             return cached or None
+        if not _HAS_W8QUANT or getattr(ext, "igemm_batched", None) is None:
+            self._int8_moe_grouped = False
+            return None
         state = self._int8_moe_state()
         if state is None:
             self._int8_moe_grouped = False
@@ -1186,11 +1198,6 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
                 "s0g": torch.tensor(s0g, dtype=torch.float, device=dev).view(E, 1, 1),
                 "s0u": torch.tensor(s0u, dtype=torch.float, device=dev).view(E, 1, 1),
                 "s0d": torch.tensor(s0d, dtype=torch.float, device=dev).view(E, 1, 1),
-                # Python-float lists for the scalar-division quant (see
-                # _recon_int8_slab): identical kernels to the prototype.
-                "s0g_list": [float(x) for x in s0g],
-                "s0u_list": [float(x) for x in s0u],
-                "s0d_list": [float(x) for x in s0d],
             }
         except Exception:
             self._int8_moe_grouped = False
@@ -1198,17 +1205,15 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         self._int8_moe_grouped = cache
         return cache
 
-    def _recon_int8_slab(self, W8, Wfp, ptrs, bK, mcg, mul1, s0_list):
+    def _recon_int8_slab(self, W8, Wfp, ptrs, bK, mcg, mul1, s0):
         # Decode a [B, K, N] expert slab to fp16, then quantize to int8 with
         # the per-expert grid steps. Wfp is scratch, freed by the caller.
-        # The quant runs per expert with a Python-float divisor: a tensor
-        # divisor selects a much slower broadcast-divide kernel on this ROCm
-        # build (16.7ms vs ~2ms here), and scalar division is also what the
-        # per-expert prototype uses (bitwise identical results).
+        # The quant is a single-pass Triton kernel (reciprocal-multiply, the
+        # same kernel selection as the prototype's scalar division: bitwise
+        # identical, ~1.5ms vs 16.7ms for the torch chain on this build).
         ext.reconstruct_batch(Wfp, ptrs, bK, mcg, mul1)
         with torch.inference_mode():
-            for b, s in enumerate(s0_list):
-                W8[b].copy_((Wfp[b].float() / s).round().clamp(-128, 127).to(torch.int8))
+            quant_w8_slab(Wfp, s0, W8)
 
     def _forward_int8_moe_grouped(self, y, bsz, selected_experts, routing_weights, params):
         # Grouped INT8 MoE: same math as the per-expert prototype, but tokens
@@ -1258,24 +1263,34 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             starts.append(starts[-1] + c)
 
         active = [e for e in range(num_ex) if expert_count_list[e] > 0]
-        B = len(active)
         out = torch.zeros((T, H), dtype=torch.float, device=dev)
-        if B == 0:
+        if not active:
             return out
-        cmax = max(expert_count_list[e] for e in active)
-        act_t = torch.tensor(active, dtype=torch.long, device=dev)
-        act_ids = torch.tensor(active, dtype=torch.int64, device=dev)
+        # Split experts into row-capped entries: bounds every slab even when
+        # routing is heavily skewed (long contexts), and trims padding.
+        cap = INT8_MOE_ROW_CAP
+        entries = []
+        for e in active:
+            c = expert_count_list[e]
+            off = 0
+            while off < c:
+                n = min(cap, c - off)
+                entries.append((e, off, n))
+                off += n
+        B = len(entries)
+        cmax = max(n for _, _, n in entries)
+        experts_b = torch.tensor([e for e, _, _ in entries], dtype=torch.long, device=dev)
+        act_ids = torch.tensor([e for e, _, _ in entries], dtype=torch.int64, device=dev)
 
         # Padded flat maps: token ids (sentinel T = zero row), routing weights
-        # (sentinel 0). One pass over active experts; slice copies only.
+        # (sentinel 0). One pass over entries; slice copies only.
         tok_pad = torch.full((B * cmax,), T, dtype=torch.long, device=dev)
         w_pad = torch.zeros((B * cmax,), dtype=torch.float, device=dev)
-        for b, e in enumerate(active):
-            c = expert_count_list[e]
+        for b, (e, off, n) in enumerate(entries):
             r0 = b * cmax
-            s = starts[e]
-            tok_pad[r0:r0 + c] = token_sorted[s:s + c]
-            w_pad[r0:r0 + c] = weight_sorted[s:s + c].float()
+            s = starts[e] + off
+            tok_pad[r0:r0 + n] = token_sorted[s:s + n]
+            w_pad[r0:r0 + n] = weight_sorted[s:s + n].float()
 
         Kg = C["it"]["g"]["K"]
         a8s = torch.cat([a8, torch.zeros((1, Kg), dtype=torch.int8, device=dev)])
@@ -1301,32 +1316,39 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             t = C["it"][tag]
             Wfp = torch.empty((B, t["K"], t["N"]), dtype=torch.half, device=dev)
             W8 = torch.empty((B, t["K"], t["N"]), dtype=torch.int8, device=dev)
-            s0l = [C["s0" + tag + "_list"][e] for e in active]
+            s0b = C["s0" + tag][experts_b].reshape(-1)
             tick("recon_" + tag, lambda: self._recon_int8_slab(
-                W8, Wfp, t["ptrs"][act_t], t["bK"], t["mcg"], t["mul1"], s0l))
+                W8, Wfp, t["ptrs"][experts_b], t["bK"], t["mcg"], t["mul1"], s0b))
             del Wfp
             Cc = torch.empty((B, cmax, t["N"]), dtype=torch.int32, device=dev)
             tick("igemm_" + tag, lambda: igemm(X, W8, Cc))
             del W8
             return Cc
 
-        dump_on = os.environ.get("EXL3_INT8_MOE_DUMP", "0") != "0"
+        s0g_b = C["s0g"][experts_b]
+        s0u_b = C["s0u"][experts_b]
+        s0d_b = C["s0d"][experts_b]
         Cg = grouped_gemm(Xgu, "g")
         Cu = grouped_gemm(Xgu, "u")
-        Xgu_saved = Xgu if dump_on else None
-        Cg_saved = Cg if dump_on else None
         del Xgu
+        # In-place epilogue: peak 3 slabs instead of 5 (OOM headroom).
         with torch.inference_mode():
-            g = (Cg.float() * SAslab * C["s0g"][act_t]).to(torch.half)
-            u = (Cu.float() * SAslab * C["s0u"][act_t]).to(torch.half)
-        del Cg, Cu
+            g = Cg.float()
+            del Cg
+            g *= SAslab
+            g *= s0g_b
+            g = g.to(torch.half)
+            u = Cu.float()
+            del Cu
+            u *= SAslab
+            u *= s0u_b
+            u = u.to(torch.half)
         g2 = g.view(B * cmax, -1)
         u2 = u.view(B * cmax, -1)
         ext.had_r_128_batch(g2, g2, None, C["svg"], act_ids, cmax, 1.0)
         ext.had_r_128_batch(u2, u2, None, C["svu"], act_ids, cmax, 1.0)
         a = torch.empty_like(u2)
         self.activation_fn_call(g2, u2, a, self.act_limit)
-        a_saved = a if dump_on else None
         del g, u, g2, u2
 
         with torch.inference_mode():
@@ -1334,34 +1356,21 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             Xd = (a.float() / sad).round().clamp(-128, 127).to(torch.int8)
         del a
         Cd = grouped_gemm(Xd.view(B, cmax, -1), "d")
-        Cd_saved = Cd if dump_on else None
         del Xd
         with torch.inference_mode():
-            d = (Cd.float() * sad.view(B, cmax, 1) * C["s0d"][act_t]).to(torch.half)
-        del Cd
+            d = Cd.float()
+            del Cd
+            d *= sad.view(B, cmax, 1)
+            d *= s0d_b
+            d = d.to(torch.half)
         d2 = d.view(B * cmax, -1)
         ext.had_r_128_batch(d2, d2, None, C["svd"], act_ids, cmax, 1.0)
-        d_saved = d2 if dump_on else None
         with torch.inference_mode():
             df = d2.to(torch.float).mul_(w_pad.unsqueeze(1))
         del d, d2
-        for b, e in enumerate(active):
-            c = expert_count_list[e]
+        for b, (_, _, n) in enumerate(entries):
             r0 = b * cmax
-            out.index_add_(0, tok_pad[r0:r0 + c], df[r0:r0 + c])
-        if os.environ.get("EXL3_INT8_MOE_DUMP", "0") != "0":
-            torch.save({"y": y.cpu(), "sel": selected_experts.cpu(),
-                        "w": routing_weights.cpu(), "tok_pad": tok_pad.cpu(),
-                        "w_pad": w_pad.cpu(), "df": df.cpu(),
-                        "SAslab": SAslab.cpu(),
-                        "Xgu": Xgu_saved.cpu() if Xgu_saved is not None else None,
-                        "Cg": Cg_saved.cpu() if Cg_saved is not None else None,
-                        "Cd": Cd_saved.cpu() if Cd_saved is not None else None,
-                        "a": a_saved.cpu() if a_saved is not None else None,
-                        "d": d_saved.cpu() if d_saved is not None else None,
-                        "active": active, "cmax": cmax,
-                        "counts": expert_count_list, "starts": starts},
-                       "/tmp/moe_dump.pt")
+            out.index_add_(0, tok_pad[r0:r0 + n], df[r0:r0 + n])
         if prof:
             torch.cuda.synchronize()
             from collections import defaultdict
