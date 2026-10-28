@@ -90,6 +90,8 @@ parser.add_argument("-d", "--devices", type = str, default = "0", help = "List o
 parser.add_argument("-dr", "--device_ratios", type = str, default = "", help = "Split ratio for devices, e.g. --device_ratio 2,2,4")
 parser.add_argument("-img", "--image_dump", action = "store_true", help = "Save model tensors as images (saved to working directory)")
 parser.add_argument("-cb", "--codebook", type = str, default = "mul1", help = "Codebook: mul1 (default), mcg or 3inst")
+parser.add_argument("--int8-grid", action = "store_true", default = None, help = "INT8-exact codebook: round every codebook output to a per-tensor int8 grid (s0) inside the Viterbi search (round 2 of the W8A8 prefill work; default from EXL3_INT8_GRID=1)")
+parser.add_argument("--share-input-su", action = "store_true", default = None, help = "Share one hidden-side input vector across a layer's routed-expert gate/up projections (EXLR8-style shared rotation; default from EXL3_SHARE_INPUT_SU=1)")
 parser.add_argument("-pm", "--parallel_mode", action = "store_true", help = "Deprecated (no-op): parallel mode is now the default; layers with fewer tensors than devices fall back to tile splitting")
 parser.add_argument("--max_module", type = int, help = "End quantization after this many modules, includes embedding and norm layers (for debug purposes)", default = None)
 head_capture = parser.add_mutually_exclusive_group()
@@ -278,6 +280,8 @@ def prepare(args) -> (dict, dict, bool, str):
         ("devices", True, None),
         ("device_ratios", True, None),
         ("codebook", True, "mul1"),
+        ("int8_grid", False, os.environ.get("EXL3_INT8_GRID", "0") != "0"),
+        ("share_input_su", False, os.environ.get("EXL3_SHARE_INPUT_SU", "0") != "0"),
     ]:
         override(arg_, can_override if not args.override_anyway else True, default)
 
@@ -315,6 +319,10 @@ def prepare(args) -> (dict, dict, bool, str):
         print(f"    Recipe: {in_args.get('recipe')} ({len(in_args['recipe_strategy'])} tensors)")
     print(f"    Output scales: " + {True: "always", False: "never", None: "auto"}[in_args["apply_out_scales"]])
     print(f"    Codebook: {in_args['codebook']}")
+    if in_args.get("int8_grid"):
+        print(f"    INT8-exact codebook grid: on (s0 per tensor)")
+    if in_args.get("share_input_su"):
+        print(f"    Shared hidden-side input rotation: on (MoE gate/up)")
 
     if warn_experimental:
         print(
@@ -407,7 +415,7 @@ def get_state_error(x, ref):
      return err.item(), cos, sq
 
 
-def make_quant_args(args, idx, K, devices, device_ratios = None):
+def make_quant_args(args, idx, K, devices, device_ratios = None, key = None):
     quant_args = {
         "seed": idx,
         "K": K,
@@ -420,12 +428,35 @@ def make_quant_args(args, idx, K, devices, device_ratios = None):
         quant_args.update({"mcg": True})
     elif args["codebook"] == "mul1":
         quant_args.update({"mul1": True})
+    # Round 2 of the W8A8 prefill work: INT8-exact codebook (per-tensor grid
+    # step s0, Viterbi rounds every codebook output to the grid) and the
+    # EXLR8-style shared hidden-side rotation for MoE experts (gate/up
+    # projections of a layer share one input vector; down projections keep
+    # per-expert Hessians and are unaffected).
+    if args.get("int8_grid"):
+        quant_args["int8_grid"] = True
+    if args.get("share_input_su") and key is not None and _is_gate_up_expert(key):
+        quant_args["share_input_su"] = True
     return quant_args
+
+
+def _is_gate_up_expert(key: str) -> bool:
+    # Gate/up projections of routed experts across the supported MoE
+    # architectures (gate_proj/up_proj, w1/w3, gate/up suffixes). Down
+    # projections are excluded (per-expert Hessians, nothing to share).
+    if ".experts." not in key:
+        return False
+    tail = key.rsplit(".", 1)[-1]
+    if tail in ("gate_proj", "up_proj", "w1", "w3", "gate", "up", "w_gate", "w_up"):
+        return True
+    return False
 
 
 def print_quantized_linear(config, linear, quant_args, proxy_err, time_str = ""):
     flags = "o" if quant_args["apply_out_scales"] else "."
     flags += "f" if quant_args["q_fallback"] else "."
+    flags += "8" if quant_args.get("int8_grid") else "."
+    flags += "s" if quant_args.get("share_input_su") else "."
     proxy_err_str = (
         "(zero)  " if quant_args["zeros"] else
         "(big)   " if proxy_err >= 9.9 else
@@ -522,7 +553,8 @@ def quantize_linears_single(args, linears, config, strategy, idx, devices, devic
                     args,
                     idx,
                     strategy[l.key],
-                    *_tile_split_devices(l.weights_numel(), devices, device_ratios)
+                    *_tile_split_devices(l.weights_numel(), devices, device_ratios),
+                    key = l.key
                 ) for l in group]
             with Timer() as t:
                 proxy_errs = convert_exl3_group(
@@ -551,7 +583,8 @@ def quantize_linears_single(args, linears, config, strategy, idx, devices, devic
                 args,
                 idx,
                 strategy[linear.key],
-                *_tile_split_devices(linear.weights_numel(), devices, device_ratios)
+                *_tile_split_devices(linear.weights_numel(), devices, device_ratios),
+                key = linear.key
             )
 
             with Timer() as t:
@@ -617,7 +650,7 @@ def quantize_linears_parallel(args, linears, config, strategy, idx, devices, dev
 
             for group in dev_groups:
                 if len(group) > 1:
-                    quant_args_list = [make_quant_args(args, idx, strategy[l.key], [device_idx]) for l in group]
+                    quant_args_list = [make_quant_args(args, idx, strategy[l.key], [device_idx], key = l.key) for l in group]
                     proxy_errs = convert_exl3_group(
                         group,
                         [capture_H[l.qmap] for l in group],
@@ -632,7 +665,7 @@ def quantize_linears_parallel(args, linears, config, strategy, idx, devices, dev
                     continue
 
                 linear = group[0]
-                quant_args_local = make_quant_args(args, idx, strategy[linear.key], [device_idx])
+                quant_args_local = make_quant_args(args, idx, strategy[linear.key], [device_idx], key = linear.key)
 
                 proxy_err = linear.convert_exl3(
                     capture_H[linear.qmap] if state else linear.init_H_data(False),

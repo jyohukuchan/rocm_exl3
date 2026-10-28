@@ -122,6 +122,31 @@ __device__ inline half2 decode_3inst_2(uint32_t x0, uint32_t x1)
     }
 }
 
+// INT8-exact codebook grid (round 2 of the W8A8 prefill work): round a decoded
+// codebook value to the int8 grid T = q * s0 with a fixed step s0 > 0. The
+// Viterbi search scores the rounded values, so stored states decode to exactly
+// representable int8 and the runtime reconstructs int8 directly (no per-call
+// weight amax). nearbyintf rounds half-to-even, matching torch.round, so the
+// encode-time decision and the runtime int8 agree bit for bit. s0 == 0 keeps
+// the historical codebook values (normal EXL3 path).
+__device__ __forceinline__
+half2 grid_round_3inst_2(half2 v, float s0)
+{
+    if (s0 <= 0.0f) return v;
+    float2 f = __half22float2(v);
+    f.x = nearbyintf(f.x / s0) * s0;
+    f.y = nearbyintf(f.y / s0) * s0;
+    return __float22half2_rn(f);
+}
+
+__device__ __forceinline__
+half grid_round_3inst(half v, float s0)
+{
+    if (s0 <= 0.0f) return v;
+    float f = __half2float(v);
+    return __float2half_rn(nearbyintf(f / s0) * s0);
+}
+
 template <int cb>
 __device__ inline float decode_3inst_f(uint64_t x)
 {

@@ -154,7 +154,8 @@ void quantize_tiles
     at::Tensor temp_edges,
     int K,
     bool mcg,
-    bool mul1
+    bool mul1,
+    double s0
 )
 {
     const at::cuda::OptionalCUDAGuard device_guard(input_tiles.device());
@@ -189,6 +190,9 @@ void quantize_tiles
     TORCH_CHECK(L == 256 || cb == 2, "quantize_tiles length 160 requires the mul1 codebook");
     const auto launch = qt_launch(device, K, cb, L);
     const bool optimized = launch.optimized;
+    TORCH_CHECK(!(s0 > 0 && optimized),
+                "quantize_tiles: int8 grid (s0 > 0) requires the plain kernel "
+                "(set EXL3_QT_OPTIMIZED=0); the dense specialization does not round");
     const auto kernel = launch.kernel;
     const int num_threads = launch.num_threads;
     const int shmem = launch.shmem;
@@ -228,7 +232,8 @@ void quantize_tiles
             ((uint16_t*) output_indices.data_ptr()) + (int64_t) L * batch_i,
             (half*) temp_costs.data_ptr(),
             (uint16_t*) temp_edges.data_ptr(),
-            lut
+            lut,
+            (float) s0
         );
         cuda_check(cudaPeekAtLastError());
     }

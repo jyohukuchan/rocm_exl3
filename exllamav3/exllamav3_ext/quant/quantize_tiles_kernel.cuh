@@ -62,8 +62,8 @@ void quantize_tiles_kernel
     uint16_t* __restrict__ output_indices_ptr,
     half* __restrict__ temp_costs_ptr,
     uint16_t* __restrict__ temp_edges_ptr,
-    const half2* __restrict__ lut
-)
+    const half2* __restrict__ lut,
+    const float s0 = 0.0f)
 {
     extern __shared__ uint8_t shbuf[];
     uint8_t* sh = shbuf;
@@ -118,17 +118,17 @@ void quantize_tiles_kernel
             {
                 product0 = mul_const_u32<0xCBAC1FEDu>(out_edge_idx);
                 product1 = product0 + 0xCBAC1FEDu;
-                decoded2 = decode_mcg_product_2(product0, product1);
+                decoded2 = grid_round_3inst_2(decode_mcg_product_2(product0, product1), s0);
             }
             else if constexpr (cb == 2)
             {
                 product0 = out_edge_idx * 0x83DCD12Du;
                 product1 = product0 + 0x83DCD12Du;
-                decoded2 = decode_mul1_product_2(product0, product1);
+                decoded2 = grid_round_3inst_2(decode_mul1_product_2(product0, product1), s0);
             }
             else
             {
-                decoded2 = decode_3inst_2<cb>(out_edge_idx, out_edge_idx + 1);
+                decoded2 = grid_round_3inst_2(decode_3inst_2<cb>(out_edge_idx, out_edge_idx + 1), s0);
             }
             half2 dh2 = __hsub2(decoded2, w2);
             half2 min_err2 = __hmul2(dh2, dh2);
@@ -147,7 +147,7 @@ void quantize_tiles_kernel
                     constexpr uint32_t product_step = 0xCBAC1FEDu << Kr;
                     product0 += product_step;
                     product1 += product_step;
-                    decoded2 = decode_mcg_product_2(product0, product1);
+                    decoded2 = grid_round_3inst_2(decode_mcg_product_2(product0, product1), s0);
                 }
                 else if constexpr (cb == 2)
                 {
@@ -155,11 +155,11 @@ void quantize_tiles_kernel
                     constexpr uint32_t product_step = 0x83DCD12Du << Kr;
                     product0 += product_step;
                     product1 += product_step;
-                    decoded2 = decode_mul1_product_2(product0, product1);
+                    decoded2 = grid_round_3inst_2(decode_mul1_product_2(product0, product1), s0);
                 }
                 else
                 {
-                    decoded2 = decode_3inst_2<cb>(state0, state0 + 1);
+                    decoded2 = grid_round_3inst_2(decode_3inst_2<cb>(state0, state0 + 1), s0);
                 }
                 dh2 = __hsub2(decoded2, w2);
                 half2 err2 = __hmul2(dh2, dh2);
@@ -205,17 +205,17 @@ void quantize_tiles_kernel
                 {
                     product0 = mul_const_u32<0xCBAC1FEDu>(out_edge_idx);
                     product1 = product0 + 0xCBAC1FEDu;
-                    decoded2 = decode_mcg_product_2(product0, product1);
+                    decoded2 = grid_round_3inst_2(decode_mcg_product_2(product0, product1), s0);
                 }
                 else if constexpr (cb == 2)
                 {
                     product0 = out_edge_idx * 0x83DCD12Du;
                     product1 = product0 + 0x83DCD12Du;
-                    decoded2 = decode_mul1_product_2(product0, product1);
+                    decoded2 = grid_round_3inst_2(decode_mul1_product_2(product0, product1), s0);
                 }
                 else
                 {
-                    decoded2 = decode_3inst_2<cb>(out_edge_idx, out_edge_idx + 1);
+                    decoded2 = grid_round_3inst_2(decode_3inst_2<cb>(out_edge_idx, out_edge_idx + 1), s0);
                 }
                 half2 dh2 = __hsub2(decoded2, w2);
                 half2 min_err2 = __hfma2(dh2, dh2, __half2half2(temp_costs_inc[in_edge_idx]));
@@ -233,7 +233,7 @@ void quantize_tiles_kernel
                         constexpr uint32_t product_step = 0xCBAC1FEDu << Kr;
                         product0 += product_step;
                         product1 += product_step;
-                        decoded2 = decode_mcg_product_2(product0, product1);
+                        decoded2 = grid_round_3inst_2(decode_mcg_product_2(product0, product1), s0);
                     }
                     else if constexpr (cb == 2)
                     {
@@ -241,11 +241,11 @@ void quantize_tiles_kernel
                         constexpr uint32_t product_step = 0x83DCD12Du << Kr;
                         product0 += product_step;
                         product1 += product_step;
-                        decoded2 = decode_mul1_product_2(product0, product1);
+                        decoded2 = grid_round_3inst_2(decode_mul1_product_2(product0, product1), s0);
                     }
                     else
                     {
-                        decoded2 = decode_3inst_2<cb>(state0, state0 + 1);
+                        decoded2 = grid_round_3inst_2(decode_3inst_2<cb>(state0, state0 + 1), s0);
                     }
                     dh2 = __hsub2(decoded2, w2);
                     half2 err2 = __hfma2(dh2, dh2, __half2half2(temp_costs_inc[in_edge_idx]));
@@ -316,7 +316,7 @@ void quantize_tiles_kernel
                 if (write)
                 {
                     output_indices[ri] = (uint16_t) encoded;
-                    output_tile[ri] = __half2float(decode_3inst<cb>(encoded));
+                    output_tile[ri] = __half2float(grid_round_3inst(decode_3inst<cb>(encoded), s0));
                 }
                 else if (ri == 0) break;
             }

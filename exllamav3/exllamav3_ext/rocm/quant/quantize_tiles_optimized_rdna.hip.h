@@ -27,7 +27,8 @@ template <int K, int cb, int L = 256>
 __global__ __launch_bounds__(qt_optimized_threads(K, cb), 1) void quantize_tiles_optimized_kernel(
     const float* __restrict__ input_tiles_ptr, float* __restrict__ output_tiles_ptr,
     uint16_t* __restrict__ output_indices_ptr, half* __restrict__ temp_costs_ptr,
-    uint16_t* __restrict__ temp_edges_ptr, const half2* __restrict__ lut)
+    uint16_t* __restrict__ temp_edges_ptr, const half2* __restrict__ lut,
+    const float s0 = 0.0f)
 {
     static_assert(K >= 1 && K <= 8 && L % 2 == 0);
     constexpr int NT = qt_optimized_threads(K, cb);

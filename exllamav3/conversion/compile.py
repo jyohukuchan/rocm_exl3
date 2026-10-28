@@ -214,6 +214,17 @@ def compile_model(args, model, config, tokenizer, mtp_model = None, vision_model
         qcfg.update({
             "codebook": args["codebook"]
         })
+    # Round 2 of the W8A8 prefill work: loaders use this flag to know that
+    # per-tensor s0 grid steps are stored and that MoE gate/up experts share
+    # one hidden-side input vector per layer. Old models lack the flag (and
+    # the s0 tensors) and load exactly as before.
+    if args.get("int8_grid") or args.get("share_input_su"):
+        qcfg.update({
+            "exl3_int8_format": {
+                "int8_grid": bool(args.get("int8_grid")),
+                "shared_input_rotation": bool(args.get("share_input_su")),
+            }
+        })
 
     if "quantization_config" in config_dict:
         orig_qcfg = config_dict["quantization_config"].copy()

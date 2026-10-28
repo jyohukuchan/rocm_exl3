@@ -137,7 +137,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
     m.def("run_cpu_reduce_jobs", &run_cpu_reduce_jobs, "run_cpu_reduce_jobs");
     m.def("end_cpu_reduce_jobs", &end_cpu_reduce_jobs, "end_cpu_reduce_jobs");
 
-    m.def("quantize_tiles", &quantize_tiles, "quantize_tiles");
+    m.def("quantize_tiles",
+            [](at::Tensor input_tiles, at::Tensor output_tiles, at::Tensor output_indices,
+               at::Tensor temp_costs, at::Tensor temp_edges, int K, bool mcg, bool mul1, double s0)
+            {
+                quantize_tiles(input_tiles, output_tiles, output_indices, temp_costs,
+                               temp_edges, K, mcg, mul1, s0);
+            },
+            py::arg("input_tiles"), py::arg("output_tiles"), py::arg("output_indices"),
+            py::arg("temp_costs"), py::arg("temp_edges"), py::arg("K"), py::arg("mcg"),
+            py::arg("mul1"), py::arg("s0") = 0.0,
+            "quantize_tiles");
     m.def("quantize_tiles_scratch", &quantize_tiles_scratch, "quantize_tiles_scratch");
     m.def("test_distribution", &test_distribution, "test_distribution");
     m.def("decode", &decode, "decode");

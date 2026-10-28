@@ -106,6 +106,7 @@ def quantize_tiles(tiles, quant_args: dict):
         K,
         mcg,
         mul1,
+        float(quant_args.get("int8_s0", 0.0)),
     )
     return quantized_tiles, quantized_idx
 
@@ -290,7 +291,8 @@ def quantize_tiles_multigpu(tiles, quant_args: dict):
                     temp_edges,
                     K,
                     mcg,
-                    mul1
+                    mul1,
+                    float(quant_args.get("int8_s0", 0.0))
                 )
 
                 # Async copy back to pinned memory
@@ -1148,8 +1150,17 @@ def regularize(
     H_diag: torch.Tensor | None,
     pb: ProgressBar | None,
     skip_g_scale: bool = False,
-    q_fallback: bool = False
+    q_fallback: bool = False,
+    shared_su: dict | None = None
 ):
+    """
+    shared_su: {"su": (k, 1) final input-side vector, "g_scale": float} stashed
+    from the first tensor quantized against this Hessian (EXLR8-style shared
+    hidden-side rotation for MoE experts). Later sharers reuse it
+    bit-identically — including its folded global scale — so one
+    rotated-and-quantized activation serves every expert at runtime. None
+    (default) keeps the historical per-tensor input scales.
+    """
     """
     Transform weights into the distribution expected by EXL3 tile quantization.
 
@@ -1221,21 +1232,38 @@ def regularize(
     # Output hadamard transform
     blockwise_preapply_had_r_(weight, had_n)
 
-    # Input sign flips and scales
-    in_channel_scales = block_rms(weight, dim = 1, keepdim = True)
-    in_channel_scales[in_channel_scales.abs() < 1e-30] = 0.1
-    su = (su * in_channel_scales / (-codebook_scale) + 1e-10).float()  # mustn't be inplace
-    weight /= su
+    # Input sign flips and scales. With a shared hidden-side rotation the first
+    # sharer's final input vector (signs, scales and folded global scale) is
+    # reused bit-identically; the per-tensor scale search is skipped.
+    if shared_su is not None:
+        su = shared_su["su"].to(device = weight.device, dtype = torch.float).clone()
+        # The batched driver stashes the global scale after its joint search;
+        # the scale is folded into the stored su there, not here.
+        g_scale = float(shared_su.get("g_scale", 1.0))
+        mse_scale = None
+        weight /= su
+    else:
+        in_channel_scales = block_rms(weight, dim = 1, keepdim = True)
+        in_channel_scales[in_channel_scales.abs() < 1e-30] = 0.1
+        su = (su * in_channel_scales / (-codebook_scale) + 1e-10).float()  # mustn't be inplace
+        weight /= su
+
+        # Determine best scale for matrix by test quantizing a sample of tiles along a wrapped diagonal
+        if not skip_g_scale:
+            g_scale, mse_scale = g_scale_gss(weight, False, quant_args, pb = pb)
+        else:
+            g_scale = 1.0
+            mse_scale = None
+        weight *= g_scale
+        su /= g_scale
     blockwise_preapply_had_l_(weight, had_k)
 
-    # Determine best scale for matrix by test quantizing a sample of tiles along a wrapped diagonal
-    if not skip_g_scale:
-        g_scale, mse_scale = g_scale_gss(weight, False, quant_args, pb = pb)
-    else:
-        g_scale = 1.0
-        mse_scale = None
-    weight *= g_scale
-    su /= g_scale
+    # INT8-exact codebook: the grid step for this tensor, from the scaled
+    # weight range. The Viterbi search (s0 kernel arg) rounds every codebook
+    # output to this grid, so decoded tiles are exactly int8.
+    if quant_args.get("int8_grid") and not skip_g_scale:
+        s0 = weight.abs().amax().item() / 127.0
+        quant_args["int8_s0"] = max(s0, 1e-12)
 
     # ext.test_distribution(weight_os, dist_r, dist_ref, -3.8, 3.8)
     # js_os = jsd(dist_r, dist_ref)
@@ -1243,6 +1271,8 @@ def regularize(
     if verbose:
         print(f"     - su/sv std: {su.std().item():.6f}   {sv.std().item():.6f}")
         print(f"     - global scale: {g_scale:.6f}")
+        if shared_su is not None: print(f"     - shared input rotation (reused)")
+        if quant_args.get("int8_grid"): print(f"     - int8 grid s0: {quant_args.get('int8_s0')}")
         if mse_scale is not None: print(f"     - sample mse: {mse_scale.item():.6f}")
         print(f"     - apply_out_scales: {str(apply_out_scales)}")
 
@@ -1338,7 +1368,12 @@ def quantize_exl3(
             rms = block_rms_n(weight_r, dim = 0)
             print(f"     - input tensor rms: {rms:.6f}")
 
-        # Regularization
+        # Regularization. With a shared hidden-side rotation the first tensor
+        # quantized against this Hessian stashes its final input vector; later
+        # sharers reuse it bit-identically (see regularize()).
+        shared_state = None
+        if quant_args.get("share_input_su"):
+            shared_state = H_data.get("shared_su_state")
         apply_out_scales, weight_r, g_scale, su, sv = regularize(
             weight_r,
             su,
@@ -1347,8 +1382,11 @@ def quantize_exl3(
             verbose,
             H_diag,
             pb,
-            q_fallback = q_fallback
+            q_fallback = q_fallback,
+            shared_su = shared_state
         )
+        if quant_args.get("share_input_su") and "shared_su_state" not in H_data:
+            H_data["shared_su_state"] = {"su": su.clone(), "g_scale": g_scale}
 
         if save_reg:
             save_tensor_image(weight_r, save_reg)
@@ -1437,6 +1475,14 @@ def quantize_exl3(
         if quant_args.get("mul1"):
             out_tensors.update({
                 "mul1": torch.tensor(codebook_mul1_mult, dtype = torch.uint32).view(torch.int)
+            })
+
+        # INT8-exact codebook: the per-tensor grid step. The loader reads it
+        # to reconstruct int8 weights directly (no per-call weight amax).
+        if quant_args.get("int8_grid"):
+            assert quant_args.get("int8_s0", 0.0) > 0.0, "int8_grid set but no s0 computed"
+            out_tensors.update({
+                "s0": torch.tensor(quant_args["int8_s0"], dtype = torch.float32)
             })
 
         quant_args.update({
@@ -1595,8 +1641,14 @@ def quantize_exl3_batch(
             if H_diag is not None and H_diag.is_cuda:
                 H_diag = H_diag.to(device)
             sv = (torch.randn(weight.shape[1], device = device).sign() + 1e-5).sign().to(torch.float).unsqueeze(0)
+            shared_state = None
+            if qa.get("share_input_su"):
+                shared_state = H_datas[t].get("shared_su_state")
             apply_out_scales, weight_r, _, su, sv = regularize(
-                weight, su, sv, qa, verbose, H_diag, None, skip_g_scale = True)
+                weight, su, sv, qa, verbose, H_diag, None, skip_g_scale = True,
+                shared_su = shared_state)
+            if qa.get("share_input_su") and "shared_su_state" not in H_datas[t]:
+                H_datas[t]["shared_su_state"] = {"su": su.clone()}
             regs[t] = [weight_r, su, sv, apply_out_scales]
             weights[t] = None
 
@@ -1605,9 +1657,21 @@ def quantize_exl3_batch(
         del samples
         g_scales = {}
         for t, (g_scale, _) in zip(batch_idx, scales):
+            qa = quant_args_list[t]
+            # Shared hidden-side rotation: the first sharer's global scale
+            # wins for every later sharer, so the stored input vectors stay
+            # bit-identical. The INT8 grid step is per tensor regardless.
+            if qa.get("share_input_su"):
+                st = H_datas[t].setdefault("shared_su_state", {})
+                if "g_scale" in st:
+                    g_scale = st["g_scale"]
+                else:
+                    st["g_scale"] = g_scale
             regs[t][0] *= g_scale
             regs[t][1] /= g_scale
             g_scales[t] = g_scale
+            if qa.get("int8_grid"):
+                qa["int8_s0"] = max(regs[t][0].abs().amax().item() / 127.0, 1e-12)
         pb.update(100)
 
         progress_text = None if not progress_str else progress_str.replace("<step>", "Quantizing")
@@ -1688,6 +1752,11 @@ def quantize_exl3_batch(
             if qa.get("mul1"):
                 out_tensors.update({
                     "mul1": torch.tensor(codebook_mul1_mult, dtype = torch.uint32).view(torch.int)
+                })
+            if qa.get("int8_grid"):
+                assert qa.get("int8_s0", 0.0) > 0.0, "int8_grid set but no s0 computed"
+                out_tensors.update({
+                    "s0": torch.tensor(qa["int8_s0"], dtype = torch.float32)
                 })
 
             qa.update({

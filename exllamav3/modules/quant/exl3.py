@@ -91,7 +91,8 @@ class LinearEXL3:
         bias: torch.Tensor | None = None,
         out_dtype: torch.dtype | None = None,
         transformers_fix: bool = False,
-        key: str | None = None
+        key: str | None = None,
+        s0: torch.Tensor | None = None
     ):
         assert scale is None, "scale is no longer used"
         assert su is not None or suh is not None, "either su (packed) or suh (unpacked) is required"
@@ -134,6 +135,20 @@ class LinearEXL3:
         self.mcg = self.mcg_tensor is not None
         self.mul1 = self.mul1_tensor is not None
 
+        # INT8-exact codebook grid step (round 2 of the W8A8 prefill work).
+        # Present only in models encoded with the int8 grid; the decoded tile
+        # values are then exactly q * s0, so the runtime reconstructs int8
+        # directly and the stock decode path rounds to the grid. Old models
+        # (s0 None) behave exactly as before.
+        if s0 is not None:
+            assert s0.numel() == 1, "s0 must be a scalar grid step"
+            s0 = s0.to(dtype = torch.float32).flatten()
+            assert s0.item() > 0.0, "s0 must be positive"
+            self.s0_value = float(s0.item())
+        else:
+            self.s0_value = 0.0
+        self.s0 = s0
+
         self._fused_reconstruct = None
         self.bsz1_xh_args = (self.trellis.device, (1, self.in_features), self.out_dtype)
         self.bc = ext.BC_LinearEXL3(
@@ -165,6 +180,7 @@ class LinearEXL3:
                 ("bias", self.bias),
                 ("mcg", self.mcg_tensor),
                 ("mul1", self.mul1_tensor),
+                ("s0", self.s0),
             ] if tensor is not None
         }
 
@@ -297,12 +313,15 @@ class LinearEXL3:
 
 
     def _quant_w8(self, w):
-        # Per-output-channel symmetric int8 grid of the inner trellis weights,
-        # with fp32 per-channel scales for the epilogue (deliberately NOT
-        # folded into an fp16 svh copy: that rounding cost +0.058 macro KLD).
-        # Rebuilt per call on purpose: holding a copy for every dense linear
-        # costs gigabytes next to a 28 GB/rank model.
+        # INT8-exact models (s0 stored): the decoded tiles are exactly q * s0,
+        # so int8 is one exact division with no per-call amax. Old models keep
+        # the per-call per-output-channel amax grid (deliberately NOT folded
+        # into an fp16 svh copy: that rounding cost +0.058 macro KLD).
         with torch.inference_mode():
+            if self.s0 is not None:
+                s0 = self.s0_value
+                w8 = (w.float() / s0).round().clamp(-128, 127).to(torch.int8)
+                return w8, s0
             # fp32 scales: a half-rounded scale would add needless error.
             s = w.float().abs().amax(dim=0).clamp_min(1e-12) / 127.0
             w8 = (w.float() / s).round().clamp(-128, 127).to(torch.int8)
@@ -376,6 +395,13 @@ class LinearEXL3:
     def get_inner_weight_tensor(self, n_offset: int = 0, n_features: int | None = None):
         w = torch.empty((self.in_features, self.out_features), dtype = torch.half, device = self.trellis.device)
         ext.reconstruct(w, self.trellis, self.K, self.mcg, self.mul1)
+        if self.s0 is not None:
+            # INT8-exact models: the states were chosen for the rounded grid
+            # values, so decode must round (a stock decode reads measurably
+            # worse weights). Values are exactly on-grid; this is idempotent.
+            with torch.inference_mode():
+                s0 = self.s0_value
+                w = torch.round(w.float() / s0).clamp(-128, 127).mul_(s0).to(torch.half)
         return w
 
 
@@ -432,6 +458,7 @@ class LinearEXL3:
             "bias": producer.send(self.bias),
             "mcg": producer.send(self.mcg_tensor),
             "mul1": producer.send(self.mul1_tensor),
+            "s0": producer.send(self.s0),
             "out_dtype": self.out_dtype,
         }
 
@@ -446,6 +473,7 @@ class LinearEXL3:
         id_bias = exported["bias"]
         mcg = consumer.recv(exported["mcg"], cuda = True)
         mul1 = consumer.recv(exported["mul1"], cuda = True)
+        s0 = consumer.recv(exported["s0"], cuda = True)
 
         if split is not None:
             split_out, first, last = split
@@ -481,6 +509,7 @@ class LinearEXL3:
             mul1 = mul1,
             bias = bias,
             out_dtype = exported["out_dtype"],
+            s0 = s0,
         )
         return module
 
@@ -500,6 +529,7 @@ class LinearEXL3:
         id_bias = exported["bias"]
         mcg = consumer.recv(exported["mcg"], cuda = True)
         mul1 = consumer.recv(exported["mul1"], cuda = True)
+        s0 = consumer.recv(exported["s0"], cuda = True)
 
         svh_ = []
         trellis_ = []
@@ -540,5 +570,6 @@ class LinearEXL3:
             mul1 = mul1,
             bias = bias,
             out_dtype = exported["out_dtype"],
+            s0 = s0,
         )
         return module

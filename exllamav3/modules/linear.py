@@ -409,6 +409,7 @@ class Linear(Module):
         mcg = opt(".mcg", "cpu")
         mul1 = opt(".mul1", "cpu")
         bias = opt(".bias", self.device)
+        s0 = opt(".s0", "cpu")
         self.inner = LinearEXL3(
             self.config,
             self.in_features,
@@ -423,7 +424,8 @@ class Linear(Module):
             mul1,
             bias,
             self.out_dtype,
-            key = self.key
+            key = self.key,
+            s0 = s0
         )
         self.quant_type = "exl3"
         return True
@@ -542,7 +544,8 @@ class Linear(Module):
             out_tensors.get("mul1"),
             orig_bias,
             self.out_dtype,
-            key = self.key
+            key = self.key,
+            s0 = out_tensors.get("s0")
         )
 
         if return_weight_q:
@@ -884,7 +887,8 @@ def convert_exl3_group(
             out_tensors.get("mul1"),
             bias,
             linear.out_dtype,
-            key = linear.key
+            key = linear.key,
+            s0 = out_tensors.get("s0")
         )
         proxy_errs.append(proxy_err)
     return proxy_errs
