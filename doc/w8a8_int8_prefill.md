@@ -273,6 +273,16 @@ top-8) で BF16 (61GB) と既存 3bpw EXL3 が手元にあり、
   (再開後は層あたり約 4 分)。再 OOM のたびに同一コマンドで再開する。
   `-cr` 縮小は (i) の比較条件を変えるためゲート判定と要相談
   (最終手段)。
+- 15:35 JST、層 47・norm・lm_head まで完了した直後の compile 相で
+  再 OOM (anon 58 GB)。出力 dir は未作成のままだった。
+  直後に同一コマンドで 3 度目の resume → floor が低い状態で
+  チェックポイント (層 47 後) から即 compile に入り成功。
+  `/work/models/q30b-exl3-305-i` 完成 (12 GB、shard 2 本。
+  既存 `qwen3-30b-a3b-exl3-3bpw` と同サイズ)。
+  結論: OOM は確率的スパイクであり、resume 繰り返しで完走できる。
+- (iii) を 15:45 JST に開始 (fresh `/work/build-q30b-iii`、
+  `--int8-grid --share-input-su`、他条件は (i) と同一)。
+  ログは `/work/convert-iii.log`。
 
 ### 精度評価 (TODO: ダンプ後に記入)
 
