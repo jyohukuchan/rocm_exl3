@@ -1292,14 +1292,6 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             tok_pad[r0:r0 + n] = token_sorted[s:s + n]
             w_pad[r0:r0 + n] = weight_sorted[s:s + n].float()
 
-        Kg = C["it"]["g"]["K"]
-        a8s = torch.cat([a8, torch.zeros((1, Kg), dtype=torch.int8, device=dev)])
-        sas = torch.cat([sa, torch.ones((1, 1), dtype=torch.float, device=dev)])
-        Xgu = a8s[tok_pad].view(B, cmax, -1)
-        SAslab = sas[tok_pad].view(B, cmax, 1)
-        del a8s, sas
-        igemm = ext.igemm_batched
-
         ev = []
         def tick(name, fn):
             if not prof:
@@ -1311,6 +1303,18 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
             e1.record()
             ev.append((name, e0, e1))
             return r
+
+        Kg = C["it"]["g"]["K"]
+        def _gather():
+            a8s = torch.cat([a8, torch.zeros((1, Kg), dtype=torch.int8, device=dev)])
+            sas = torch.cat([sa, torch.ones((1, 1), dtype=torch.float, device=dev)])
+            X = a8s[tok_pad].view(B, cmax, -1)
+            SA = sas[tok_pad].view(B, cmax, 1)
+            del a8s, sas
+            return X, SA
+        Xgu, SAslab = tick("gather", _gather)
+        del a8
+        igemm = ext.igemm_batched
 
         def grouped_gemm(X, tag):
             t = C["it"][tag]
@@ -1332,45 +1336,68 @@ class BlockSparseMLP(BlockSparseMLP_CPU, Module):
         Cu = grouped_gemm(Xgu, "u")
         del Xgu
         # In-place epilogue: peak 3 slabs instead of 5 (OOM headroom).
-        with torch.inference_mode():
-            g = Cg.float()
-            del Cg
-            g *= SAslab
-            g *= s0g_b
-            g = g.to(torch.half)
-            u = Cu.float()
-            del Cu
-            u *= SAslab
-            u *= s0u_b
-            u = u.to(torch.half)
-        g2 = g.view(B * cmax, -1)
-        u2 = u.view(B * cmax, -1)
-        ext.had_r_128_batch(g2, g2, None, C["svg"], act_ids, cmax, 1.0)
-        ext.had_r_128_batch(u2, u2, None, C["svu"], act_ids, cmax, 1.0)
-        a = torch.empty_like(u2)
-        self.activation_fn_call(g2, u2, a, self.act_limit)
-        del g, u, g2, u2
+        def _epigu():
+            with torch.inference_mode():
+                g = Cg.float()
+                g *= SAslab
+                g *= s0g_b
+                g = g.to(torch.half)
+                u = Cu.float()
+                u *= SAslab
+                u *= s0u_b
+                u = u.to(torch.half)
+            return g, u
+        g, u = tick("epigu", _epigu)
+        del Cg, Cu
+        def _hadgu():
+            g2 = g.view(B * cmax, -1)
+            u2 = u.view(B * cmax, -1)
+            ext.had_r_128_batch(g2, g2, None, C["svg"], act_ids, cmax, 1.0)
+            ext.had_r_128_batch(u2, u2, None, C["svu"], act_ids, cmax, 1.0)
+            return g2, u2
+        g2, u2 = tick("hadgu", _hadgu)
+        del g, u
+        def _silu():
+            aa = torch.empty_like(u2)
+            self.activation_fn_call(g2, u2, aa, self.act_limit)
+            return aa
+        a = tick("silu", _silu)
+        del g2, u2
 
-        with torch.inference_mode():
-            sad = a.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
-            Xd = (a.float() / sad).round().clamp(-128, 127).to(torch.int8)
+        def _dquant():
+            with torch.inference_mode():
+                s = a.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+                X = (a.float() / s).round().clamp(-128, 127).to(torch.int8)
+            return s, X
+        sad, Xd = tick("dquant", _dquant)
         del a
         Cd = grouped_gemm(Xd.view(B, cmax, -1), "d")
         del Xd
-        with torch.inference_mode():
-            d = Cd.float()
-            del Cd
-            d *= sad.view(B, cmax, 1)
-            d *= s0d_b
-            d = d.to(torch.half)
-        d2 = d.view(B * cmax, -1)
-        ext.had_r_128_batch(d2, d2, None, C["svd"], act_ids, cmax, 1.0)
-        with torch.inference_mode():
-            df = d2.to(torch.float).mul_(w_pad.unsqueeze(1))
+        def _epid():
+            with torch.inference_mode():
+                dd = Cd.float()
+                dd *= sad.view(B, cmax, 1)
+                dd *= s0d_b
+                dd = dd.to(torch.half)
+            return dd
+        d = tick("epid", _epid)
+        del Cd
+        def _hadd():
+            d2 = d.view(B * cmax, -1)
+            ext.had_r_128_batch(d2, d2, None, C["svd"], act_ids, cmax, 1.0)
+            return d2
+        d2 = tick("hadd", _hadd)
+        def _accum():
+            with torch.inference_mode():
+                dff = d2.to(torch.float).mul_(w_pad.unsqueeze(1))
+            return dff
+        df = tick("accum_prep", _accum)
         del d, d2
-        for b, (_, _, n) in enumerate(entries):
-            r0 = b * cmax
-            out.index_add_(0, tok_pad[r0:r0 + n], df[r0:r0 + n])
+        def _indexadd():
+            for b, (_, _, n) in enumerate(entries):
+                r0 = b * cmax
+                out.index_add_(0, tok_pad[r0:r0 + n], df[r0:r0 + n])
+        tick("indexadd", _indexadd)
         if prof:
             torch.cuda.synchronize()
             from collections import defaultdict
