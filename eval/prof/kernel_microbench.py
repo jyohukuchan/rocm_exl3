@@ -93,7 +93,7 @@ def main():
     print(f"moe found={moe is not None} dense found={dense is not None}",
           flush=True)
     if moe is not None:
-        gate0, up0, dn0 = moe.gates[0], moe.ups[0], moe.downs[0]
+        gate0, up0, dn0 = moe.gates[0].inner, moe.ups[0].inner, moe.downs[0].inner
         res["expert_shapes"] = {
             "gate": [gate0.in_features, gate0.out_features],
             "up": [up0.in_features, up0.out_features],
