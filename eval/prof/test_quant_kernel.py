@@ -27,6 +27,21 @@ with torch.inference_mode():
             w8r[b].copy_((wfp[b].float() / s).round().clamp(-128, 127).to(torch.int8))
         d = (w8t.float() - w8r.float()).abs()
         print(f"B={B} K={K} N={N}: maxabs={d.max().item()} nbad={(d>0).sum().item()}", flush=True)
+        # mechanism probe on first shape only
+        if B == 128 and K == 2048:
+            r = (1.0 / s0)
+            r32 = r.float()
+            w8m = torch.empty_like(w8r)
+            for b in range(B):
+                w8m[b].copy_((wfp[b].float() * float(r32[b])).round().clamp(-128, 127).to(torch.int8))
+            dm = (w8r.float() - w8m.float()).abs()
+            print(f"   scalar-div vs scalar-recip-mul: maxabs={dm.max().item()} nbad={(dm>0).sum().item()}", flush=True)
+            w8d = torch.empty_like(w8r)
+            st = s0.float()
+            for b in range(B):
+                w8d[b].copy_((wfp[b].float() / st[b]).round().clamp(-128, 127).to(torch.int8))
+            dd = (w8r.float() - w8d.float()).abs()
+            print(f"   scalar-div vs tensor-div(same vals): maxabs={dd.max().item()} nbad={(dd>0).sum().item()}", flush=True)
         # speed
         for _ in range(3):
             quant_w8_slab(wfp, s0, w8t)
