@@ -53,6 +53,10 @@ def wrap(cls, kind):
 def main():
     model_dir, Ls, reps = sys.argv[1], sys.argv[2], int(sys.argv[3])
     out = sys.argv[4] if len(sys.argv) > 4 else None
+    # Skip the full-vocab logit materialization (4 GB at 8192 rows) for long
+    # contexts: only the lm_head rows change, everything else runs full.
+    # Compensate wall/lm_head with the standalone lm_head bench. 0 = full.
+    last_only = int(os.environ.get("LAST_TOKENS_ONLY", "0"))
     torch.cuda.set_device(0)
     from exllamav3.model import Config, Model
     from exllamav3.modules import transformer as T
@@ -88,7 +92,8 @@ def main():
                 ids = torch.randint(0, config.vocab_size, (1, L),
                                     generator=g, device="cuda:0")
                 t0 = time.perf_counter()
-                _ = model.forward(ids, {})
+                params = {"last_tokens_only": last_only} if last_only else {}
+                _ = model.forward(ids, params)
                 torch.cuda.synchronize()
                 walls.append(time.perf_counter() - t0)
                 if r == 0:
