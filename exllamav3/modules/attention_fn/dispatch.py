@@ -159,10 +159,22 @@ def attn_dispatch(
     candidates = _fns_qc if q_cache is not None else attn_fns
     hint_key = "fn_qc" if q_cache is not None else "fn"
 
+    # Opt-in Sage-style prefill (EXL3_ATTN_INT8FP8=1): INT8 QK^T + FP8 PV over
+    # the unchanged fp16 cache. Off by default; when disabled the call below
+    # returns None immediately and the dispatch below is bit-for-bit the old
+    # path. Supported shapes run here, everything else falls through.
+    o = None
+    if q_cache is None:
+        from .int8fp8 import fn_triton_paged_attn_prefill_int8fp8
+        o = fn_triton_paged_attn_prefill_int8fp8(args)
+        if o is not None and dispatch_cache is not None:
+            dispatch_cache[hint_key] = fn_triton_paged_attn_prefill_int8fp8
+
     # Retry the backend that matched last time for this caller before scanning the full list.
     # Candidate functions return None on incompatible arguments, so a stale hint self-corrects
-    fn = dispatch_cache.get(hint_key) if dispatch_cache is not None else None
-    o = fn(args) if fn is not None else None
+    fn = dispatch_cache.get(hint_key) if dispatch_cache is not None and o is None else None
+    if o is None:
+        o = fn(args) if fn is not None else None
 
     if o is None:
         args.sanity_check()
