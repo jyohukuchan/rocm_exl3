@@ -344,10 +344,11 @@ class LinearEXL3:
         # Rotated-basis W8A8: input Hadamard, int8 GEMM, output Hadamard.
         # C4 routing policy (returns None -> fp16 path): short rows stay fp16
         # (decode-bound, int8 regressed 0.56x at 512); tiny-N linears stay
-        # fp16 (quant overhead dominates); N-heavy shapes at long rows stay
-        # fp16 (hgemm beats igemm there at M>=4096, measured).
-        if (rows < 1024 or self.out_features <= 2048
-                or (self.in_features < self.out_features and rows >= 4096)):
+        # fp16 (quant overhead dominates there). Everything else takes int8:
+        # igemm beats hgemm ~4x on GEMM level because production hgemm runs
+        # with fp32 accumulation output on the big linears (hg32 ~3x slower
+        # than hg16, measured per shape), while igemm accumulates int32.
+        if rows < 1024 or self.out_features <= 2048:
             return None
         # Vocab-sized N (lm_head) takes the sliced path with one shared
         # activation quant; ablation modes decline it (fall back to fp16).
