@@ -1,5 +1,5 @@
 import torch
-from ...cache import CacheLayer, Cache, CacheLayer_quant
+from ...cache import CacheLayer, Cache, CacheLayer_quant, CacheLayer_i8f8
 from .common import AttnArgs, AttnFn
 from .bighead_scalar import fn_bighead_scalar_attn
 from .torch import fn_torch_sdpa_fallback_cache, fn_torch_sdpa_fallback_nocache
@@ -112,11 +112,24 @@ def attn_dispatch(
     # kernels when possible: new K/V are quantized into the cache up front and never
     # materialized as full fp16 cache-sized temporaries
     q_cache = None
+    i8f8_cache = None
     if cache is not None:
         assert block_table is not None
         assert cache_seqlens is not None
         layer = cache if isinstance(cache, CacheLayer) else cache.layers[cache_idx, cache_instance or 0]
         if (
+            isinstance(layer, CacheLayer_i8f8) and
+            q.dtype == torch.float16 and
+            dim <= 512 and
+            cu_seqlens is None
+        ):
+            # Round-2 cached path: quantize-on-write up front, then attend as
+            # a pure reader over the packed cache (quant-direct style). The
+            # post-attention update_kv below is a no-op for this layer.
+            layer.update_kv_direct(cache_seqlens, block_table, k, v, q_len)
+            i8f8_cache = layer.get_qkv()
+            k_cache, v_cache = None, None
+        elif (
             _qc_attn and
             isinstance(layer, CacheLayer_quant) and
             layer.compand_a == 0.0 and
@@ -159,12 +172,28 @@ def attn_dispatch(
     candidates = _fns_qc if q_cache is not None else attn_fns
     hint_key = "fn_qc" if q_cache is not None else "fn"
 
+    # Round-2 cached path (CacheLayer_i8f8 + EXL3_ATTN_INT8FP8=1): prefill
+    # over the packed cache. Off by default; when the cached kernel declines
+    # (e.g. decode), fall back to the fp16 dequant path below -- k/v are
+    # intact and the cache was already written, so this stays correct.
+    # While on i8f8 layers the round-1 on-the-fly hook never runs (it would
+    # see k_cache=None and attend over the new rows only).
+    o = None
+    if i8f8_cache is not None:
+        args = args._replace(i8f8_cache = i8f8_cache)
+        from .i8f8_cached import fn_triton_paged_attn_prefill_i8f8_cached
+        o = fn_triton_paged_attn_prefill_i8f8_cached(args)
+        if o is None:
+            k_cache, v_cache = layer.get_kv(cache_seqlens, block_table, window_size if window_size is not None else -1)
+            args = args._replace(k_cache = k_cache, v_cache = v_cache, i8f8_cache = None)
+        elif dispatch_cache is not None:
+            dispatch_cache[hint_key] = fn_triton_paged_attn_prefill_i8f8_cached
+
     # Opt-in Sage-style prefill (EXL3_ATTN_INT8FP8=1): INT8 QK^T + FP8 PV over
     # the unchanged fp16 cache. Off by default; when disabled the call below
     # returns None immediately and the dispatch below is bit-for-bit the old
     # path. Supported shapes run here, everything else falls through.
-    o = None
-    if q_cache is None:
+    if o is None and q_cache is None and i8f8_cache is None:
         from .int8fp8 import fn_triton_paged_attn_prefill_int8fp8
         o = fn_triton_paged_attn_prefill_int8fp8(args)
         if o is not None and dispatch_cache is not None:

@@ -27,12 +27,19 @@ class AttnArgs(NamedTuple):
     max_kv_len: int | None = None   # host-known bound on the past length any row attends to
                                     # (lets cached kernels size windows / staging below the
                                     # block-table span; e.g. QSA's dense regime)
+    i8f8_cache: tuple | None = None # packed CacheLayer_i8f8 tensors (kq, ksc, kmu, vq, vsc,
+                                    # kst, vst, slen): new rows already written by
+                                    # update_kv_direct, kernel is a pure reader
 
     def sanity_check(self):
         # Cache must be paged
         if self.q_cache is not None:
             assert self.block_table is not None and self.cache_seqlens is not None
             assert self.k_cache is None and self.v_cache is None
+        if self.i8f8_cache is not None:
+            assert self.block_table is not None and self.cache_seqlens is not None
+            assert self.k_cache is None and self.v_cache is None
+            assert self.q_cache is None
         else:
             assert (
                 (self.k_cache is not None) ==

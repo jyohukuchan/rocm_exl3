@@ -966,8 +966,13 @@ class Attention(Module):
         if self.qsa_indexer is None:
             return default, kwargs
         from ..cache.fp16 import CacheLayer_fp16
+        from ..cache.i8f8 import CacheLayer_i8f8
         from ..cache.quant import CacheLayer_quant
         from ..cache.qsa import CacheLayer_qsa, CacheLayer_qsa_quant
+        if issubclass(default, CacheLayer_i8f8):
+            # Round-2 packed cache is out of contract for QSA indexer planes;
+            # those layers keep the fp16-planes QSA cache (unchanged behavior).
+            return CacheLayer_qsa, kwargs
         if issubclass(default, CacheLayer_quant):
             return CacheLayer_qsa_quant, kwargs
         assert issubclass(default, CacheLayer_fp16), \

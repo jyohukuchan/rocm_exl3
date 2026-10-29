@@ -2,7 +2,8 @@ from types import SimpleNamespace
 
 from . import Model, Config, Cache, Tokenizer
 from .loader import SafetensorsCollection, VariantSafetensorsCollection
-from .cache import CacheLayer_fp16, CacheLayer_quant
+from .cache import CacheLayer_fp16, CacheLayer_quant, CacheLayer_i8f8
+import os as _os
 from .generator.sampler import ComboSampler
 from argparse import ArgumentParser
 import yaml
@@ -275,7 +276,25 @@ def init(
         4 if (vars(args).get("ngram_match_min") and not vars(args).get("num_draft_tokens")) else 0,
     )
     if "cache_size" in vars(args):
-        if args.cache_quant is not None:
+        if _os.environ.get("EXL3_CACHE_I8F8", "0") == "1":
+            # Round-2 opt-in: INT8-K / FP8-V packed cache (design (b)).
+            # Consumed by the cached prefill kernel when EXL3_ATTN_INT8FP8=1;
+            # without it the layer serves fp16 dequant (correct, slower).
+            if args.cache_quant is not None:
+                raise ValueError("EXL3_CACHE_I8F8=1 is incompatible with --cache_quant")
+            cache = Cache(
+                model,
+                max_num_tokens = args.cache_size,
+                layer_type = CacheLayer_i8f8,
+                max_history = max_history,
+                max_batch_size = args.autosplit_max_batch_size,
+            )
+            draft_cache = Cache(
+                draft_model,
+                max_num_tokens = args.cache_size,
+                layer_type = CacheLayer_i8f8
+            ) if draft_model_dir else None
+        elif args.cache_quant is not None:
             split = [int(bits) for bits in args.cache_quant.split(",")]
             if len(split) == 1:
                 k_bits = v_bits = split[0]
