@@ -1,0 +1,26 @@
+{
+ "512": {
+  "wall_s": 1.043,
+  "moe_total_ms": 920.68,
+  "moe_per_layer_ms": 19.181,
+  "router_total_ms": 3.14,
+  "router_per_layer_ms": 0.065,
+  "n_layers": 48
+ },
+ "2048": {
+  "wall_s": 2.093,
+  "moe_total_ms": 1440.41,
+  "moe_per_layer_ms": 30.009,
+  "router_total_ms": 5.77,
+  "router_per_layer_ms": 0.12,
+  "n_layers": 48
+ },
+ "8192": {
+  "wall_s": 9.094,
+  "moe_total_ms": 4159.45,
+  "moe_per_layer_ms": 86.655,
+  "router_total_ms": 14.92,
+  "router_per_layer_ms": 0.311,
+  "n_layers": 48
+ }
+}

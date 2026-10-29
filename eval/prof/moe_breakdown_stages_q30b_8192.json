@@ -1,0 +1,36 @@
+{
+ "8192": {
+  "act_had_ms": 0.7817,
+  "act_quant_torch_ms": 0.621,
+  "uniform": {
+   "rows_per_expert": 512,
+   "B": 512,
+   "cmax": 128,
+   "assign": 65536,
+   "padded": 65536
+  },
+  "sort_ms": 0.2343,
+  "bincount_ms": 0.2024,
+  "gather_ms": 0.2705,
+  "recon_g_ms": 3.5884,
+  "wquant_g_ms": 6.1697,
+  "igemm_g_ms": 11.6732,
+  "hgemm_g_ms": 38.0201,
+  "had_post_g_ms": 0.9266,
+  "recon_u_ms": 3.5815,
+  "wquant_u_ms": 6.1626,
+  "igemm_u_ms": 12.064,
+  "hgemm_u_ms": 38.1347,
+  "had_post_u_ms": 0.93,
+  "recon_d_ms": 3.5457,
+  "wquant_d_ms": 6.1639,
+  "igemm_d_ms": 10.9208,
+  "hgemm_d_ms": 18.0548,
+  "had_post_d_ms": 19.216,
+  "epigu_ms": 1.3861,
+  "silu_ms": 0.6722,
+  "dquant_ms": 0.6522,
+  "epid_ms": 1.7849,
+  "indexadd_ms": 7.0313
+ }
+}
