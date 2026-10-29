@@ -44,6 +44,18 @@ _int8_ablate = os.environ.get("EXL3_INT8_ABLATE", "")
 # as KLD can lower it to bring more cases onto the int8 path).
 _int8_min_rows = int(os.environ.get("EXL3_INT8_MIN_ROWS", "1024"))
 
+
+def _hgemm_fp16_out() -> bool:
+    # Fair-fp16 baseline switch (read per call so a same-proc A/B can flip
+    # it between forwards). When set, the fp16 reconstruct path accumulates
+    # the GEMM in fp16 and upcasts to the requested (fp32) contract dtype
+    # afterwards, instead of running hgemm with fp32 output. The residual
+    # stream contract is unchanged (callers still receive fp32); only the
+    # GEMM arithmetic changes. The INT8 path is untouched, so INT8 runs
+    # bit-identically with the switch on or off. Default off = legacy
+    # fp32-accumulation behaviour. Decode (bc.run_alloc) is unaffected.
+    return os.environ.get("EXL3_HGEMM_FP16_OUT", "0") != "0"
+
 # Shapes that already logged int8 engagement (one line per unique GEMM shape).
 _int8_logged_shapes = set()
 
@@ -255,6 +267,44 @@ class LinearEXL3:
 
         y_ = y.view(rows, self.out_features)
 
+        # INT8 W8A8 path: rotated basis with int8 inner weights and
+        # per-token int8 activations. Engaged at ALL row counts when the flag
+        # is on (the old rows<1024-only gate is removed); the fp16 fused
+        # original-basis path below stays the default when the flag is off.
+        # Returns None when the int8 route declines (ablation + sliced N),
+        # in which case execution falls through to the fp16 path.
+        if (int8_prefill and self._int8_eligible()
+                and (params is None or "capture" not in params)):
+            r = self._reconstruct_hgemm_int8(x, y, y_, rows, out_dtype)
+            if r is not None:
+                return r
+
+        # Fair-fp16 baseline (EXL3_HGEMM_FP16_OUT=1): run the fp16 GEMM
+        # body into an fp16 buffer, then upcast to the requested (fp32)
+        # contract dtype. The residual stream still receives fp32; the only
+        # change is GEMM accumulation/output precision. The INT8 path above
+        # already returned, so it is unaffected by this switch.
+        req = out_dtype or self.default_out_dtype
+        if req == torch.float and _hgemm_fp16_out():
+            yh = torch.empty(out_shape, dtype = torch.half, device = x.device)
+            self._reconstruct_hgemm_fp16(x, yh, yh.view(rows, self.out_features), rows)
+            with torch.inference_mode():
+                y_.copy_(yh.view(rows, self.out_features))
+            del yh
+        else:
+            self._reconstruct_hgemm_fp16(x, y, y_, rows)
+
+        if self.bias is not None:
+            y += self.bias
+        return y
+
+
+    def _reconstruct_hgemm_fp16(self, x, y, y_, rows):
+        # fp16 GEMM body shared by the legacy fp32-out path and the
+        # EXL3_HGEMM_FP16_OUT baseline. Writes the GEMM result (plus the
+        # output Hadamard for the non-fused path) into y_/y; the caller owns
+        # the buffer dtype and any upcast. No bias handling here.
+        del y
         # Fused path: reconstruct emits ORIGINAL-basis weights (both Hadamards + sign
         # vectors folded into the memory-bound reconstruct kernel), so the gemm runs on the
         # raw input and the standalone input/output had_r_128 launches disappear (~14% of
@@ -269,18 +319,6 @@ class LinearEXL3:
         # The fused kernel costs ~4x plain reconstruct (k*n-proportional) while the saved
         # had launches scale with rows*(k+n); breakeven is rows ~400-900 across shapes
         use_fused = self._fused_reconstruct and rows >= 1024
-
-        # INT8 W8A8 path: rotated basis with int8 inner weights and
-        # per-token int8 activations. Engaged at ALL row counts when the flag
-        # is on (the old rows<1024-only gate is removed); the fp16 fused
-        # original-basis path below stays the default when the flag is off.
-        # Returns None when the int8 route declines (ablation + sliced N),
-        # in which case execution falls through to the fp16 path.
-        if (int8_prefill and self._int8_eligible()
-                and (params is None or "capture" not in params)):
-            r = self._reconstruct_hgemm_int8(x, y, y_, rows, out_dtype)
-            if r is not None:
-                return r
 
         if use_fused:
             xh = x
@@ -311,10 +349,6 @@ class LinearEXL3:
 
         if not use_fused:
             ext.had_r_128(y_, y_, None, self.svh, 1.0)
-
-        if self.bias is not None:
-            y += self.bias
-        return y
 
 
     def _int8_eligible(self) -> bool:

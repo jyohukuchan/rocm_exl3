@@ -80,5 +80,38 @@ with torch.inference_mode():
     check("epilog slice untouched", ybig[:, :128].abs().max().item() == 0.0
           and ybig[:, 384:].abs().max().item() == 0.0)
 
+    # EXL3_HGEMM_FP16_OUT contract (kernel level, no model needed): the fp16
+    # GEMM body upcast to fp32 must be finite and close to the fp32
+    # accumulation path on realistic magnitudes. This is what
+    # LinearEXL3._reconstruct_hgemm_fp16 writes under the switch (the
+    # caller upcasts into the fp32 residual-stream buffer).
+    xh = torch.randn((1024, 5120), generator=g, device="cuda:0",
+                     dtype=torch.float16)
+    w16 = (torch.randn((5120, 5120), generator=g, device="cuda:0",
+                       dtype=torch.float16) * 0.02)
+    y32 = torch.empty((1024, 5120), dtype=torch.float32, device="cuda:0")
+    y16 = torch.empty((1024, 5120), dtype=torch.float16, device="cuda:0")
+    ext.hgemm_recon(xh, w16, y32)
+    ext.hgemm_recon(xh, w16, y16)
+    check("fp16out finite", torch.isfinite(y16).all().item())
+    d16 = (y16.float() - y32).abs()
+    scale16 = y32.abs().amax().item()
+    check("fp16out ~ fp32", d16.max().item() < 1e-3 * scale16,
+          f"maxdiff={d16.max().item():.6f} scale={scale16:.3f}")
+
+    # Switch plumbing: dynamic read so a same-proc A/B can flip it.
+    from exllamav3.modules.quant.exl3 import _hgemm_fp16_out
+    old = os.environ.get("EXL3_HGEMM_FP16_OUT")
+    try:
+        os.environ.pop("EXL3_HGEMM_FP16_OUT", None)
+        check("fp16out default off", _hgemm_fp16_out() is False)
+        os.environ["EXL3_HGEMM_FP16_OUT"] = "1"
+        check("fp16out switch on", _hgemm_fp16_out() is True)
+    finally:
+        if old is None:
+            os.environ.pop("EXL3_HGEMM_FP16_OUT", None)
+        else:
+            os.environ["EXL3_HGEMM_FP16_OUT"] = old
+
 print("ALL_OK" if ok else "FAILURES", flush=True)
 sys.exit(0 if ok else 1)
