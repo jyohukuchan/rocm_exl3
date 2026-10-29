@@ -259,13 +259,17 @@ class LinearEXL3:
         # had launches scale with rows*(k+n); breakeven is rows ~400-900 across shapes
         use_fused = self._fused_reconstruct and rows >= 1024
 
-        # INT8 W8A8 path (experimental): rotated basis with int8 inner weights
-        # and per-token int8 activations. Takes the non-fused branch below, so
-        # the fused original-basis kernel keeps serving rows >= 1024 unless the
-        # int8 route proves faster there too.
-        if (int8_prefill and not use_fused and self._int8_eligible()
+        # INT8 W8A8 path: rotated basis with int8 inner weights and
+        # per-token int8 activations. Engaged at ALL row counts when the flag
+        # is on (the old rows<1024-only gate is removed); the fp16 fused
+        # original-basis path below stays the default when the flag is off.
+        # Returns None when the int8 route declines (ablation + sliced N),
+        # in which case execution falls through to the fp16 path.
+        if (int8_prefill and self._int8_eligible()
                 and (params is None or "capture" not in params)):
-            return self._reconstruct_hgemm_int8(x, y, y_, rows, out_dtype)
+            r = self._reconstruct_hgemm_int8(x, y, y_, rows, out_dtype)
+            if r is not None:
+                return r
 
         if use_fused:
             xh = x
@@ -303,11 +307,11 @@ class LinearEXL3:
 
 
     def _int8_eligible(self) -> bool:
-        # Sliced lm_head (out_features > 32k) stays on the fp16 path for now;
-        # the int8 GEMM also wants at least 16-aligned dims (always true here).
+        # All N are eligible: out_features > MAX_RECONSTRUCT_SLICE_N (lm_head)
+        # runs the sliced int8 path with one shared activation quant.
+        # The int8 GEMM wants at least 16-aligned dims (always true here).
         return (
-            self.out_features <= MAX_RECONSTRUCT_SLICE_N
-            and self.in_features % 16 == 0 and self.out_features % 16 == 0
+            self.in_features % 16 == 0 and self.out_features % 16 == 0
             and self.trellis.is_cuda
         )
 
@@ -330,6 +334,12 @@ class LinearEXL3:
 
     def _reconstruct_hgemm_int8(self, x, y, y_, rows, out_dtype):
         # Rotated-basis W8A8: input Hadamard, int8 GEMM, output Hadamard.
+        # Vocab-sized N (lm_head) takes the sliced path with one shared
+        # activation quant; ablation modes decline it (fall back to fp16).
+        if self.out_features > MAX_RECONSTRUCT_SLICE_N:
+            if _int8_ablate:
+                return None
+            return self._reconstruct_hgemm_int8_sliced(x, y, y_, rows, out_dtype)
         key = (rows, self.in_features, self.out_features)
         if key not in _int8_logged_shapes:
             _int8_logged_shapes.add(key)
@@ -385,6 +395,50 @@ class LinearEXL3:
         if self.bias is not None:
             y += self.bias
         return y
+
+
+    def _reconstruct_hgemm_int8_sliced(self, x, y, y_, rows, out_dtype):
+        # Sliced-N variant of the int8 path (lm_head, vocab-sized N): one
+        # shared input Hadamard + activation quant, then per-slice
+        # decode-straight-to-int8 via s0, igemm and row-scaled epilogue.
+        # Weight scales in fp32; output Hadamard uses the original svh.
+        key = (rows, self.in_features, self.out_features)
+        if key not in _int8_logged_shapes:
+            _int8_logged_shapes.add(key)
+            print(f"EXL3_INT8_PREFILL engaged (sliced): rows={rows} "
+                  f"k={self.in_features} n={self.out_features} "
+                  f"backend={'igemm' if getattr(ext, 'igemm_recon', None) else 'emu'}",
+                  flush=True)
+        xh = torch.empty_like(x)
+        ext.had_r_128(x, xh, self.suh, None, 1.0)
+        with torch.inference_mode():
+            sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
+            a8 = (xh.float() / sa).round().clamp(-128, 127).to(torch.int8)
+        del xh
+        igemm = getattr(ext, "igemm_recon", None)
+        step = MAX_RECONSTRUCT_SLICE_N
+        for n_start in range(0, self.out_features, step):
+            n_end = min(n_start + step, self.out_features)
+            w = torch.empty((self.in_features, n_end - n_start),
+                            dtype=torch.half, device=self.trellis.device)
+            ext.reconstruct_slice(w, self.trellis, self.K, self.mcg, self.mul1, n_start)
+            w8, ws = self._quant_w8(w)
+            del w
+            if igemm is not None:
+                c = torch.empty((rows, n_end - n_start), dtype=torch.int32, device=x.device)
+                igemm(a8, w8, c)
+            else:
+                # Exact emulation until the backend provides the int8 GEMM entry.
+                c = _exact_int32_gemm(a8, w8)
+            with torch.inference_mode():
+                y_[:, n_start:n_end].copy_((c.float() * sa * ws).to(y_.dtype))
+            del c, w8
+        del a8
+        ext.had_r_128(y_, y_, None, self.svh, 1.0)
+        if self.bias is not None:
+            y += self.bias
+        return y
+
 
     def _wscales(self, w):
         # Recompute the per-channel weight scales (ablation path only).
