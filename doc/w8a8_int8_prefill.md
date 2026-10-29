@@ -753,6 +753,25 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
 - single-V620 の fp16 ベースライン確定:
   512: 258.2、2048: 242.9、8192: 227.5(補正)、
   32768: 198.1 tok/s (chunked-4096)。
+
+### Plan B: --int8-grid エンコード開始 (実行中)
+- 入力 BF16 はコンテナから不可視だったため、
+  `~/datapool/ai_models/safetensors/Qwen3.8-27B-BF16` (52GB) を
+  `/work/models/Qwen3.8-27B-BF16` にコピー (33 ファイル一致、
+  ZFS 圧縮で実 17GB)。
+- 注意: 同 BF16 は VL レイアウト
+  (`model.visual.*` + `model.language_model.*` プレフィクス) を含む。
+  JEV と同様 text tower が本体であり、text prefill/KLD には無害の見込み。
+  vocab 248077 の一致は KLD 時に確認する。
+- 実行コマンド (コンテナ内で detached、`docker exec -d`):
+  `python3 -u /src/convert.py -i /work/models/Qwen3.8-27B-BF16`
+  `-w /work/conv27b-int8grid`
+  `-o /work/models/qwen38-27b-exl3-305-int8grid`
+  `-b 3.05 --int8-grid -d 0,1`
+  (share-input-su なし。ログ: `/work/conv27b-int8grid/convert.log`)。
+- 進捗: layer 1 が 108s (bpw 3.02、sqnr 39.9、rss 15.3GB)。
+  64 層換算で ETA 約 2〜2.5h。メモリは memcg 56GiB に対し十分余裕。
+- resume は `-w` + `-r` で可能。完了後に Plan C (dense INT8 A/B) へ。
 - 未完: (1) lm_head ベンチの 32768 (full 出力が OOM。
   chunked 2.8s 見積もりで代用済み)。(2) Flash Next
   本命の stage_profile (親追加指示。後回し)。
