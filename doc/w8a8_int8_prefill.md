@@ -659,3 +659,104 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
   fp16 ベースライン profile → `--int8-grid` encode (承認済み)
   → dense INT8 path → 27B ゲート判定。
   27B の詳細計画は親指示を参照。
+
+## 27B 線プラン A: fp16 ベースライン (JEV-27B-VL-exl3-4bpw、単一 V620)
+
+### アーキテクチャ適合判定: JEV の text tower は Qwen3.8-27B と同一
+
+- `Qwen3.8-27B-BF16/config.json` の text tower
+  (`qwen3_5_text`: 64 層、hidden 5120、GQA 24/4×256、
+  full_attention_interval 4、GDN K16/V48×128、
+  MLP 5120→17408、vocab 248320、silu、eps 1e-6、
+  max 262144) と JEV-27B-VL-exl3-4bpw の text_config を
+  全 20 項目比較し完全一致。JEV は VL モデルだが
+  text のみの prefill 計測には使用可と判定。
+  なお Qwen3.8-27B-BF16 自体も VL ラッパ形式
+  (vision_config を含む)。vocab 248077 (親指定) は
+  tokenizer 側の値で、モデル側は 248320 (padded)。
+- 測定条件: 単一 V620 (gfx1030、HIP_VISIBLE_DEVICES=1、
+  32GB)。JEV 4bpw 約 14GB + KV で 8192 まで bulk 可。
+  32768 は bulk で OOM (後述) のため Generator 経由の
+  chunked prefill (chunk 4096) で測定。
+  手法: `eval/prof/stage_profile_dense.py`
+  (全 LinearEXL3 をキー別計時 + block/attn/GDN/MLP ラップ)、
+  32768 は `eval/prof/chunked_profile.py`。
+- 注意: base-Linear ラップは EXL3 linear を二重計数する
+  ため revert 済み (`662b968`)。GDN の in_proj_a/b
+  (小規模、base Linear のまま) は GDN core 側に残るが
+  微量 (512 で a+b=24ms、2048 で 42ms。全 GDN の約 1%)。
+
+### 測定結果 (fp16 パス、単一 V620、単位 ms)
+
+- 512 (bulk, full logits): wall 1983ms = **258.2 tok/s**。
+  layer 1932 (attn 114, gdn 835, mlp 976)。
+  mlp_d 561、mlp_gu 410、attn q/o 37/48、k/v 5/5、
+  gdn qkv/z/out 245/148/136、lm_head 48。
+- 2048 (bulk, full logits): wall 8431ms = **242.9 tok/s**。
+  layer 7839 (attn 507, gdn 3557, mlp 3748)。
+  mlp_d 2244、mlp_gu 1483、attn q/o 134/182、k/v 13/13、
+  gdn qkv/z/out 955/562/515、lm_head 578。
+- 8192 (bulk + last_tokens_only=1。full lm_head は別途
+  692ms を加算 → wall 36.0s = **227.5 tok/s**):
+  layer 35261 (attn 3640, gdn 16564, mlp 14881)。
+  mlp_d 8848、mlp_gu 5921、attn q/o 517/731、k/v 50/49、
+  gdn qkv/z/out 3726/2238/2009、lm_head 2 (placeholder)。
+- 32768 (Generator chunked-4096): TTFT 165.4s =
+  **198.1 tok/s**。layer 164948 (attn 42020, gdn 62032,
+  mlp 59856)。mlp_d 35302、mlp_gu 23958、
+  attn q/o 2094/2835、k/v 207/204、
+  gdn qkv/z/out 15983/9074/8153。
+- コア分離 (total − 射影):
+  full-attn core: 19 / 165 / 2293 / 36680ms
+  (512/2048/8192/32768。二次増大)。
+  GDN core (+a/b/norm/conv1d を含む): 282 / 1483 /
+  8591 / 約 28000ms (ほぼ線形)。
+  norms/residual/misc: 7 / 27 / 1176 / 1040ms
+  (8192 の 1176 は未内訳。3% 程度)。
+
+### 効率分析 (到達 TFLOPS、fp16 ピーク約 41TFLOPS 対比)
+
+- MLP (64 層、34.2 GFLOP/token): 18.0 / 18.7 / 18.8TFLOPS
+  (512/2048/8192)。trellis decode 込みでピークの約 46%。
+- full-attn 射影 (2.35 GFLOP/token): 約 14TFLOPS。
+- full-attn core (causal、16 層で 196608n² FLOP):
+  5.0 / 5.8TFLOPS (2048/8192)。Triton パスと推定
+  (dispatch の既定順序より。未確定)。
+- GDN 射影 (約 12.3 GFLOP/token と推定):
+  約 11TFLOPS (qkv/z/out いずれも 11〜12)。
+- GDN core: 時間支配 (2048 で全 GDN の 43%)。
+  FLOP 換算は chunk カーネルの内部只能耗不明のため不可。
+  1 token あたり約 0.8〜1.0ms/48 層でほぼ定数 (線形)。
+- lm_head (2.54 GFLOP/token): 2048 で 4.5→8192 で
+  30TFLOPS と行数依存が大きい (tall-skinny GEMM)。
+  32768 の full-vocab 出力 (16GB) は bulk 不可。
+  chunked (4×692ms=2.8s) か last-tokens-only が必須。
+- 線形合計は約 51 GFLOP/token (親指定と一致:
+  MLP 34.2 + attn 射影 2.35 + GDN 射影 12.3 + lm 2.54)。
+
+### 長文脈の FLOP プロジェクション (1M ユース向け)
+
+- per-token 概算 (単一 V620 fp16):
+  線形 3.3ms + GDN core 0.9ms + attn core (196608n²
+  FLOP/token ÷ 5.5TFLOPS)。
+- n=128K: attn core 4.6ms → 計約 8.8ms/token (114 tok/s)。
+- n=500K: attn core 17.9ms → 計約 22ms/token (45 tok/s)。
+- n=1M: attn core 35.7ms → 計約 40ms/token (25 tok/s)。
+  attn core が 89% を占める。dense INT8 (GEMM 2x) は
+  線形 3.3ms しか削れず、1M では attention core の
+  INT8 化 (SageAttention 型 QK^T) が必須。
+  (C) の判断材料。
+
+### レジューム記録 (プラン A 完了。中断時はここから再開)
+
+- ブランチ `feat/w8a8-fused-prefill`、legacy-fork に push 済み。
+- single-V620 の fp16 ベースライン確定:
+  512: 258.2、2048: 242.9、8192: 227.5(補正)、
+  32768: 198.1 tok/s (chunked-4096)。
+- 未完: (1) lm_head ベンチの 32768 (full 出力が OOM。
+  chunked 2.8s 見積もりで代用済み)。(2) Flash Next
+  本命の stage_profile (親追加指示。後回し)。
+  (3) Qwen3.8-27B の `--int8-grid` encode (承認済み・未着手)。
+  encode 方針: 27B 比較対象と同じ約 3.0-3.05bpw
+  (4bpw でも載るが INT8 効果測定は同 bpw 比較が筋)。
+  `share-input-su` は dense には不要。
