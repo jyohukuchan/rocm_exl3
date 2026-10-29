@@ -779,6 +779,23 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
   igemm→epilogue)。`eval/prof/dense_int8_ab.py` (A/B ハーネス) 追加。
   encode 完了後に 512/2048/8192 で A/B + 精度スモークを行う。
   encode 進捗: layer 3/64 完了、エラーなし、ETA 通り約 2〜2.5h。
+- [checkpoint] C2/C3 設計スケッチ (A/B 測定後に実装可否を判断):
+  - C2 (decode straight-to-int8): `reconstruct.cu` は trellis→fp16 書き出し
+    (K×N×2B) 後に `_quant_w8` が読み直す。s0 モデルでは
+    `reconstruct_int8` 系カーネル (tile decode 後に /s0 round→int8 書き出し)
+    で fp16 W の往復を削減。ただし bulk では Linear 毎に decode 1 回のみ
+    のため効果は ~0.5ms/本 程度。chunked (32K=8 chunk) では decode が
+    chunk 数分繰り返されるため prefill 永続 W8 キャッシュも候補。
+    新規 C++ カーネル = ext 再ビルド (temp 名 + mv の DEPLOY RULE 遵守)。
+  - C3 (activation 共有): `Linear.forward(x, params)` は params を受け継ぐ
+    (attn→q/k/v/o、mlp→gate/up で同一 x)。params 経由で xh/a8 を共有し
+    had+amax+quant を 1/3 に削減。効果は ~0.1ms/本と小さく優先度低。
+  - igemm backend は rocBLAS int8→int32 row-major (`exl3_igemm.cu`) で確定。
+  - KLD 方式確定: `eval/prof/dense_kld_dump.py` で EXL3 から cases-v1.json
+    (9 cases、65〜1025 rows) の全語彙 fp32 logits + manifest を出力し、
+    GSQ の `compare.py` で BF16 ref
+    (`.../qwen38-kld-20260918/results/llama-bf16-fp16`) と比較。
+    KL は valid 248077 id のみ。tokenizer 不要 (ids 直接投入)。
 - 未完: (1) lm_head ベンチの 32768 (full 出力が OOM。
   chunked 2.8s 見積もりで代用済み)。(2) Flash Next
   本命の stage_profile (親追加指示。後回し)。
