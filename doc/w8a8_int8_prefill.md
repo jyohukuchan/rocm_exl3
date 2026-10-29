@@ -772,6 +772,13 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
 - 進捗: layer 1 が 108s (bpw 3.02、sqnr 39.9、rss 15.3GB)。
   64 層換算で ETA 約 2〜2.5h。メモリは memcg 56GiB に対し十分余裕。
 - resume は `-w` + `-r` で可能。完了後に Plan C (dense INT8 A/B) へ。
+- [checkpoint] C1 実装済み (未テスト、GPU は encode 中):
+  `exl3.py` の INT8 条件から `not use_fused` を除去 (全 rows で engage)、
+  `_int8_eligible` の N 上限を撤廃、lm_head 用 sliced-N パス
+  `_reconstruct_hgemm_int8_sliced` を追加 (a8 共有、slice 毎 decode→
+  igemm→epilogue)。`eval/prof/dense_int8_ab.py` (A/B ハーネス) 追加。
+  encode 完了後に 512/2048/8192 で A/B + 精度スモークを行う。
+  encode 進捗: layer 3/64 完了、エラーなし、ETA 通り約 2〜2.5h。
 - 未完: (1) lm_head ベンチの 32768 (full 出力が OOM。
   chunked 2.8s 見積もりで代用済み)。(2) Flash Next
   本命の stage_profile (親追加指示。後回し)。
