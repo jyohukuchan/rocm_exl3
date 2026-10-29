@@ -7,6 +7,14 @@ from ...util.tensor import g_tensor_cache
 import os
 from ...util import profile_opt
 
+# Fused Triton INT8 helpers (C2: kill the torch-composed quant/epilogue
+# passes). Optional: when unavailable the torch reference path below runs.
+try:
+    from ...rocm_py.dense_int8 import dense_epilog_had, dquant_rowwise, quant_w8_slab
+    _dense_triton = True
+except Exception:
+    _dense_triton = False
+
 AUTO_RECONSTRUCT_THRESHOLD = 144
 MAX_RECONSTRUCT_SLICE_N = 32768
 RECONSTRUCT_SLICE_GRANULARITY_N = 128
@@ -334,12 +342,22 @@ class LinearEXL3:
 
     def _reconstruct_hgemm_int8(self, x, y, y_, rows, out_dtype):
         # Rotated-basis W8A8: input Hadamard, int8 GEMM, output Hadamard.
+        # C4 routing policy (returns None -> fp16 path): short rows stay fp16
+        # (decode-bound, int8 regressed 0.56x at 512); tiny-N linears stay
+        # fp16 (quant overhead dominates); N-heavy shapes at long rows stay
+        # fp16 (hgemm beats igemm there at M>=4096, measured).
+        if (rows < 1024 or self.out_features <= 2048
+                or (self.in_features < self.out_features and rows >= 4096)):
+            return None
         # Vocab-sized N (lm_head) takes the sliced path with one shared
         # activation quant; ablation modes decline it (fall back to fp16).
         if self.out_features > MAX_RECONSTRUCT_SLICE_N:
             if _int8_ablate:
                 return None
             return self._reconstruct_hgemm_int8_sliced(x, y, y_, rows, out_dtype)
+        if (not _int8_ablate and _dense_triton and self.s0 is not None
+                and getattr(ext, "igemm_recon", None) is not None):
+            return self._reconstruct_hgemm_int8_fast(x, y, y_, rows, out_dtype)
         key = (rows, self.in_features, self.out_features)
         if key not in _int8_logged_shapes:
             _int8_logged_shapes.add(key)
@@ -397,44 +415,108 @@ class LinearEXL3:
         return y
 
 
-    def _reconstruct_hgemm_int8_sliced(self, x, y, y_, rows, out_dtype):
-        # Sliced-N variant of the int8 path (lm_head, vocab-sized N): one
-        # shared input Hadamard + activation quant, then per-slice
-        # decode-straight-to-int8 via s0, igemm and row-scaled epilogue.
-        # Weight scales in fp32; output Hadamard uses the original svh.
+    def _reconstruct_hgemm_int8_fast(self, x, y, y_, rows, out_dtype):
+        # C2 fast path: same math as the torch reference below, but the
+        # multi-pass torch quant/epilogue chains are replaced by single-pass
+        # fused Triton kernels (dquant_rowwise, quant_w8_slab,
+        # dense_epilog_had). Requires an s0 (int8-grid) model.
         key = (rows, self.in_features, self.out_features)
         if key not in _int8_logged_shapes:
             _int8_logged_shapes.add(key)
-            print(f"EXL3_INT8_PREFILL engaged (sliced): rows={rows} "
-                  f"k={self.in_features} n={self.out_features} "
+            print(f"EXL3_INT8_PREFILL engaged (fast): rows={rows} "
+                  f"k={self.in_features} n={self.out_features} backend=igemm",
+                  flush=True)
+        xh = torch.empty_like(x)
+        ext.had_r_128(x, xh, self.suh, None, 1.0)
+        with torch.inference_mode():
+            sa = torch.empty((rows, 1), dtype=torch.float32, device=x.device)
+            a8 = torch.empty((rows, self.in_features), dtype=torch.int8,
+                             device=x.device)
+            dquant_rowwise(xh, sa, a8)
+        del xh
+        w = torch.empty((self.in_features, self.out_features),
+                        dtype=torch.half, device=self.trellis.device)
+        ext.reconstruct(w, self.trellis, self.K, self.mcg, self.mul1)
+        w8 = torch.empty((1, self.in_features, self.out_features),
+                         dtype=torch.int8, device=w.device)
+        s0t = self.s0.to(dtype=torch.float32, device=w.device)
+        with torch.inference_mode():
+            quant_w8_slab(w.unsqueeze(0), s0t, w8)
+        del w
+        c = torch.empty((rows, self.out_features), dtype=torch.int32, device=x.device)
+        ext.igemm_recon(a8, w8.squeeze(0), c)
+        del a8, w8
+        with torch.inference_mode():
+            dense_epilog_had(c, sa, s0t.to(device=x.device), self.svh, y_,
+                             self.out_features)
+        del c, sa
+        if self.bias is not None:
+            y += self.bias
+        return y
+
+
+    def _reconstruct_hgemm_int8_sliced(self, x, y, y_, rows, out_dtype):
+        # Sliced-N variant of the int8 path (lm_head, vocab-sized N): one
+        # shared input Hadamard + activation quant, then per-slice decode,
+        # igemm and fused epilogue. Weight scales in fp32; output Hadamard
+        # uses the original svh. Without the fused kernels (or s0 model)
+        # falls back to the torch reference chain.
+        fast = (not _int8_ablate and _dense_triton and self.s0 is not None
+                and getattr(ext, "igemm_recon", None) is not None)
+        key = (rows, self.in_features, self.out_features)
+        if key not in _int8_logged_shapes:
+            _int8_logged_shapes.add(key)
+            print(f"EXL3_INT8_PREFILL engaged (sliced{'/fast' if fast else ''}): "
+                  f"rows={rows} k={self.in_features} n={self.out_features} "
                   f"backend={'igemm' if getattr(ext, 'igemm_recon', None) else 'emu'}",
                   flush=True)
         xh = torch.empty_like(x)
         ext.had_r_128(x, xh, self.suh, None, 1.0)
         with torch.inference_mode():
-            sa = xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0
-            a8 = (xh.float() / sa).round().clamp(-128, 127).to(torch.int8)
+            sa = torch.empty((rows, 1), dtype=torch.float32, device=x.device)
+            a8 = torch.empty((rows, self.in_features), dtype=torch.int8,
+                             device=x.device)
+            if fast:
+                dquant_rowwise(xh, sa, a8)
+            else:
+                sa.copy_(xh.float().abs().amax(dim=1, keepdim=True).clamp_min(1e-12) / 127.0)
+                a8.copy_((xh.float() / sa).round().clamp(-128, 127).to(torch.int8))
         del xh
         igemm = getattr(ext, "igemm_recon", None)
+        s0t = self.s0.to(dtype=torch.float32, device=x.device) if self.s0 is not None else None
         step = MAX_RECONSTRUCT_SLICE_N
         for n_start in range(0, self.out_features, step):
             n_end = min(n_start + step, self.out_features)
-            w = torch.empty((self.in_features, n_end - n_start),
+            nw = n_end - n_start
+            w = torch.empty((self.in_features, nw),
                             dtype=torch.half, device=self.trellis.device)
             ext.reconstruct_slice(w, self.trellis, self.K, self.mcg, self.mul1, n_start)
-            w8, ws = self._quant_w8(w)
+            if fast:
+                w8 = torch.empty((1, self.in_features, nw), dtype=torch.int8,
+                                 device=w.device)
+                with torch.inference_mode():
+                    quant_w8_slab(w.unsqueeze(0), s0t.to(device=w.device), w8)
+                ws = s0t
+                w8 = w8.squeeze(0)
+            else:
+                w8, ws = self._quant_w8(w)
             del w
             if igemm is not None:
-                c = torch.empty((rows, n_end - n_start), dtype=torch.int32, device=x.device)
+                c = torch.empty((rows, nw), dtype=torch.int32, device=x.device)
                 igemm(a8, w8, c)
             else:
                 # Exact emulation until the backend provides the int8 GEMM entry.
                 c = _exact_int32_gemm(a8, w8)
             with torch.inference_mode():
-                y_[:, n_start:n_end].copy_((c.float() * sa * ws).to(y_.dtype))
+                if fast:
+                    dense_epilog_had(c, sa, ws, self.svh[n_start:n_end], y_,
+                                     self.out_features, n_start)
+                else:
+                    y_[:, n_start:n_end].copy_((c.float() * sa * ws).to(y_.dtype))
             del c, w8
         del a8
-        ext.had_r_128(y_, y_, None, self.svh, 1.0)
+        if not fast:
+            ext.had_r_128(y_, y_, None, self.svh, 1.0)
         if self.bias is not None:
             y += self.bias
         return y
