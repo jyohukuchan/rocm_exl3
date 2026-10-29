@@ -109,6 +109,25 @@ order. flash-attn is an optional dependency; when it is not installed, this swit
 FA2 across supported hardware and cover more cases (quantized caches, head dims > 256,
 attention sinks); this switch exists for A/B comparison.
 
+### `EXL3_ATTN_INT8FP8` (default: `0`)
+
+Opt-in Sage-style prefill attention: QK^T in INT8, P/V in FP8 (E4M3), fp32
+accumulation, computed on the fly over the unchanged fp16 cache
+(design (a); no new cache format). Prefill only (`q_len > 16`), paged-cache
+and cache-less (folded into temporary pages); decode,
+quantized-cache, varlen, windowed, softcapped and sinked calls keep the
+existing kernels. Off by default: the default fp16 path and the quantized
+KV cache path are bit-for-bit unchanged. Read dynamically on every dispatch,
+so one process can interleave baseline/new-mode runs for A/B. Details,
+accuracy/speed numbers and ablations in `doc/attn_int8_fp8.md`.
+
+### `EXL3_ATTN_INT8FP8_ABLATE` (default: empty)
+
+Comma-separated ablations for the `EXL3_ATTN_INT8FP8` mode: `nosmooth`
+(skip K mean smoothing), `per-tensor-k` (one K scale per kv head over the
+whole window instead of per-block scales), `fp16pv` (keep P@V in fp16).
+Testing/diagnosis only.
+
 ## Linear attention (GDN / KDA)
 
 ### `EXL3_RDNA2_GDN_CHUNK` (default: `0`)
