@@ -796,6 +796,44 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
     GSQ の `compare.py` で BF16 ref
     (`.../qwen38-kld-20260918/results/llama-bf16-fp16`) と比較。
     KL は valid 248077 id のみ。tokenizer 不要 (ids 直接投入)。
+
+### Plan C 結果: C1 (0.56/1.06/1.12x) → C2-lite + C4 でゲート通過
+- C1 の敗因 (shape_bench.py で確定): torch 合成の quant/epilogue が
+  GEMM 節約を相殺 (quantW 7ms、deq 1.9ms 等、fp32 中間体 ~1.7GB/本)。
+- C2-lite (C++ なし): Triton 融合 (`rocm_py/dense_int8.py` 新規、
+  MoE 実績の `dquant_rowwise`/`quant_w8_slab` を再利用 + dense 用
+  `dense_epilog_had`) で torch 往復を除去。`tests/test_dense_int8.py`
+  で bitwise/許容差を検証。
+- C4 routing: rows<1024 と N≤2048 (k/v 等) は fp16、その他は int8。
+- 決定打の知見: 本番 hgemm は big linear で fp32 出力
+  (down/qkv/z/out/o の out_dtype=fp32) のため hg16 より ~3x 遅い
+  (shape_bench で全形状確認)。igemm (int32 蓄積) は GEMM レベルで
+  ~4x 速い。N-heavy 制限は不要だった (route-all に修正)。
+- A/B (single V620、同一 seed):
+  512: 260.4→258.5 (**0.99x**、C4 で全て fp16、bitwise 一致を確認)、
+  2048: 256.3→433.0 (**1.69x**)、8192: 229.9→363.0 (**1.58x**)。
+- tail[256] maxabs: 0.00/0.56/0.45 (512/2048/8192)。精度健全。
+- `EXL3_INT8_MIN_ROWS` (default 1024) を追加。KLD 用に下げて
+  int8 経路へ載せる (性能ヒューリスティクであり精度は同一 kernel)。
+
+### Plan D 結果
+- KLD (cases-v1、compare.py):
+  fp16(3.05bpw) vs BF16 = macro 0.0767 (量子化ギャップ、q30b 0.0524 と同程度)。
+  int8-vs-fp16 (同一モデル): mr256 で all-rows mean 0.0032/macro 0.0027/
+  top1 98.4%、production 閾値で mean 0.0009/top1 99.5%。
+  量子化ギャップの 1/18〜1/60 → **neutral**。
+  129 rows 以下は fp16 経路のため KLD = 0.0 (bitwise 一致)。
+- 32K (single V620、last-128 logits): fp16 188.1→int8 265.9 tok/s
+  (**1.41x**)。tail maxabs 0.30/mean 0.024。
+  128K 投影約 1.22x (146 vs 119 tok/s)。
+- 長文投影 (fp16 stage 2048/8192 の bucket fit):
+  線形部 ~2.9ms/row、attn-core 二次 (c≈3.3e-5ms/row²)。
+  1M prefill: fp16 約 10.4h (26.7 tok/s、有効)、attn-core が 89%。
+  int8 は線形部のみ ~2.1x → 1M では約 1.04x に収束。
+  **1M の用途には attention-core の INT8 化が必須** (別途 SageAttention
+  的 QK^T として scope 外で記録)。128K では int8 約 1.22x。
+- ゲート判定: **PASS** (1.69x @2048、1.58x @8192、0.99x @512、
+  KLD neutral)。Flash Next 再 encode は開始しない (parent 指示例外のため)。
 - 未完: (1) lm_head ベンチの 32768 (full 出力が OOM。
   chunked 2.8s 見積もりで代用済み)。(2) Flash Next
   本命の stage_profile (親追加指示。後回し)。

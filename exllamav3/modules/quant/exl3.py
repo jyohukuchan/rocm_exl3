@@ -40,6 +40,9 @@ _INT8_EMU_KBLOCK = 512
 # int8 activations. The single-side paths use fp32 matmuls on dequantized
 # operands, so each measures exactly one grid's error.
 _int8_ablate = os.environ.get("EXL3_INT8_ABLATE", "")
+# Minimum row count for INT8 engagement (perf heuristic; accuracy work such
+# as KLD can lower it to bring more cases onto the int8 path).
+_int8_min_rows = int(os.environ.get("EXL3_INT8_MIN_ROWS", "1024"))
 
 # Shapes that already logged int8 engagement (one line per unique GEMM shape).
 _int8_logged_shapes = set()
@@ -348,7 +351,7 @@ class LinearEXL3:
         # igemm beats hgemm ~4x on GEMM level because production hgemm runs
         # with fp32 accumulation output on the big linears (hg32 ~3x slower
         # than hg16, measured per shape), while igemm accumulates int32.
-        if rows < 1024 or self.out_features <= 2048:
+        if rows < _int8_min_rows or self.out_features <= 2048:
             return None
         # Vocab-sized N (lm_head) takes the sliced path with one shared
         # activation quant; ablation modes decline it (fall back to fp16).
