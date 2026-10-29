@@ -196,6 +196,17 @@ torch emulation as fallback. Graph-captured calls (`capture` in params) and
 the sliced lm_head stay on the fp16 path. Off by default; numeric and speed
 tradeoffs are recorded in the design doc, not here.
 
+### `EXL3_HGEMM_FP16_OUT` (default: `0`)
+
+Fair-fp16 baseline for the reconstruct-then-GEMM prefill linears
+(see `doc/w8a8_int8_prefill.md`, Plan E). When set, the fp16 path runs the
+GEMM into an fp16 buffer and upcasts to the requested fp32 residual-stream
+contract dtype afterwards, instead of accumulating in fp32. The INT8 path is
+untouched (it returns before this branch, so INT8 runs bit-identically with
+the switch on or off). Decode (`bc.run_alloc`) and fp16-weight linears are
+unaffected. Off by default (legacy fp32-accumulation behaviour); kept as an
+env switch until making it the default is approved.
+
 ### `EXLLAMAV3_TUNE_CACHE` (default: platform cache dir)
 
 Override the path of the on-disk autotune cache for the cooperative GEMM kernels (kernel shape

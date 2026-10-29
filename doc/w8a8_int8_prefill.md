@@ -848,3 +848,89 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
   encode 方針: 27B 比較対象と同じ約 3.0-3.05bpw
   (4bpw でも載るが INT8 効果測定は同 bpw 比較が筋)。
   `share-input-su` は dense には不要。
+
+### Plan E 結果: 公正な fp16 ベースライン (`EXL3_HGEMM_FP16_OUT=1`)
+
+- 原因 (git blame): `exllamav3/architecture/qwen3.py` の
+  `Attention(out_dtype=torch.float)` と `GatedMLP(out_dtype=torch.float)`
+  (commit `da3ea00`、上流 turboderp の全 dense arch 共通の設計)。
+  `o_proj` / `down` の Linear に継承され、**GEMM が fp32 出力バッファへ
+  直接蓄積**する。残差 stream 自体も fp32 が設計値
+  (`embedding.py` の default `torch.float`、transformer.py の `x += y` は
+  fp32 同士の加算)。つまり「GEMM が fp32 に書く」と「残差加算が fp32」は
+  現在一体化しており、区別されていなかった。fp32 出力に意図的な理由は
+  見当たらない (精度上の必然性なし — 下記 overflow 走査で確認)。
+- 実装: `LinearEXL3.reconstruct_hgemm` に fp16 計算パスを追加。
+  要求 dtype が fp32 かつ `EXL3_HGEMM_FP16_OUT=1` のとき、fp16 バッファに
+  GEMM (+非 fused 時の出力 Hadamard) を実行し、fp32 残差バッファへ
+  upcast して返す。残差 stream の契約 (呼び出し側は fp32 を受け取る) は
+  不変。INT8 パスはこの分岐より前で return するため影響なし
+  (スイッチ on/off で INT8 は bitwise 同一)。decode (`bc.run_alloc`) と
+  fp16 重み Linear は対象外。default off で旧動作を再現。
+  (`exllamav3/modules/quant/exl3.py`: `_hgemm_fp16_out()`、
+  `_reconstruct_hgemm_fp16()` に fp16 本体を抽出。
+  `tests/test_dense_int8.py` に kernel 級契約テスト追加:
+  fp16 hgemm + upcast が有限かつ fp32 蓄積と rel<1e-3 で一致、
+  スイッチの on/off 読み替え。ALL_OK 確認済み)
+- 精度:
+  - overflow 走査 (L=8192、同一 ids、down_proj/o_proj 全 80 linear):
+    両 mode とも非有限ゼロ。最大 |down_proj| 出力 855.6 (fp32) /
+    855.5 (fp16out)。fp16 上限 65504 に遠く及ばず、**fp32 出力の
+    正当化事由なし**。logits_max 9.719 で両 mode 一致。
+  - KLD (cases-v1、9 case、compare_kld.py):
+    fp16out 対 fp32 = **macro 0.0000** (全 case ≤0.0001、top1 99.8%)。
+    int8mr256 対 fp16out = macro 0.0025 / top1 98.8%、
+    対 fp32 = 0.0024 で従来値 (0.0027/98.4%) と整合。
+    量子化ギャップ (0.0767) の 1/30 で neutral 維持。
+    BF16 参照の直接再比較は不可だった (手元 `llama-bf16-fp16` の入力
+    ハッシュが cases-v1 と不一致 — Plan D 時と cases 改訂が異なる。
+    三角不等式で fp16out 対 BF16 = 0.0767 ± 0.0001 に bounded)。
+    ダンプは `/work/kld-fp16out/{fp32,fp16out,int8mr256}`。
+    全ダンプで非有限アサート通過。
+- A/B 3way (single V620、seed 0、同一 ids。
+  512/2048 は full logits、8192/32768 は last-only。
+  a=旧 fp16(fp32 出力)、b=新 fp16(fp16 出力)、c=INT8):
+
+  | L | a 旧fp16 | b 新fp16 | c INT8 | c/b | c/a | b/a |
+  |---|---|---|---|---|---|---|
+  | 512 | 260.2 | 346.7 | 258.7 | 0.75x | 0.99x | 1.33x |
+  | 2048 | 253.8 | 367.4 | 425.7 | 1.16x | 1.68x | 1.45x |
+  | 8192 | 229.6 | 342.7 | 354.1 | 1.03x | 1.54x | 1.49x |
+  | 32768 | 184.4 | 255.8 | 268.0 | 1.05x | 1.45x | 1.39x |
+
+  (tok/s。旧値との整合: 512 は 260.4→258.5 に対し 260.2→258.7 で
+  c/a=0.99x 一致、2048/32K も旧値と ±2% で一致。8192 の c は旧 363.0
+  に対し 354.1 (-2.5%、run ばらつきの範囲))
+  - 512 の c は C4 で全て fp16 のため a と bitwise 一致 (tail maxabs 差
+    0.0)。b は top5 一致、tail 差 maxabs ≤0.031。
+  - 2048/8192/32768 の b 対 a 差は tail maxabs ≤0.045 (fp16 丸めのみ)。
+    c 対 b 差は c 対 a 差とほぼ同一 (INT8 誤差が支配的)。
+  - 公正な比較 (c/b) では INT8 の利得は 2048 で 1.16x、8192 以降は
+    1.03〜1.05x に縮小。旧 c/a (1.5〜1.7x) の大半は fp32 出力税だった。
+- 長文投影 (公正ベースライン、Q 共通 = 4.1e-5ms/row²。
+  8192/32768 の壁時間から W = P·L + Q·L² + C を fit。
+  Q は 2048/8192 区間では 3.2e-5 で、長文側で曲率増 — 保守的
+  (INT8 に辛め) な 8K/32K 側を採用):
+
+  | ctx | a 旧fp16 | b 新fp16 | c INT8 | c/b | c/a | attn 占有率(c) |
+  |---|---|---|---|---|---|---|
+  | 32K | 170s (投影; 実測 178s) | 121s (実測 128s) | 119s (実測 122s) | 1.02x | 1.43x | 36% |
+  | 128K | 20.7分 (106 tok/s) | 17.3分 (126 tok/s) | 16.9分 (129 tok/s) | 1.03x | 1.22x | 69% |
+  | 500K | 3.56h (39.9 tok/s) | 3.35h (42.5 tok/s) | 3.32h (42.9 tok/s) | 1.01x | 1.07x | 90% |
+  | 1M | 13.7h (21.3 tok/s) | 13.25h (22.0 tok/s) | 13.19h (22.1 tok/s) | 1.00x | 1.04x | 95% |
+
+  (32K 行は fit 検証: 5% 以内で一致。旧投影 1.22x/1.08x/1.04x と
+  c/a は整合するが、絶対値は旧投影より低めに出る
+  (旧 32K アンカーが投影 193/275 だったのに対し実測 184/256/268)。
+  旧 doc の attn 占有率 21%/52%/80%/89% に対し今回は 36%/69%/90%/95%。
+  差は Q 推定の違い (3.3e-5 → 4.1e-5) による)
+  **結論は不変: 1M 用途には attention-core の INT8 化が必須**。
+- 判定: **新 fp16 (b) は正確 (KLD 0.0000、overflow なし) かつ全長で
+  旧 fp16 (a) より速い (1.33〜1.49x)**。default 化を提案するが、
+  親承認なしに切り替えない (env `EXL3_HGEMM_FP16_OUT` 維持)。
+  default 化する場合は decode パス (`bc.run_alloc` の fp32) との整合と
+  全 arch での KLD 再確認が残件。
+- 残件: (1) BF16 参照の exact revision 特定 (Plan D の cases と現
+  cases-v1 の対応付け)。(2) default 化の是非 (上記)。
+  (3) INT8 の長文での利得縮小 (c/b ≈ 1.0x @1M) — attention INT8 が本命。
+  生ログ: `/work/kld-fp16out/ab/L{L}_{a,b,c}.json/.pt` (seed 0)。
