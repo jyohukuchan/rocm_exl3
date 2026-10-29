@@ -202,3 +202,108 @@ V620 と R9700 の両方で import 可、R9700 で 8B モデルの load+forward
 prefill attention が全計算の支配項であり、上表の通り cached e2e は
 fp16 の約 0.38x (0.27–0.43x)。27B が載れば `needle_i8f8_cached.py`
 と `dense_kld_dump.py` + `EXL3_CACHE_I8F8=1` でそのまま測れる。
+
+## Round 3: HIP gfx1201 WMMA プロトタイプ (結論: fp16 に届かず)
+
+親タスクの指示 (INT8/FP8 が fp16 より速いのは given として HW レートの
+再検証に時間を使わず、HIP で書いて cached attention が fp16 より
+速くなるか試す) に従い、Triton を経由しない HIP 直書きの fused
+プロトタイプを書き、R9700 で検証した。作業本体は
+`eval/prof/r3_hip/` (`hip_i8f8_attn.hip` カーネル + torch 結合、
+`bench_r3_hip.py` 正確性・速度ベンチ、`wmma_probe.hip` /
+`probe2.hip` / `probe3.hip` レイアウト・素レート特定用プローブ)。
+
+### gfx1201 WMMA レイアウトの特定
+
+RDNA4 (gfx1201) の WMMA は gfx11 と異なり half-size フラグメント
+(A/B 各レーン 8 要素: fp16 `half8` / int8 `int8x8` / fp8 `f8x8`、
+C は `float8` / `int32x8`) で、既存 `rdna_wmma.hip.h` は gfx12 を
+`__builtin_trap()` している (未対応)。ホスト hipcc の単体プローブで
+R9700 実機・非対称行列・CPU 参照照合により以下を確定した
+(3 dtype 共通、gfx11 式の配置):
+
+- A: レーン L が行 `L%16`、k スライス `8*(L/16)+[0..8)`。
+- B: レーン L が列 `L%16`、同 k スライス。
+- C: 行 `L%16`、列 `8*(L/16)+[0..8)`。
+- オペランド順序は (B, A, C) (第 1 引数が B 側)。
+- fp16: `__builtin_amdgcn_wmma_f32_16x16x16_f16_w32_gfx12(b, a, c)`。
+- int8: `__builtin_amdgcn_wmma_i32_16x16x16_iu8_w32_gfx12(true, kb, true, qa, ...)`
+  (signed x signed、フラグはコンパイル時定数必須)。
+- fp8: `__builtin_amdgcn_wmma_f32_16x16x16_fp8_fp8_w32_gfx12(vv, pq, ...)`。
+
+### E4M3 は 0x38 = 1.0 (実効バイアス 7)
+
+torch `.to(torch.float8_e4m3fn)` と gfx1201 WMMA は一致する
+(tiny=2^-6、max 0x7E=448、サブノーマル単位 2^-9)。
+当初の「fp8 WMMA が真値の 4 倍を返す」はバイアス 8 の誤読だった
+(0x48 は 4.0)。スケール補正は不要。自作 RNE 変換器 `f32_to_e4m3`
+は torch と 6 値域 x 65536 点でビット一致 (0 mismatch)。
+P (非負) 専用。torch は有限 ~460 超で 0x7F (NaN) を返す quirk が
+あるが P/sp は 448 を超えないため到達しない。
+
+### 素レート (レジスタ常駐 WMMA ループ、chrono、best-of-7)
+
+fp16 154–176 TOPS、int8 351–378 TOPS、fp8 364–365 TOPS。
+**直書き WMMA では int8/fp8 ≒ 2.3x fp16** であり、Triton lowering
+の約 0.5x とは逆転する。ドット律速は外せることが確定した
+(1 命令あたり 8192 ops、4 独立アキュムレータ、CSE 回避のため
+初期値 offset)。
+
+### HIP プロトタイプの設計
+
+`CacheLayer_i8f8` の packed テンソル + block_table + stage を直接読む
+flash attention (online softmax)。1 ブロック = 16 Q 行 x 1 q-head の
+単一 wave。QK^T は int8 WMMA、PV は fp8 WMMA、P 行量子化 (自作 RNE
+E4M3)、q・μ バイアス、causal、末尾 <32 行はスカラー fp32 テール。
+K/V タイルの LDS ステージングあり (素朴なストライド直読みは
+8 倍オーバーフェッチで約 3 倍遅かった)。簡素化点: B=1、
+head_dim=256 固定、GQA は head 毎ブロック (K/V は L2 共有で
+Triton 版と同条件)、テールは fp32 (参照との差は量子化ノイズのみ)。
+
+### 正確性
+
+- E4M3 変換器 vs torch: 6 値域で 0 mismatch。
+- カーネル vs round-1 torch 参照 (ランダム、奇数 Tq・テールあり・
+  非 causal 含む): maxabs 0.00035–0.00061
+  (同時計測の Triton cached 0.00043–0.00101 と同等以上)。
+- 実 27B Q/K/V 4 層 vs fp16 SDPA: rel 0.022–0.036 (round-2 と一致)。
+- `tests/test_attn_i8f8_cached.py` 7 件は R9700 でも緑
+  (V620 でも緑を再確認)。`test_attn_int8fp8.py` + `test_kv_quant.py`
+  68 件、`test_dense_int8.py` ALL_OK は緑のまま。
+
+### 速度 (R9700、attention カーネルのみ、A/B 交互 x 3 ラウンド中央値)
+
+Tq=2048/8192、27B 形状 (24/4/256)。`cached-tri` = round-2 Triton、
+`cached-hip` = 本プロトタイプ。
+
+| Tk | Tq | fp16 | cached-tri (対fp16) | cached-hip (対fp16) |
+|---|---|---|---|---|
+| 8192 | 2048 | 8.63ms | 20.76 (0.42x) | 47.99 (0.18x) |
+| 8192 | 8192 | 20.00 | 48.41 (0.41x) | 113.66 (0.18x) |
+| 32768 | 2048 | 38.28 | 96.09 (0.40x) | 212.04 (0.18x) |
+| 32768 | 8192 | 137.70 | 335.67 (0.41x) | 747.97 (0.18x) |
+| 131072 | 2048 | 158.13 | 411.64 (0.38x) | 886.07 (0.18x) |
+| 131072 | 8192 | 620.50 | 1605.27 (0.39x) | 3344.04 (0.19x) |
+
+fp16 / cached-tri は round-2 表と一致 (再現)。hip-vs-fp16 maxabs は
+0.0003–0.0013 (1 点 0.052 も rel は 0.032 で範囲内)。
+32K/2048 の round-2 に +200ms 級スパイクあり (同 GPU の競合。
+中央値で吸収、round-1 の注意書きと同趣旨)。
+
+### 結論: 融合しても fp16 に届かない
+
+ドット単体は HIP 直書きで 2.3 倍にできたが、融合カーネル全体では
+fp16 の 0.18x (Triton cached の半分以下) に留まった。主因は
+プロトタイプのスケジューリングであって WMMA 自体ではない:
+1 wave/block + 38.5KB LDS 占有で CU 常駐が 1 block に張り付き、
+16 段の依存 WMMA チェーン・直列 exp/cvt/qμ のレイテンシが露出した
+まま (実効 8.4 TFLOPS 対 WMMA ピーク約 350)。LDS 化・VGPR 削減等の
+安い手は 1.27x / 微増に留まり、構造的と判断した。
+
+勝つには Triton 並の multi-wave + パイプライン化 (= 本格 FA 最適化の
+書き直し) が必要で、到達点の見込みは fp16 との parity 程度
+(ドット 2.3 倍が同一オーバーヘッドを相殺する構図) のため、
+Round 3 はここで区切る。dispatch 配線はしない
+(Triton cached が速いため。現行の Triton がフォールバック兼本命)。
+副産物の確定知見 (gfx12 WMMA レイアウト、E4M3 バイアス 7 の一致、
+RNE 変換器、素レート) は将来の HIP 化の土台として残す。
