@@ -826,12 +826,19 @@ fused fp16 MoE は約 20〜37ms/層 (上表 1012/48=21.1、1786/48=37.2)。
 - 32K (single V620、last-128 logits): fp16 188.1→int8 265.9 tok/s
   (**1.41x**)。tail maxabs 0.30/mean 0.024。
   128K 投影約 1.22x (146 vs 119 tok/s)。
-- 長文投影 (fp16 stage 2048/8192 の bucket fit):
-  線形部 ~2.9ms/row、attn-core 二次 (c≈3.3e-5ms/row²)。
-  1M prefill: fp16 約 10.4h (26.7 tok/s、有効)、attn-core が 89%。
-  int8 は線形部のみ ~2.1x → 1M では約 1.04x に収束。
+- 長文投影 (fp16 stage 2048/8192 の bucket fit: 線形部 2.93ms/row、
+  gdn-core 1.15ms/row、attn-core 二次 c≈3.3e-5ms/row²、int8 線形部 ~2.1x。
+  32K で検証済: 投影 1.42x vs 実測 1.41x)。
+  | ctx | fp16 | int8 | 比 | attn-core 占有率 |
+  |---|---|---|---|---|
+  | 32K | 193 tok/s (170s) | 275 tok/s (119s) | 1.42x (投影; 実測 1.41x) | 21% |
+  | 128K | 118 tok/s (18.5分) | 144 tok/s (15.2分) | 1.22x | 52% |
+  | 500K | 48.1 tok/s (2.9h) | 51.9 tok/s (2.7h) | 1.08x | 80% |
+  | 1M | 26.7 tok/s (10.4h) | 27.8 tok/s (10.0h) | 1.04x | 89% |
+  (lm_head は末尾 128 rows のみ計算の前提。32K 行は投影、それ以外は
+  FLOP fit による外挿。)
   **1M の用途には attention-core の INT8 化が必須** (別途 SageAttention
-  的 QK^T として scope 外で記録)。128K では int8 約 1.22x。
+  的 QK^T として scope 外で記録)。
 - ゲート判定: **PASS** (1.69x @2048、1.58x @8192、0.99x @512、
   KLD neutral)。Flash Next 再 encode は開始しない (parent 指示例外のため)。
 - 未完: (1) lm_head ベンチの 32768 (full 出力が OOM。
